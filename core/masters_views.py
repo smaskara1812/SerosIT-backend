@@ -38,6 +38,7 @@ from .models import (
     MstDrillingOperation,
     MstDrillingRate,
     MstDrillingSection,
+    MstDrillingWorkShift,
     MstLocation,
     ProjectContract,
     ProjectContractDtl,
@@ -79,6 +80,7 @@ from .masters_serializers import (
     MstDrillingOperationSerializer,
     MstDrillingRateSerializer,
     MstDrillingSectionSerializer,
+    MstDrillingWorkShiftSerializer,
     MstLocationSerializer,
     ProjectContractDtlSerializer,
     ProjectContractSerializer,
@@ -683,10 +685,15 @@ class MstCurrencyViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["currency_name", "currency_abrv"]
 
 
-class MstDrillingRateViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = MstDrillingRate.objects.filter(rate_active="Y").order_by("rate_code")
+class MstDrillingRateViewSet(BaseMasterViewSet):
+    """Doubles as a full CRUD master (its own admin page, per legacy) and a
+    dropdown source for Project Drilling Rates' Rate Type picker."""
+
+    queryset = MstDrillingRate.objects.all()
     serializer_class = MstDrillingRateSerializer
-    permission_classes = [IsAuthenticated]
+    entity_key = "masters.drilling_rates"
+    name_field = "rate_code"
+    reference_checks = [("rate_usages", "Project Drilling Rates")]
     search_fields = ["rate_code", "rate_description"]
 
 
@@ -805,3 +812,27 @@ class MstDrillingSectionViewSet(BaseMasterViewSet):
     entity_key = "masters.drilling_sections"
     name_field = "drilling_section_name"
     search_fields = ["drilling_section_name"]
+
+
+class MstDrillingWorkShiftViewSet(BaseMasterViewSet):
+    """Shift timings for one (contract, rig) pair are managed together as a
+    small table — same workflow as ProjectDrillingRateViewSet. GET supports
+    ?contract=<id>&rig=<id> to scope the list."""
+
+    queryset = MstDrillingWorkShift.objects.select_related("contract", "rig")
+    serializer_class = MstDrillingWorkShiftSerializer
+    entity_key = "masters.drilling_work_shift"
+    search_fields = ["rig__rig_name", "contract__prj_contract_no"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        contract_id = self.request.query_params.get("contract")
+        rig_id = self.request.query_params.get("rig")
+        if contract_id:
+            qs = qs.filter(contract_id=contract_id)
+        if rig_id:
+            qs = qs.filter(rig_id=rig_id)
+        return qs.order_by("work_shift")
+
+    def label_for(self, instance):
+        return f"{instance.rig.rig_name} — {instance.get_work_shift_display()}"

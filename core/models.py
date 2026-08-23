@@ -959,7 +959,10 @@ class ProjectDrillingRate(models.Model):
 
     prj_drilling_rate_id = models.AutoField(primary_key=True)
     drilling_rate = models.ForeignKey(
-        MstDrillingRate, db_column="drilling_rate_id", on_delete=models.PROTECT
+        MstDrillingRate,
+        db_column="drilling_rate_id",
+        on_delete=models.PROTECT,
+        related_name="rate_usages",
     )
     contract = models.ForeignKey(
         ProjectContract, db_column="prj_contract_id", on_delete=models.CASCADE, related_name="drilling_rates"
@@ -1013,3 +1016,37 @@ class MstDrillingSection(models.Model):
 
     def __str__(self):
         return self.drilling_section_name
+
+
+class MstDrillingWorkShift(models.Model):
+    """Morning/Evening work shift timing for one rig, optionally scoped to
+    a specific contract — same (contract, rig) scoping workflow as
+    ProjectDrillingRate, just for shift timings instead of rates."""
+
+    WORK_SHIFT_CHOICES = [("M", "Morning"), ("E", "Evening")]
+
+    drilling_work_shift_id = models.AutoField(primary_key=True)
+    contract = models.ForeignKey(
+        ProjectContract,
+        db_column="prj_contract_id",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="work_shifts",
+    )
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT)
+    work_shift = models.CharField(max_length=1, choices=WORK_SHIFT_CHOICES)
+    work_shift_start_time = models.TimeField()
+    work_shift_end_time = models.TimeField()
+    work_shift_days = models.IntegerField()
+    work_shift_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_drilling_work_shift"
+
+    def __str__(self):
+        return f"{self.rig.rig_name} — {self.get_work_shift_display()}"

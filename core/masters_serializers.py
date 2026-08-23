@@ -33,6 +33,7 @@ from .models import (
     MstDrillingOperation,
     MstDrillingRate,
     MstDrillingSection,
+    MstDrillingWorkShift,
     MstLocation,
     ProjectContract,
     ProjectContractDtl,
@@ -427,5 +428,16 @@ class MstDrillingOperationSerializer(serializers.ModelSerializer):
 class MstDrillingSectionSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstDrillingSection
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstDrillingWorkShiftSerializer(serializers.ModelSerializer):
+    work_shift_display = serializers.CharField(source="get_work_shift_display", read_only=True)
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    contract_no = serializers.CharField(source="contract.prj_contract_no", read_only=True, default="")
+
+    class Meta:
+        model = MstDrillingWorkShift
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]

@@ -103,6 +103,11 @@ router.register(
     masters_views.MstDrillingSectionViewSet,
     basename="drilling-section",
 )
+router.register(
+    "masters/drilling-work-shifts",
+    masters_views.MstDrillingWorkShiftViewSet,
+    basename="drilling-work-shift",
+)
 
 urlpatterns = [
     path("", include(router.urls)),
