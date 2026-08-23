@@ -838,3 +838,178 @@ class MstInterviewer(models.Model):
 
     def __str__(self):
         return f"{self.department.dept_dispname} — {self.user.user_login_id}"
+
+
+# ── Project masters ──────────────────────────────────────────────────────────
+# Location/Currency/Drilling Rate (type) are plain lookups with no CRUD page
+# of their own in legacy either — they only ever populate a dropdown on the
+# two real project masters below.
+
+
+class MstLocation(models.Model):
+    location_id = models.AutoField(primary_key=True)
+    location_name = models.CharField(max_length=50)
+    # Country/state masters aren't built yet — kept as plain ids rather than
+    # FKs so importing this ~700-row table doesn't block on tables we don't
+    # have.
+    country_id = models.IntegerField()
+    country_state_id = models.IntegerField(null=True, blank=True)
+    location_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_location"
+
+    def __str__(self):
+        return self.location_name
+
+
+class MstCurrency(models.Model):
+    currency_id = models.AutoField(primary_key=True)
+    currency_name = models.CharField(max_length=30)
+    currency_abrv = models.CharField(max_length=3)
+    decimal_name = models.CharField(max_length=15)
+    currency_text = models.CharField(max_length=25)
+    currency_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_currency"
+
+    def __str__(self):
+        return self.currency_name
+
+
+class MstDrillingRate(models.Model):
+    """A drilling rate *type* (e.g. "R1", "FM", "MOB") — not a rate value
+    itself, that's ProjectDrillingRate."""
+
+    drilling_rate_id = models.AutoField(primary_key=True)
+    rate_code = models.CharField(max_length=20)
+    rate_description = models.CharField(max_length=50, null=True, blank=True)
+    rate_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_drilling_rate"
+
+    def __str__(self):
+        return self.rate_code
+
+
+class ProjectContract(models.Model):
+    """A contract with an operator at a location. Real header+detail
+    structure (rig assignments below are its detail lines) — gets its own
+    editor UI rather than the generic single-table masters page."""
+
+    prj_contract_id = models.AutoField(primary_key=True)
+    location = models.ForeignKey(MstLocation, db_column="location_id", on_delete=models.PROTECT)
+    operator = models.ForeignKey(MstOperator, db_column="operator_id", on_delete=models.PROTECT)
+    prj_contract_no = models.CharField(max_length=110)
+    prj_short_name = models.CharField(max_length=10, null=True, blank=True)
+    prj_start_dt = models.DateField()
+    prj_end_dt = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "project_contract"
+
+    def __str__(self):
+        return self.prj_contract_no
+
+
+class ProjectContractDtl(models.Model):
+    """A rig assigned to a contract for a date range."""
+
+    prj_contract_dtl_id = models.AutoField(primary_key=True)
+    contract = models.ForeignKey(
+        ProjectContract, db_column="prj_contract_id", on_delete=models.CASCADE, related_name="lines"
+    )
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT)
+    rig_active_from = models.DateField()
+    rig_active_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "project_contract_dtl"
+        ordering = ["rig_active_from"]
+
+    def __str__(self):
+        return f"{self.contract.prj_contract_no} — {self.rig.rig_name}"
+
+
+class ProjectDrillingRate(models.Model):
+    """One rate (by type) for one rig on one contract — a flat lookup
+    unlike Project Contract, so it gets the generic masters page."""
+
+    prj_drilling_rate_id = models.AutoField(primary_key=True)
+    drilling_rate = models.ForeignKey(
+        MstDrillingRate, db_column="drilling_rate_id", on_delete=models.PROTECT
+    )
+    contract = models.ForeignKey(
+        ProjectContract, db_column="prj_contract_id", on_delete=models.CASCADE, related_name="drilling_rates"
+    )
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT)
+    currency = models.ForeignKey(
+        MstCurrency, db_column="currency_id", on_delete=models.PROTECT, null=True, blank=True
+    )
+    rate = models.DecimalField(max_digits=11, decimal_places=2, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "project_drilling_rate"
+
+    def __str__(self):
+        return f"{self.contract.prj_contract_no} — {self.rig.rig_name} — {self.drilling_rate.rate_code}"
+
+
+# ── Drilling masters ──────────────────────────────────────────────────────────
+
+
+class MstDrillingOperation(models.Model):
+    drilling_ops_id = models.AutoField(primary_key=True)
+    drilling_ops_code_no = models.IntegerField()
+    drilling_ops_name = models.CharField(max_length=50)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_drilling_operation"
+
+    def __str__(self):
+        return self.drilling_ops_name
+
+
+class MstDrillingSection(models.Model):
+    drilling_section_id = models.AutoField(primary_key=True)
+    drilling_section_name = models.CharField(max_length=10)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_drilling_section"
+
+    def __str__(self):
+        return self.drilling_section_name

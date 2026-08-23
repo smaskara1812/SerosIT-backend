@@ -34,6 +34,14 @@ from .models import (
     MstUser,
     MstUserFsCatgMapping,
     MstUserRigMapping,
+    MstCurrency,
+    MstDrillingOperation,
+    MstDrillingRate,
+    MstDrillingSection,
+    MstLocation,
+    ProjectContract,
+    ProjectContractDtl,
+    ProjectDrillingRate,
     ReportingStructure,
     TravelEligibility,
     UserProfile,
@@ -67,6 +75,14 @@ from .masters_serializers import (
     MstUserSerializer,
     MstUserFsCatgMappingSerializer,
     MstUserRigMappingSerializer,
+    MstCurrencySerializer,
+    MstDrillingOperationSerializer,
+    MstDrillingRateSerializer,
+    MstDrillingSectionSerializer,
+    MstLocationSerializer,
+    ProjectContractDtlSerializer,
+    ProjectContractSerializer,
+    ProjectDrillingRateSerializer,
     ReportingStructureSerializer,
     TravelEligibilitySerializer,
 )
@@ -269,9 +285,8 @@ class MstDepartmentViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MstDepartmentSerializer
     permission_classes = [IsAuthenticated]
     search_fields = ["dept_dispname"]
-    # Pure dropdown source, not a browsable list page anywhere — always
-    # return the full set rather than paginating.
-    pagination_class = None
+    # Paginated like every other lookup (see MstUserViewSet) so the frontend
+    # combobox can tell from `count` whether it's safe to preload in full.
 
     def get_queryset(self):
         qs = self.queryset
@@ -530,14 +545,18 @@ class MstHazardTypeViewSet(BaseMasterViewSet):
 
 
 class MstUserViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only lookup for other masters' User dropdowns — same shape as
-    MstDepartmentViewSet. Not its own delegable master (User Management
-    owns the real CRUD for Mst_User)."""
+    """Read-only lookup for other masters' User dropdowns. Not its own
+    delegable master (User Management owns the real CRUD for Mst_User).
+
+    Paginated (the default MastersPagination, not disabled) on purpose:
+    the frontend combobox probes this endpoint's `count` to decide whether
+    to preload the full list or fall back to server-side search, so a
+    growing user roster degrades gracefully instead of silently truncating
+    a preloaded dropdown at some hardcoded page size."""
 
     queryset = MstUser.objects.filter(user_active="Y").order_by("user_name")
     serializer_class = MstUserSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = None
     search_fields = ["user_name", "user_login_id"]
 
 
@@ -641,3 +660,148 @@ class MstInterviewerViewSet(BaseMasterViewSet):
         rel_path = f"{rel_dir}/{filename}"
         url = request.build_absolute_uri(settings.MEDIA_URL + rel_path)
         return Response({"path": rel_path, "url": url})
+
+
+# ── Project masters ──────────────────────────────────────────────────────────
+
+
+class MstLocationViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only lookup for Project Contract's Location field. ~700 rows —
+    paginated/searched like every other lookup so the frontend combobox can
+    tell from `count` whether it's safe to preload in full."""
+
+    queryset = MstLocation.objects.filter(location_active="Y").order_by("location_name")
+    serializer_class = MstLocationSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["location_name"]
+
+
+class MstCurrencyViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = MstCurrency.objects.filter(currency_active="Y").order_by("currency_name")
+    serializer_class = MstCurrencySerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["currency_name", "currency_abrv"]
+
+
+class MstDrillingRateViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = MstDrillingRate.objects.filter(rate_active="Y").order_by("rate_code")
+    serializer_class = MstDrillingRateSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["rate_code", "rate_description"]
+
+
+class ProjectContractViewSet(BaseMasterViewSet):
+    """Real header+detail master — Rig assignments (below) live under one
+    contract at a time, so this gets its own editor page instead of the
+    generic single-table masters page."""
+
+    queryset = ProjectContract.objects.select_related("location", "operator").prefetch_related("lines")
+    serializer_class = ProjectContractSerializer
+    entity_key = "masters.project_contract"
+    name_field = "prj_contract_no"
+    # Rig assignments and drilling rates are this contract's own detail
+    # lines (CASCADE), not other masters referencing it — deleting a
+    # contract is meant to take them with it, same as Job Descriptions'
+    # header/detail relationship, not be blocked by them.
+    search_fields = ["prj_contract_no", "prj_short_name", "location__location_name", "operator__operator_name"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        operator_id = self.request.query_params.get("operator")
+        status = self.request.query_params.get("status")
+        if operator_id:
+            qs = qs.filter(operator_id=operator_id)
+        if status == "active":
+            qs = qs.filter(prj_end_dt__isnull=True)
+        elif status == "closed":
+            qs = qs.filter(prj_end_dt__isnull=False)
+        return qs.order_by("-prj_start_dt")
+
+    def label_for(self, instance):
+        return instance.prj_contract_no
+
+
+class ProjectContractDtlViewSet(BaseMasterViewSet):
+    """Rig lines under one contract. GET supports ?contract=<id> — the
+    editor always works one contract at a time."""
+
+    queryset = ProjectContractDtl.objects.select_related("rig", "contract")
+    serializer_class = ProjectContractDtlSerializer
+    entity_key = "masters.project_contract"
+    name_field = "rig_active_from"
+
+    def get_queryset(self):
+        qs = self.queryset
+        contract_id = self.request.query_params.get("contract")
+        if contract_id:
+            qs = qs.filter(contract_id=contract_id)
+        return qs.order_by("rig_active_from")
+
+    def label_for(self, instance):
+        return f"{instance.contract.prj_contract_no} — {instance.rig.rig_name}"
+
+
+class ProjectDrillingRateViewSet(BaseMasterViewSet):
+    """Rates for one (contract, rig) pair are managed together as a small
+    table — the editor always works one pair at a time. GET supports
+    ?contract=<id>&rig=<id> to scope the list."""
+
+    queryset = ProjectDrillingRate.objects.select_related("drilling_rate", "contract", "rig", "currency")
+    serializer_class = ProjectDrillingRateSerializer
+    entity_key = "masters.project_drilling_rates"
+    search_fields = ["contract__prj_contract_no", "rig__rig_name", "drilling_rate__rate_code"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        contract_id = self.request.query_params.get("contract")
+        rig_id = self.request.query_params.get("rig")
+        if contract_id:
+            qs = qs.filter(contract_id=contract_id)
+        if rig_id:
+            qs = qs.filter(rig_id=rig_id)
+        return qs.order_by("-contract__prj_start_dt", "drilling_rate__rate_code")
+
+    def label_for(self, instance):
+        return f"{instance.contract.prj_contract_no} — {instance.rig.rig_name} — {instance.drilling_rate.rate_code}"
+
+
+# ── Drilling masters ──────────────────────────────────────────────────────────
+
+
+class MstDrillingOperationViewSet(BaseMasterViewSet):
+    queryset = MstDrillingOperation.objects.all()
+    serializer_class = MstDrillingOperationSerializer
+    entity_key = "masters.drilling_operations"
+    name_field = "drilling_ops_name"
+    search_fields = ["drilling_ops_name"]
+
+    @action(detail=False, methods=["get"], url_path="check-code")
+    def check_code(self, request):
+        """Is this Code No already taken by another operation, and if so,
+        what's the next free one — backs the frontend's debounced amber-banner
+        check on the Code No field."""
+        raw = request.query_params.get("code", "")
+        if not raw.lstrip("-").isdigit():
+            return Response({"taken": False, "suggestion": None})
+        code = int(raw)
+        qs = self.queryset.filter(drilling_ops_code_no=code)
+        exclude_id = request.query_params.get("exclude")
+        if exclude_id:
+            qs = qs.exclude(pk=exclude_id)
+        taken = qs.exists()
+        suggestion = None
+        if taken:
+            used = set(self.queryset.values_list("drilling_ops_code_no", flat=True))
+            candidate = code + 1
+            while candidate in used:
+                candidate += 1
+            suggestion = candidate
+        return Response({"taken": taken, "suggestion": suggestion})
+
+
+class MstDrillingSectionViewSet(BaseMasterViewSet):
+    queryset = MstDrillingSection.objects.all()
+    serializer_class = MstDrillingSectionSerializer
+    entity_key = "masters.drilling_sections"
+    name_field = "drilling_section_name"
+    search_fields = ["drilling_section_name"]

@@ -79,6 +79,30 @@ router.register(
     masters_views.MstInterviewerViewSet,
     basename="interviewer-mapping",
 )
+router.register("masters/locations", masters_views.MstLocationViewSet, basename="location")
+router.register("masters/currencies", masters_views.MstCurrencyViewSet, basename="currency")
+router.register("masters/drilling-rate-types", masters_views.MstDrillingRateViewSet, basename="drilling-rate-type")
+router.register("masters/project-contracts", masters_views.ProjectContractViewSet, basename="project-contract")
+router.register(
+    "masters/project-contract-lines",
+    masters_views.ProjectContractDtlViewSet,
+    basename="project-contract-line",
+)
+router.register(
+    "masters/project-drilling-rates",
+    masters_views.ProjectDrillingRateViewSet,
+    basename="project-drilling-rate",
+)
+router.register(
+    "masters/drilling-operations",
+    masters_views.MstDrillingOperationViewSet,
+    basename="drilling-operation",
+)
+router.register(
+    "masters/drilling-sections",
+    masters_views.MstDrillingSectionViewSet,
+    basename="drilling-section",
+)
 
 urlpatterns = [
     path("", include(router.urls)),

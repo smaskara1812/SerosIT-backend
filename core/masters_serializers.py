@@ -29,6 +29,14 @@ from .models import (
     MstUserRigMapping,
     JobDescriptionDtl,
     JobDescriptionHdr,
+    MstCurrency,
+    MstDrillingOperation,
+    MstDrillingRate,
+    MstDrillingSection,
+    MstLocation,
+    ProjectContract,
+    ProjectContractDtl,
+    ProjectDrillingRate,
     ReportingStructure,
     TravelEligibility,
 )
@@ -346,3 +354,78 @@ class MstInterviewerSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj):
         return f"{obj.department.dept_dispname} — {obj.user.user_name}"
+
+
+class MstLocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstLocation
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCurrencySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCurrency
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstDrillingRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstDrillingRate
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class ProjectContractDtlSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+
+    class Meta:
+        model = ProjectContractDtl
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class ProjectContractSerializer(serializers.ModelSerializer):
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
+    operator_name = serializers.CharField(source="operator.operator_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+    lines = ProjectContractDtlSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ProjectContract
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.prj_contract_no} — {obj.location.location_name}"
+
+
+class ProjectDrillingRateSerializer(serializers.ModelSerializer):
+    rate_code = serializers.CharField(source="drilling_rate.rate_code", read_only=True, default="")
+    contract_no = serializers.CharField(source="contract.prj_contract_no", read_only=True, default="")
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    currency_abrv = serializers.CharField(source="currency.currency_abrv", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectDrillingRate
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.contract.prj_contract_no} — {obj.rig.rig_name} — {obj.drilling_rate.rate_code}"
+
+
+class MstDrillingOperationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstDrillingOperation
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstDrillingSectionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstDrillingSection
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]

@@ -1,4 +1,7 @@
+from zoneinfo import ZoneInfo
+
 from django.db.models import Q
+from django.utils import timezone as dj_timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -304,8 +307,11 @@ def admin_audit_list_api(request):
             "ip",
         )
     )
+    ist = ZoneInfo("Asia/Kolkata")
     for r in rows:
-        r["ts"] = r["ts"].strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
+        r["ts"] = (
+            dj_timezone.localtime(r["ts"], ist).strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
+        )
     return Response(
         {
             "results": rows,
