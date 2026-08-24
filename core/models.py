@@ -70,7 +70,12 @@ class MstCertInstitute(models.Model):
     cert_institute_name = models.CharField(max_length=100)
     cert_institute_shortname = models.CharField(max_length=10)
     cert_institute_address = models.CharField(max_length=100, null=True, blank=True)
-    location_id = models.IntegerField()  # Location master not built yet
+    location = models.ForeignKey(
+        "MstLocation",
+        db_column="location_id",
+        on_delete=models.PROTECT,
+        related_name="cert_institutes",
+    )
     tel_no = models.CharField(max_length=15, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -108,8 +113,22 @@ class MstOperator(models.Model):
     operator_short_name = models.CharField(max_length=15)
     operator_sap_code = models.CharField(max_length=8, null=True, blank=True)
     wbs_client_code = models.CharField(max_length=4, null=True, blank=True)
-    location_id = models.IntegerField(null=True, blank=True)
-    country_id = models.IntegerField(null=True, blank=True)
+    location = models.ForeignKey(
+        "MstLocation",
+        db_column="location_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="operators",
+    )
+    country = models.ForeignKey(
+        "MstCountry",
+        db_column="country_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="operators",
+    )
     contact_person = models.CharField(max_length=75, null=True, blank=True)
     tel_no = models.CharField(max_length=12, null=True, blank=True)
     email_id = models.EmailField(max_length=40, null=True, blank=True)
@@ -126,13 +145,50 @@ class MstOperator(models.Model):
         return self.operator_name
 
 
+class MstRigType(models.Model):
+    rig_type_id = models.AutoField(primary_key=True)
+    rig_type_name = models.CharField(max_length=15)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_rig_type"
+
+    def __str__(self):
+        return self.rig_type_name
+
+
+class MstRigSubtype(models.Model):
+    rig_subtype_id = models.AutoField(primary_key=True)
+    rig_subtype_name = models.CharField(max_length=20)
+    rig_type = models.ForeignKey(
+        MstRigType, db_column="rig_type_id", on_delete=models.PROTECT, related_name="subtypes"
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_rig_subtype"
+
+    def __str__(self):
+        return self.rig_subtype_name
+
+
 class MstRig(models.Model):
     rig_id = models.AutoField(primary_key=True)
     rig_name = models.CharField(max_length=40)
     rig_short_name = models.CharField(max_length=8)
     old_rig_name = models.CharField(max_length=40, null=True, blank=True)
-    rig_subtype_id = models.IntegerField()  # Rig Subtype master not built yet
-    rig_type_id = models.IntegerField()  # Rig Type master not built yet
+    rig_subtype = models.ForeignKey(
+        MstRigSubtype, db_column="rig_subtype_id", on_delete=models.PROTECT, related_name="rigs"
+    )
+    rig_type = models.ForeignKey(
+        MstRigType, db_column="rig_type_id", on_delete=models.PROTECT, related_name="rigs"
+    )
     rig_built_dt = models.DateField()
     rig_tel_no = models.CharField(max_length=25, null=True, blank=True)
     rig_fax_no = models.CharField(max_length=15, null=True, blank=True)
@@ -174,8 +230,22 @@ class MstCostCentre(models.Model):
         on_delete=models.PROTECT,
         related_name="cost_centres",
     )
-    fs_emp_id = models.IntegerField(null=True, blank=True)  # Employee master not built yet
-    location_id = models.IntegerField(null=True, blank=True)  # Location master not built yet
+    fs_emp = models.ForeignKey(
+        "MstEmployee",
+        db_column="fs_emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="cost_centres",
+    )
+    location = models.ForeignKey(
+        "MstLocation",
+        db_column="location_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="cost_centres",
+    )
     cost_centre_active = models.CharField(max_length=1, default="Y")
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -243,6 +313,22 @@ class MstFsCategory(models.Model):
         return self.fs_category_name
 
 
+class MstVesselDept(models.Model):
+    vessel_dept_id = models.AutoField(primary_key=True)
+    vessel_dept_name = models.CharField(max_length=25)
+    vessel_dept_order = models.IntegerField(default=0)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_vessel_dept"
+
+    def __str__(self):
+        return self.vessel_dept_name
+
+
 class MstRank(models.Model):
     rank_id = models.AutoField(primary_key=True)
     fs_category = models.ForeignKey(
@@ -251,7 +337,12 @@ class MstRank(models.Model):
         on_delete=models.PROTECT,
         related_name="ranks",
     )
-    vessel_dept_id = models.IntegerField()  # Vessel Department master not built yet
+    vessel_dept = models.ForeignKey(
+        MstVesselDept,
+        db_column="vessel_dept_id",
+        on_delete=models.PROTECT,
+        related_name="ranks",
+    )
     rank_name = models.CharField(max_length=35)
     rank_abrv = models.CharField(max_length=7)
     rank_order = models.IntegerField(default=0)
@@ -573,7 +664,17 @@ class MstUser(models.Model):
 
     user_id = models.AutoField(primary_key=True)
     user_name = models.CharField(max_length=60)
-    emp_id = models.IntegerField(null=True, blank=True)
+    emp = models.ForeignKey(
+        "MstEmployee",
+        db_column="emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="users",
+    )
+    # Mst_NonEmployee lives in legacy's separate hr_ module (visa,
+    # deficiency-tracking, etc.) that hasn't been brought over — left as a
+    # plain id rather than pulling that whole subsystem in for one FK.
     nonemp_id = models.IntegerField(null=True, blank=True)
     # A real FK now that Mst_Department exists — legacy only had a bare
     # smallint column, but we have "complete control" over the schema here.
@@ -840,20 +941,243 @@ class MstInterviewer(models.Model):
         return f"{self.department.dept_dispname} — {self.user.user_login_id}"
 
 
+class FsCatgToRigTypeMapping(models.Model):
+    """Which Rig Types a Fs Category applies to — straight copy of legacy
+    eos_Fs_Catg_To_Rig_Type_Mapping. First of the HR Mapping Masters group;
+    not built out as its own page in legacy either."""
+
+    fs_catg_to_rig_type_mapping_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="rig_type_mappings"
+    )
+    rig_type = models.ForeignKey(
+        MstRigType, db_column="rig_type_id", on_delete=models.PROTECT, related_name="fs_category_mappings"
+    )
+    # Legacy has this blank (not even 'N') for an unchecked pairing rather
+    # than a real tri-state — treated as 'N' everywhere it's read.
+    mapping_active = models.CharField(max_length=1, default="N")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "fs_catg_to_rig_type_mapping"
+
+    def __str__(self):
+        return f"{self.fs_category.fs_category_name} — {self.rig_type.rig_type_name}"
+
+
+class RankClassification(models.Model):
+    """Straight copy of legacy eos_Rank_Classification, deduplicated on
+    import — legacy has no unique constraint on Rank_Id and one rank had 34
+    duplicate re-saves over the years (alternating Junior/Senior); only the
+    most recently created row per rank was kept. rank_class_abrv isn't
+    stored separately since it's 100% derived from rank_class ('J' -> 'Jr.',
+    'S' -> 'Sr.') with no exceptions in the data."""
+
+    RANK_CLASS_CHOICES = [("J", "Junior"), ("S", "Senior")]
+    RANK_CLASS_ABRV = {"J": "Jr.", "S": "Sr."}
+
+    rank_classification_id = models.AutoField(primary_key=True)
+    rank = models.OneToOneField(
+        MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="classification"
+    )
+    rank_class = models.CharField(max_length=1, choices=RANK_CLASS_CHOICES)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rank_classification"
+
+    def __str__(self):
+        return f"{self.rank.rank_name} — {self.get_rank_class_display()}"
+
+
+class MstEmpNature(models.Model):
+    emp_nature_id = models.AutoField(primary_key=True)
+    emp_nature_name = models.CharField(max_length=50)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_emp_nature"
+
+    def __str__(self):
+        return self.emp_nature_name
+
+
+class MstEmpType(models.Model):
+    emp_type_id = models.AutoField(primary_key=True)
+    emp_nature = models.ForeignKey(
+        MstEmpNature, db_column="emp_nature_id", on_delete=models.PROTECT, related_name="emp_types"
+    )
+    emp_type_name = models.CharField(max_length=45)
+    # Forward reference — MstCurrency is defined further down the file.
+    currency = models.ForeignKey(
+        "MstCurrency",
+        db_column="currency_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="emp_types",
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_emp_type"
+
+    def __str__(self):
+        return self.emp_type_name
+
+
+class NationalityToEmpTypeMapping(models.Model):
+    """Straight copy of legacy eos_Nationality_To_Emp_Type_Mapping."""
+
+    NATIONALITY_CHOICES = [("National", "National"), ("Expat", "Expat")]
+
+    nat_to_emp_type_map_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="nat_emp_type_mappings"
+    )
+    nationality = models.CharField(max_length=8, choices=NATIONALITY_CHOICES)
+    emp_type = models.ForeignKey(
+        MstEmpType, db_column="emp_type_id", on_delete=models.PROTECT, related_name="nationality_mappings"
+    )
+    active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "nationality_to_emp_type_mapping"
+
+    def __str__(self):
+        return f"{self.fs_category.fs_category_name} — {self.nationality} — {self.emp_type.emp_type_name}"
+
+
+class CrewChangeRelieverMapping(models.Model):
+    """Straight copy of legacy eos_Crew_Change_Reliever_Mapping — which
+    Rank relieves which other Rank on crew change, per Fs Category."""
+
+    cc_reliever_mapping_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="reliever_mappings"
+    )
+    rank = models.ForeignKey(
+        MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="reliever_mappings_as_rank"
+    )
+    reliever_rank = models.ForeignKey(
+        MstRank, db_column="reliever_rank_id", on_delete=models.PROTECT, related_name="reliever_mappings_as_reliever"
+    )
+    active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "crew_change_reliever_mapping"
+
+    def __str__(self):
+        return f"{self.rank.rank_name} — {self.reliever_rank.rank_name}"
+
+
 # ── Project masters ──────────────────────────────────────────────────────────
 # Location/Currency/Drilling Rate (type) are plain lookups with no CRUD page
 # of their own in legacy either — they only ever populate a dropdown on the
 # two real project masters below.
 
 
+class MstContinent(models.Model):
+    continent_id = models.AutoField(primary_key=True)
+    continent_name = models.CharField(max_length=15)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_continent"
+
+    def __str__(self):
+        return self.continent_name
+
+
+class MstCountry(models.Model):
+    country_id = models.AutoField(primary_key=True)
+    country_name = models.CharField(max_length=40)
+    country_known_name = models.CharField(max_length=25)
+    country_iso_cd = models.CharField(max_length=2)
+    continent = models.ForeignKey(
+        MstContinent,
+        db_column="continent_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="countries",
+    )
+    country_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_country"
+
+    def __str__(self):
+        return self.country_name
+
+
+class MstCountryState(models.Model):
+    country_state_id = models.AutoField(primary_key=True)
+    country = models.ForeignKey(
+        MstCountry,
+        db_column="country_id",
+        on_delete=models.PROTECT,
+        related_name="states",
+    )
+    country_state_name = models.CharField(max_length=25)
+    country_state_abrv = models.CharField(max_length=2)
+    country_state_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_country_state"
+
+    def __str__(self):
+        return self.country_state_name
+
+
 class MstLocation(models.Model):
     location_id = models.AutoField(primary_key=True)
     location_name = models.CharField(max_length=50)
-    # Country/state masters aren't built yet — kept as plain ids rather than
-    # FKs so importing this ~700-row table doesn't block on tables we don't
-    # have.
-    country_id = models.IntegerField()
-    country_state_id = models.IntegerField(null=True, blank=True)
+    country = models.ForeignKey(
+        MstCountry,
+        db_column="country_id",
+        on_delete=models.PROTECT,
+        related_name="locations",
+    )
+    country_state = models.ForeignKey(
+        MstCountryState,
+        db_column="country_state_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="locations",
+    )
     location_active = models.CharField(max_length=1, default="Y")
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -1050,3 +1374,412 @@ class MstDrillingWorkShift(models.Model):
 
     def __str__(self):
         return f"{self.rig.rig_name} — {self.get_work_shift_display()}"
+
+
+# ── Incidents ─────────────────────────────────────────────────────────────
+
+
+class MstWorkLocation(models.Model):
+    work_location_id = models.AutoField(primary_key=True)
+    work_location = models.CharField(max_length=45)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_work_location"
+
+    def __str__(self):
+        return self.work_location
+
+
+class MstIncidentType(models.Model):
+    incident_type_id = models.AutoField(primary_key=True)
+    incident_type = models.CharField(max_length=50)
+    incident_abrv = models.CharField(max_length=5)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_incident_type"
+
+    def __str__(self):
+        return self.incident_type
+
+
+class MstIncidentCause(models.Model):
+    incident_cause_id = models.AutoField(primary_key=True)
+    incident_cause_desc = models.CharField(max_length=65)
+    # 'I' = Immediate, 'R' = Root, 'B' = Both — legacy's Incident_Cause_Category
+    # flag; the same lookup backs both Incident.immediate_incident_cause and
+    # IncidentRootCause.root_cause depending on this flag.
+    incident_cause_category = models.CharField(max_length=1)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_incident_cause"
+
+    def __str__(self):
+        return self.incident_cause_desc
+
+
+class MstIncidentSubcause(models.Model):
+    incident_subcause_id = models.AutoField(primary_key=True)
+    incident_subcause = models.CharField(max_length=75)
+    incident_cause = models.ForeignKey(
+        MstIncidentCause,
+        db_column="incident_cause_id",
+        on_delete=models.PROTECT,
+        related_name="subcauses",
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_incident_subcause"
+
+    def __str__(self):
+        return self.incident_subcause
+
+
+class MstFinancialYear(models.Model):
+    financial_year_id = models.AutoField(primary_key=True)
+    fin_year_from = models.DateField()
+    fin_year_to = models.DateField()
+    fin_year_text = models.CharField(max_length=9)
+    fin_year_subtext = models.CharField(max_length=5)
+    assessment_year = models.CharField(max_length=9)
+    nri_days = models.IntegerField()
+    fin_year_status = models.CharField(max_length=1)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_financial_year"
+
+    def __str__(self):
+        return self.fin_year_text
+
+
+class Incident(models.Model):
+    """Straight copy of legacy eos_Incident_Details — the first of the
+    operational (non-master) data-entry tables being migrated, starting
+    with just the table structure/FKs; no CRUD page yet."""
+
+    incident_id = models.AutoField(primary_key=True)
+    work_location = models.ForeignKey(
+        MstWorkLocation,
+        db_column="work_location_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    rig = models.ForeignKey(
+        MstRig, db_column="rig_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
+    )
+    unit_name = models.CharField(max_length=35, null=True, blank=True)
+    rig_incident_no = models.CharField(max_length=20, null=True, blank=True)
+    incident_no = models.IntegerField()
+    incident_date = models.DateTimeField()
+    financial_year = models.ForeignKey(
+        MstFinancialYear, db_column="financial_year_id", on_delete=models.PROTECT, related_name="incidents"
+    )
+    country = models.ForeignKey(
+        MstCountry, db_column="country_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
+    )
+    well_no = models.CharField(max_length=20, null=True, blank=True)
+    drilling_superintendent = models.CharField(max_length=40, null=True, blank=True)
+    safety_officer = models.CharField(max_length=40, null=True, blank=True)
+    incident_party = models.CharField(max_length=3, null=True, blank=True)
+    incident_descr = models.CharField(max_length=1000)
+    incident_severity_potential = models.CharField(max_length=1, null=True, blank=True)
+    incident_severity = models.CharField(max_length=1)
+    incident_type = models.ForeignKey(
+        MstIncidentType, db_column="incident_type_id", on_delete=models.PROTECT, related_name="incidents"
+    )
+    immediate_incident_cause = models.ForeignKey(
+        MstIncidentCause,
+        db_column="immediate_incident_cause_id",
+        on_delete=models.PROTECT,
+        related_name="incidents_as_cause",
+    )
+    immediate_incident_cause_2 = models.ForeignKey(
+        MstIncidentCause,
+        db_column="immediate_incident_cause_id_2",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_cause_2",
+    )
+    immediate_cause_descr = models.CharField(max_length=500, null=True, blank=True)
+    rig_operation = models.ForeignKey(
+        MstRigOperation,
+        db_column="rig_operation_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    contact_expo_type = models.ForeignKey(
+        MstContactExposureType,
+        db_column="contact_expo_type_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    corrective_action = models.CharField(max_length=300, null=True, blank=True)
+    preventive_action = models.CharField(max_length=250, null=True, blank=True)
+    npt_hrs_loss = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    manhours_loss = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    financial_loss_currency = models.ForeignKey(
+        MstCurrency,
+        db_column="financial_loss_currency_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    financial_loss_amt = models.IntegerField(null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    financial_loss_bc_amt = models.IntegerField(null=True, blank=True)
+    comments = models.CharField(max_length=200, null=True, blank=True)
+    third_party = models.CharField(max_length=3, null=True, blank=True)
+    contractor = models.ForeignKey(
+        MstContractor,
+        db_column="contractor_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    operator = models.ForeignKey(
+        MstOperator, db_column="operator_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
+    )
+    incident_reported_dt = models.DateTimeField(null=True, blank=True)
+    person_injured = models.CharField(max_length=1, null=True, blank=True)
+    fs_emp = models.ForeignKey(
+        MstEmployee, db_column="fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
+    )
+    emp_name = models.CharField(max_length=75, null=True, blank=True)
+    rank = models.ForeignKey(
+        MstRank,
+        db_column="rank_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents",
+    )
+    rank_name = models.CharField(max_length=35, null=True, blank=True)
+    total_rig_exp_months = models.IntegerField(null=True, blank=True)
+    part_of_body_1 = models.ForeignKey(
+        MstPartsOfBody,
+        db_column="part_of_body_id_1",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_pob1",
+    )
+    part_of_body_2 = models.ForeignKey(
+        MstPartsOfBody,
+        db_column="part_of_body_id_2",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_pob2",
+    )
+    part_of_body_3 = models.ForeignKey(
+        MstPartsOfBody,
+        db_column="part_of_body_id_3",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_pob3",
+    )
+    part_of_body_4 = models.ForeignKey(
+        MstPartsOfBody,
+        db_column="part_of_body_id_4",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_pob4",
+    )
+    reported_by = models.CharField(max_length=50, null=True, blank=True)
+    rptd_by_rank = models.ForeignKey(
+        MstRank,
+        db_column="rptd_by_rank_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incidents_as_reporter",
+    )
+    dms_path_qhse = models.CharField(max_length=250, null=True, blank=True)
+    marked_as_deleted = models.CharField(max_length=1, null=True, blank=True)
+    deleted_remarks = models.CharField(max_length=100, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "incident"
+
+    def __str__(self):
+        return f"{self.incident_no} — {self.incident_date:%Y-%m-%d}"
+
+
+class IncidentAction(models.Model):
+    """Corrective/preventive action items tracked against one Incident —
+    straight copy of legacy eos_Incident_Actions."""
+
+    incident_action_id = models.AutoField(primary_key=True)
+    incident = models.ForeignKey(
+        Incident, db_column="incident_id", on_delete=models.CASCADE, related_name="actions"
+    )
+    action_recommended = models.CharField(max_length=500)
+    action_taken = models.CharField(max_length=250, null=True, blank=True)
+    action_party = models.CharField(max_length=100)
+    target_date = models.DateField(null=True, blank=True)
+    completion_dt = models.DateField(null=True, blank=True)
+    # Legacy's Action_Status is a free 2-char code (e.g. 'O'/'C') — kept as-is
+    # rather than guessing at a choices set with no reference doc for it.
+    action_status = models.CharField(max_length=2)
+    marked_as_deleted = models.CharField(max_length=1, null=True, blank=True)
+    deleted_remarks = models.CharField(max_length=100, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "incident_action"
+
+    def __str__(self):
+        return f"{self.incident} — {self.action_recommended[:40]}"
+
+
+class IncidentPhoto(models.Model):
+    """Straight copy of legacy eos_Incident_Photos — a photo attachment path
+    per Incident."""
+
+    incident_photo_id = models.AutoField(primary_key=True)
+    incident = models.ForeignKey(
+        Incident, db_column="incident_id", on_delete=models.CASCADE, related_name="photos"
+    )
+    incident_photo_path = models.CharField(max_length=50)
+    incident_photo_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "incident_photo"
+
+    def __str__(self):
+        return f"{self.incident} — {self.incident_photo_path}"
+
+
+class IncidentRootCause(models.Model):
+    """Straight copy of legacy eos_Incident_Root_Cause — one or more root
+    causes recorded against an Incident, each with an optional subcause."""
+
+    incident_root_cause_id = models.AutoField(primary_key=True)
+    incident = models.ForeignKey(
+        Incident, db_column="incident_id", on_delete=models.CASCADE, related_name="root_causes"
+    )
+    root_cause = models.ForeignKey(
+        MstIncidentCause, db_column="root_cause_id", on_delete=models.PROTECT, related_name="as_root_cause"
+    )
+    root_subcause = models.ForeignKey(
+        MstIncidentSubcause,
+        db_column="root_subcause_id",
+        on_delete=models.PROTECT,
+        related_name="as_root_subcause",
+    )
+    root_subcause_others = models.CharField(max_length=100, null=True, blank=True)
+    marked_as_deleted = models.CharField(max_length=1, null=True, blank=True)
+    deleted_remarks = models.CharField(max_length=100, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "incident_root_cause"
+
+    def __str__(self):
+        return f"{self.incident} — {self.root_cause}"
+
+
+# ── Hazard Cards ──────────────────────────────────────────────────────────
+
+
+class HazardCard(models.Model):
+    """Straight copy of legacy eos_Hazard_ID_Card — a hazard/near-miss
+    observation card raised against a project contract's rig. Every FK
+    target already existed as a master by the time this was built, so
+    unlike Incident there was no lookup-table gap to fill first."""
+
+    haz_card_id = models.AutoField(primary_key=True)
+    haz_id_card_no = models.IntegerField(null=True, blank=True)
+    contract = models.ForeignKey(
+        ProjectContract, db_column="prj_contract_id", on_delete=models.PROTECT, related_name="hazard_cards"
+    )
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="hazard_cards")
+    event_dt = models.DateTimeField()
+    reported_by_party = models.CharField(max_length=15)
+    reported_by_fs_emp = models.ForeignKey(
+        MstEmployee,
+        db_column="reported_by_fs_emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="hazard_cards_reported",
+    )
+    reported_by_name = models.CharField(max_length=30, null=True, blank=True)
+    work_location = models.ForeignKey(
+        MstWorkLocation, db_column="work_location_id", on_delete=models.PROTECT, related_name="hazard_cards"
+    )
+    haz_type = models.ForeignKey(
+        MstHazardType, db_column="haz_type_id", on_delete=models.PROTECT, related_name="hazard_cards"
+    )
+    timeout_for_safety = models.CharField(max_length=1)
+    hazard_desc = models.CharField(max_length=200)
+    action_taken = models.CharField(max_length=200, null=True, blank=True)
+    resp_dept = models.ForeignKey(
+        MstDepartment, db_column="resp_dept_id", on_delete=models.PROTECT, related_name="hazard_cards"
+    )
+    resp_rank = models.ForeignKey(
+        MstRank, db_column="resp_rank_id", on_delete=models.PROTECT, related_name="hazard_cards"
+    )
+    close_out_dt = models.DateTimeField(null=True, blank=True)
+    haz_id_card_status = models.CharField(max_length=1)
+    marked_as_deleted = models.CharField(max_length=1, null=True, blank=True)
+    deleted_remarks = models.CharField(max_length=100, null=True, blank=True)
+    # Client_Key_Id/MAC_Address are legacy's offline-client-sync bookkeeping
+    # (which field device/session captured the card), not a domain
+    # relationship — kept as a plain id like cr_user_id/mod_user_id.
+    client_key_id = models.IntegerField(null=True, blank=True)
+    mac_address = models.CharField(max_length=20, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hazard_card"
+
+    def __str__(self):
+        return f"{self.haz_id_card_no} — {self.event_dt:%Y-%m-%d}"

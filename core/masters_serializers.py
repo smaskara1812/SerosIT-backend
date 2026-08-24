@@ -5,6 +5,10 @@ from .models import (
     MstCertInstitute,
     MstCompetency,
     MstContactExposureType,
+    MstContinent,
+    MstCountry,
+    MstCountryState,
+    MstVesselDept,
     MstContractor,
     MstCostCentre,
     MstCostCentreType,
@@ -18,11 +22,19 @@ from .models import (
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
+    FsCatgToRigTypeMapping,
+    RankClassification,
+    MstEmpNature,
+    MstEmpType,
+    NationalityToEmpTypeMapping,
+    CrewChangeRelieverMapping,
     MstOperator,
     MstPartsOfBody,
     MstQhseCategory,
     MstRank,
     MstRig,
+    MstRigType,
+    MstRigSubtype,
     MstRigOperation,
     MstUser,
     MstUserFsCatgMapping,
@@ -64,6 +76,8 @@ class MstContractorSerializer(serializers.ModelSerializer):
 
 
 class MstCertInstituteSerializer(serializers.ModelSerializer):
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
+
     class Meta:
         model = MstCertInstitute
         fields = "__all__"
@@ -78,13 +92,39 @@ class MstEmailNotificationTypeSerializer(serializers.ModelSerializer):
 
 
 class MstOperatorSerializer(serializers.ModelSerializer):
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+
     class Meta:
         model = MstOperator
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
+class MstRigTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstRigType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstRigSubtypeSerializer(serializers.ModelSerializer):
+    # Lets the Rigs form derive Rig Type straight from a picked Rig Subtype
+    # without a second round trip.
+    rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
+
+    class Meta:
+        model = MstRigSubtype
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
 class MstRigSerializer(serializers.ModelSerializer):
+    rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
+    rig_subtype_name = serializers.CharField(
+        source="rig_subtype.rig_subtype_name", read_only=True, default=""
+    )
+
     class Meta:
         model = MstRig
         fields = "__all__"
@@ -96,11 +136,16 @@ class MstCostCentreSerializer(serializers.ModelSerializer):
         source="cost_centre_type.cost_centre_type_name", read_only=True, default=""
     )
     rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    fs_emp_name = serializers.SerializerMethodField()
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
 
     class Meta:
         model = MstCostCentre
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_fs_emp_name(self, obj):
+        return str(obj.fs_emp) if obj.fs_emp_id else ""
 
 
 class MstCompetencySerializer(serializers.ModelSerializer):
@@ -124,6 +169,9 @@ class MstFsCategorySerializer(serializers.ModelSerializer):
 class MstRankSerializer(serializers.ModelSerializer):
     fs_category_name = serializers.CharField(
         source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    vessel_dept_name = serializers.CharField(
+        source="vessel_dept.vessel_dept_name", read_only=True, default=""
     )
 
     class Meta:
@@ -357,7 +405,120 @@ class MstInterviewerSerializer(serializers.ModelSerializer):
         return f"{obj.department.dept_dispname} — {obj.user.user_name}"
 
 
+class FsCatgToRigTypeMappingSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(
+        source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
+
+    class Meta:
+        model = FsCatgToRigTypeMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class RankClassificationSerializer(serializers.ModelSerializer):
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
+    rank_class_display = serializers.CharField(source="get_rank_class_display", read_only=True)
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RankClassification
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.rank.rank_name} — {obj.get_rank_class_display()}"
+
+
+class MstEmpNatureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstEmpNature
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstEmpTypeSerializer(serializers.ModelSerializer):
+    emp_nature_name = serializers.CharField(source="emp_nature.emp_nature_name", read_only=True, default="")
+    currency_abrv = serializers.CharField(source="currency.currency_abrv", read_only=True, default="")
+
+    class Meta:
+        model = MstEmpType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class NationalityToEmpTypeMappingSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(
+        source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NationalityToEmpTypeMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.fs_category.fs_category_name} — {obj.nationality} — {obj.emp_type.emp_type_name}"
+
+
+class CrewChangeRelieverMappingSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(
+        source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
+    reliever_rank_name = serializers.CharField(source="reliever_rank.rank_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CrewChangeRelieverMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.rank.rank_name} — {obj.reliever_rank.rank_name}"
+
+
+class MstContinentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstContinent
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCountrySerializer(serializers.ModelSerializer):
+    continent_name = serializers.CharField(source="continent.continent_name", read_only=True, default="")
+
+    class Meta:
+        model = MstCountry
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCountryStateSerializer(serializers.ModelSerializer):
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+
+    class Meta:
+        model = MstCountryState
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstVesselDeptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstVesselDept
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
 class MstLocationSerializer(serializers.ModelSerializer):
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+    country_state_name = serializers.CharField(
+        source="country_state.country_state_name", read_only=True, default=""
+    )
+
     class Meta:
         model = MstLocation
         fields = "__all__"

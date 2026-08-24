@@ -11,6 +11,10 @@ from .models import (
     JobDescriptionHdr,
     MstCertInstitute,
     MstCompetency,
+    MstContinent,
+    MstCountry,
+    MstCountryState,
+    MstVesselDept,
     MstContactExposureType,
     MstContractor,
     MstCostCentre,
@@ -25,11 +29,19 @@ from .models import (
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
+    FsCatgToRigTypeMapping,
+    RankClassification,
+    MstEmpNature,
+    MstEmpType,
+    NationalityToEmpTypeMapping,
+    CrewChangeRelieverMapping,
     MstOperator,
     MstPartsOfBody,
     MstQhseCategory,
     MstRank,
     MstRig,
+    MstRigType,
+    MstRigSubtype,
     MstRigOperation,
     MstUser,
     MstUserFsCatgMapping,
@@ -53,6 +65,10 @@ from .masters_serializers import (
     JobDescriptionHdrSerializer,
     MstCertInstituteSerializer,
     MstCompetencySerializer,
+    MstContinentSerializer,
+    MstCountrySerializer,
+    MstCountryStateSerializer,
+    MstVesselDeptSerializer,
     MstContactExposureTypeSerializer,
     MstContractorSerializer,
     MstCostCentreSerializer,
@@ -67,11 +83,19 @@ from .masters_serializers import (
     MstIndicatorSubtypeSerializer,
     MstIndicatorTypeSerializer,
     MstInterviewerSerializer,
+    FsCatgToRigTypeMappingSerializer,
+    RankClassificationSerializer,
+    MstEmpNatureSerializer,
+    MstEmpTypeSerializer,
+    NationalityToEmpTypeMappingSerializer,
+    CrewChangeRelieverMappingSerializer,
     MstOperatorSerializer,
     MstPartsOfBodySerializer,
     MstQhseCategorySerializer,
     MstRankSerializer,
     MstRigSerializer,
+    MstRigTypeSerializer,
+    MstRigSubtypeSerializer,
     MstRigOperationSerializer,
     MstUserSerializer,
     MstUserFsCatgMappingSerializer,
@@ -228,7 +252,7 @@ class MstContractorViewSet(BaseMasterViewSet):
 
 
 class MstCertInstituteViewSet(BaseMasterViewSet):
-    queryset = MstCertInstitute.objects.all()
+    queryset = MstCertInstitute.objects.select_related("location").all()
     serializer_class = MstCertInstituteSerializer
     entity_key = "masters.cert_institutes"
     name_field = "cert_institute_name"
@@ -244,15 +268,41 @@ class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
 
 
 class MstOperatorViewSet(BaseMasterViewSet):
-    queryset = MstOperator.objects.all()
+    queryset = MstOperator.objects.select_related("location", "country").all()
     serializer_class = MstOperatorSerializer
     entity_key = "masters.operators"
     name_field = "operator_name"
     search_fields = ["operator_name", "operator_short_name"]
 
 
+class MstRigTypeViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    the Rigs form and via direct API access, gated the same as any other
+    master through entity_key."""
+
+    queryset = MstRigType.objects.all()
+    serializer_class = MstRigTypeSerializer
+    entity_key = "masters.rig_types"
+    name_field = "rig_type_name"
+    reference_checks = [("rigs", "Rigs"), ("subtypes", "Rig Subtypes")]
+    search_fields = ["rig_type_name"]
+
+
+class MstRigSubtypeViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    the Rigs form and via direct API access, gated the same as any other
+    master through entity_key."""
+
+    queryset = MstRigSubtype.objects.select_related("rig_type").all()
+    serializer_class = MstRigSubtypeSerializer
+    entity_key = "masters.rig_subtypes"
+    name_field = "rig_subtype_name"
+    reference_checks = [("rigs", "Rigs")]
+    search_fields = ["rig_subtype_name"]
+
+
 class MstRigViewSet(BaseMasterViewSet):
-    queryset = MstRig.objects.all()
+    queryset = MstRig.objects.select_related("rig_type", "rig_subtype").all()
     serializer_class = MstRigSerializer
     entity_key = "masters.rigs"
     name_field = "rig_name"
@@ -261,7 +311,7 @@ class MstRigViewSet(BaseMasterViewSet):
 
 
 class MstCostCentreViewSet(BaseMasterViewSet):
-    queryset = MstCostCentre.objects.select_related("cost_centre_type", "rig").all()
+    queryset = MstCostCentre.objects.select_related("cost_centre_type", "rig", "fs_emp", "location").all()
     serializer_class = MstCostCentreSerializer
     entity_key = "masters.cost_centres"
     name_field = "cost_centre_name"
@@ -308,7 +358,7 @@ class MstFsCategoryViewSet(BaseMasterViewSet):
 
 
 class MstRankViewSet(BaseMasterViewSet):
-    queryset = MstRank.objects.select_related("fs_category").all()
+    queryset = MstRank.objects.select_related("fs_category", "vessel_dept").all()
     serializer_class = MstRankSerializer
     entity_key = "masters.ranks"
     name_field = "rank_name"
@@ -664,18 +714,166 @@ class MstInterviewerViewSet(BaseMasterViewSet):
         return Response({"path": rel_path, "url": url})
 
 
+class FsCatgToRigTypeMappingViewSet(BaseMasterViewSet):
+    """Which Rig Types a Fs Category applies to. GET supports
+    ?fs_category=<id> to scope to one category's checklist — the custom
+    frontend page manages one category's full Rig Type set at a time,
+    toggling mapping_active rather than deleting rows."""
+
+    queryset = FsCatgToRigTypeMapping.objects.select_related("fs_category", "rig_type").all()
+    serializer_class = FsCatgToRigTypeMappingSerializer
+    entity_key = "masters.fs_catg_to_rig_type_mapping"
+    search_fields = ["fs_category__fs_category_name", "rig_type__rig_type_name"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        fs_category_id = self.request.query_params.get("fs_category")
+        if fs_category_id:
+            qs = qs.filter(fs_category_id=fs_category_id)
+        return qs.order_by("fs_category__fs_category_name", "rig_type__rig_type_name")
+
+    def label_for(self, instance):
+        return f"{instance.fs_category.fs_category_name} — {instance.rig_type.rig_type_name}"
+
+
+class RankClassificationViewSet(BaseMasterViewSet):
+    queryset = RankClassification.objects.select_related("rank").all()
+    serializer_class = RankClassificationSerializer
+    entity_key = "masters.rank_classification"
+    search_fields = ["rank__rank_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("rank__rank_name")
+
+    def label_for(self, instance):
+        return f"{instance.rank.rank_name} — {instance.get_rank_class_display()}"
+
+
+class MstEmpNatureViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Emp Type and via direct API access."""
+
+    queryset = MstEmpNature.objects.all()
+    serializer_class = MstEmpNatureSerializer
+    entity_key = "masters.emp_natures"
+    name_field = "emp_nature_name"
+    reference_checks = [("emp_types", "Emp Types")]
+    search_fields = ["emp_nature_name"]
+
+
+class MstEmpTypeViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Nationality To Emp Type Mapping and via direct API access."""
+
+    queryset = MstEmpType.objects.select_related("emp_nature", "currency").all()
+    serializer_class = MstEmpTypeSerializer
+    entity_key = "masters.emp_types"
+    name_field = "emp_type_name"
+    reference_checks = [("nationality_mappings", "Nationality To Emp Type Mapping")]
+    search_fields = ["emp_type_name"]
+
+
+class NationalityToEmpTypeMappingViewSet(BaseMasterViewSet):
+    queryset = NationalityToEmpTypeMapping.objects.select_related("fs_category", "emp_type").all()
+    serializer_class = NationalityToEmpTypeMappingSerializer
+    entity_key = "masters.nationality_to_emp_type_mapping"
+    search_fields = ["fs_category__fs_category_name", "emp_type__emp_type_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("fs_category__fs_category_name", "nationality")
+
+    def label_for(self, instance):
+        return f"{instance.fs_category.fs_category_name} — {instance.nationality} — {instance.emp_type.emp_type_name}"
+
+
+class CrewChangeRelieverMappingViewSet(BaseMasterViewSet):
+    queryset = CrewChangeRelieverMapping.objects.select_related("fs_category", "rank", "reliever_rank").all()
+    serializer_class = CrewChangeRelieverMappingSerializer
+    entity_key = "masters.crew_change_reliever_mapping"
+    search_fields = ["rank__rank_name", "reliever_rank__rank_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("rank__rank_name")
+
+    def label_for(self, instance):
+        return f"{instance.rank.rank_name} — {instance.reliever_rank.rank_name}"
+
+
 # ── Project masters ──────────────────────────────────────────────────────────
+
+
+class MstContinentViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Countries and via direct API access, gated the same as any other master
+    through entity_key."""
+
+    queryset = MstContinent.objects.all()
+    serializer_class = MstContinentSerializer
+    entity_key = "masters.continents"
+    name_field = "continent_name"
+    reference_checks = [("countries", "Countries")]
+    search_fields = ["continent_name"]
+
+
+class MstCountryViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Locations/Operators and via direct API access."""
+
+    queryset = MstCountry.objects.select_related("continent").all()
+    serializer_class = MstCountrySerializer
+    entity_key = "masters.countries"
+    name_field = "country_name"
+    reference_checks = [("states", "Country States"), ("locations", "Locations"), ("operators", "Operators")]
+    search_fields = ["country_name", "country_known_name", "country_iso_cd"]
+
+
+class MstCountryStateViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Locations and via direct API access."""
+
+    queryset = MstCountryState.objects.select_related("country").all()
+    serializer_class = MstCountryStateSerializer
+    entity_key = "masters.country_states"
+    name_field = "country_state_name"
+    reference_checks = [("locations", "Locations")]
+    search_fields = ["country_state_name", "country_state_abrv"]
+
+
+class MstVesselDeptViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Ranks and via direct API access."""
+
+    queryset = MstVesselDept.objects.all()
+    serializer_class = MstVesselDeptSerializer
+    entity_key = "masters.vessel_depts"
+    name_field = "vessel_dept_name"
+    reference_checks = [("ranks", "Ranks")]
+    search_fields = ["vessel_dept_name"]
 
 
 class MstLocationViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only lookup for Project Contract's Location field. ~700 rows —
     paginated/searched like every other lookup so the frontend combobox can
-    tell from `count` whether it's safe to preload in full."""
+    tell from `count` whether it's safe to preload in full.
 
-    queryset = MstLocation.objects.filter(location_active="Y").order_by("location_name")
+    GET supports ?country=<id> so a form can narrow the Location picker to
+    whatever Country was picked first (e.g. Operators)."""
+
+    queryset = (
+        MstLocation.objects.select_related("country", "country_state")
+        .filter(location_active="Y")
+        .order_by("location_name")
+    )
     serializer_class = MstLocationSerializer
     permission_classes = [IsAuthenticated]
     search_fields = ["location_name"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        country_id = self.request.query_params.get("country")
+        if country_id:
+            qs = qs.filter(country_id=country_id)
+        return qs
 
 
 class MstCurrencyViewSet(viewsets.ReadOnlyModelViewSet):

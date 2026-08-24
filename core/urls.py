@@ -2,9 +2,11 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import masters_views, views
+from . import masters_views, reports_views, views
 
 router = DefaultRouter()
+router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
+router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")
 router.register("masters/contractors", masters_views.MstContractorViewSet, basename="mst-contractor")
 router.register("masters/cert-institutes", masters_views.MstCertInstituteViewSet, basename="mst-cert-institute")
@@ -14,6 +16,8 @@ router.register(
     basename="mst-email-notification-type",
 )
 router.register("masters/operators", masters_views.MstOperatorViewSet, basename="mst-operator")
+router.register("masters/rig-types", masters_views.MstRigTypeViewSet, basename="mst-rig-type")
+router.register("masters/rig-subtypes", masters_views.MstRigSubtypeViewSet, basename="mst-rig-subtype")
 router.register("masters/rigs", masters_views.MstRigViewSet, basename="mst-rig")
 router.register("masters/cost-centres", masters_views.MstCostCentreViewSet, basename="mst-cost-centre")
 router.register("masters/competency", masters_views.MstCompetencyViewSet, basename="mst-competency")
@@ -79,6 +83,32 @@ router.register(
     masters_views.MstInterviewerViewSet,
     basename="interviewer-mapping",
 )
+router.register(
+    "masters/fs-catg-to-rig-type-mapping",
+    masters_views.FsCatgToRigTypeMappingViewSet,
+    basename="fs-catg-to-rig-type-mapping",
+)
+router.register(
+    "masters/rank-classification",
+    masters_views.RankClassificationViewSet,
+    basename="rank-classification",
+)
+router.register("masters/emp-natures", masters_views.MstEmpNatureViewSet, basename="mst-emp-nature")
+router.register("masters/emp-types", masters_views.MstEmpTypeViewSet, basename="mst-emp-type")
+router.register(
+    "masters/nationality-to-emp-type-mapping",
+    masters_views.NationalityToEmpTypeMappingViewSet,
+    basename="nationality-to-emp-type-mapping",
+)
+router.register(
+    "masters/crew-change-reliever-mapping",
+    masters_views.CrewChangeRelieverMappingViewSet,
+    basename="crew-change-reliever-mapping",
+)
+router.register("masters/continents", masters_views.MstContinentViewSet, basename="mst-continent")
+router.register("masters/countries", masters_views.MstCountryViewSet, basename="mst-country")
+router.register("masters/country-states", masters_views.MstCountryStateViewSet, basename="mst-country-state")
+router.register("masters/vessel-depts", masters_views.MstVesselDeptViewSet, basename="mst-vessel-dept")
 router.register("masters/locations", masters_views.MstLocationViewSet, basename="location")
 router.register("masters/currencies", masters_views.MstCurrencyViewSet, basename="currency")
 router.register("masters/drilling-rate-types", masters_views.MstDrillingRateViewSet, basename="drilling-rate-type")

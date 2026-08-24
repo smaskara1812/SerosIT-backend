@@ -75,6 +75,7 @@ _ACTION_PERM = {
     "partial_update": "edit",
     "destroy": "delete",
     "check_delete": "view",
+    "export": "export",
 }
 
 
