@@ -35,6 +35,15 @@ from .models import (
     MstEmpType,
     NationalityToEmpTypeMapping,
     CrewChangeRelieverMapping,
+    MstWorkgroup,
+    WkgrpIndicatorTypeMapping,
+    MstOrganisationalGrp,
+    MstBusinessGrp,
+    MstCompany,
+    CostCentreToCompanyMapping,
+    RigSiteMapping,
+    RigCrewException,
+    CrewScheduleException,
     MstOperator,
     MstPartsOfBody,
     MstQhseCategory,
@@ -89,6 +98,15 @@ from .masters_serializers import (
     MstEmpTypeSerializer,
     NationalityToEmpTypeMappingSerializer,
     CrewChangeRelieverMappingSerializer,
+    MstWorkgroupSerializer,
+    WkgrpIndicatorTypeMappingSerializer,
+    MstOrganisationalGrpSerializer,
+    MstBusinessGrpSerializer,
+    MstCompanySerializer,
+    CostCentreToCompanyMappingSerializer,
+    RigSiteMappingSerializer,
+    RigCrewExceptionSerializer,
+    CrewScheduleExceptionSerializer,
     MstOperatorSerializer,
     MstPartsOfBodySerializer,
     MstQhseCategorySerializer,
@@ -797,6 +815,123 @@ class CrewChangeRelieverMappingViewSet(BaseMasterViewSet):
 
     def label_for(self, instance):
         return f"{instance.rank.rank_name} — {instance.reliever_rank.rank_name}"
+
+
+class MstWorkgroupViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Workgroup To Indicator Type Mapping and via direct API access."""
+
+    queryset = MstWorkgroup.objects.all()
+    serializer_class = MstWorkgroupSerializer
+    entity_key = "masters.workgroups"
+    name_field = "workgroup_name"
+    reference_checks = [("indicator_type_mappings", "Workgroup To Indicator Type Mapping")]
+    search_fields = ["workgroup_name"]
+
+
+class WkgrpIndicatorTypeMappingViewSet(BaseMasterViewSet):
+    queryset = WkgrpIndicatorTypeMapping.objects.select_related("workgroup", "indicator_type").all()
+    serializer_class = WkgrpIndicatorTypeMappingSerializer
+    entity_key = "masters.wkgrp_indicator_type_mapping"
+    search_fields = ["workgroup__workgroup_name", "indicator_type__indicator_type_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("workgroup__workgroup_name", "indicator_type__indicator_type_name")
+
+    def label_for(self, instance):
+        return f"{instance.workgroup.workgroup_name} — {instance.indicator_type.indicator_type_name}"
+
+
+class MstOrganisationalGrpViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Company and via direct API access."""
+
+    queryset = MstOrganisationalGrp.objects.all()
+    serializer_class = MstOrganisationalGrpSerializer
+    entity_key = "masters.organisational_grps"
+    name_field = "organisational_grp_name"
+    reference_checks = [("companies", "Companies")]
+    search_fields = ["organisational_grp_name"]
+
+
+class MstBusinessGrpViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Company and via direct API access."""
+
+    queryset = MstBusinessGrp.objects.select_related("parent_business_grp").all()
+    serializer_class = MstBusinessGrpSerializer
+    entity_key = "masters.business_grps"
+    name_field = "business_grp_name"
+    reference_checks = [("companies", "Companies"), ("children", "Business Groups")]
+    search_fields = ["business_grp_name", "business_grp_abrv"]
+
+
+class MstCompanyViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Cost Centre To Company Mapping and via direct API access."""
+
+    queryset = MstCompany.objects.select_related(
+        "organisational_grp", "business_grp", "parent_company", "country", "currency"
+    ).all()
+    serializer_class = MstCompanySerializer
+    entity_key = "masters.companies"
+    name_field = "company_name"
+    reference_checks = [("cost_centre_mappings", "Cost Centre To Company Mapping"), ("subsidiaries", "Companies")]
+    search_fields = ["company_name", "company_abrv", "company_code"]
+
+
+class CostCentreToCompanyMappingViewSet(BaseMasterViewSet):
+    queryset = CostCentreToCompanyMapping.objects.select_related("company", "cost_centre").all()
+    serializer_class = CostCentreToCompanyMappingSerializer
+    entity_key = "masters.cost_centre_to_company_mapping"
+    search_fields = ["company__company_name", "cost_centre__cost_centre_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("company__company_name")
+
+    def label_for(self, instance):
+        return f"{instance.company.company_name} — {instance.cost_centre.cost_centre_name}"
+
+
+class RigSiteMappingViewSet(BaseMasterViewSet):
+    queryset = RigSiteMapping.objects.select_related(
+        "rig", "company", "location", "contact_fs_emp_1", "contact_fs_emp_2"
+    ).all()
+    serializer_class = RigSiteMappingSerializer
+    entity_key = "masters.rig_site_mapping"
+    search_fields = ["rig__rig_name", "company__company_name", "camp_office_addr"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("rig__rig_name")
+
+    def label_for(self, instance):
+        return f"{instance.rig.rig_name} — {instance.company.company_name}"
+
+
+class RigCrewExceptionViewSet(BaseMasterViewSet):
+    queryset = RigCrewException.objects.select_related("fs_category", "emp_type", "rank", "fs_emp").all()
+    serializer_class = RigCrewExceptionSerializer
+    entity_key = "masters.rig_crew_exceptions"
+    search_fields = ["fs_category__fs_category_name", "rank__rank_name", "emp_type__emp_type_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("fs_category__fs_category_name")
+
+    def label_for(self, instance):
+        return str(instance)
+
+
+class CrewScheduleExceptionViewSet(BaseMasterViewSet):
+    queryset = CrewScheduleException.objects.select_related("fs_category", "emp_type", "rank", "fs_emp").all()
+    serializer_class = CrewScheduleExceptionSerializer
+    entity_key = "masters.crew_schedule_exceptions"
+    search_fields = ["fs_category__fs_category_name", "rank__rank_name", "emp_type__emp_type_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("fs_category__fs_category_name")
+
+    def label_for(self, instance):
+        return str(instance)
 
 
 # ── Project masters ──────────────────────────────────────────────────────────

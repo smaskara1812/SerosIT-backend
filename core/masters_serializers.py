@@ -28,6 +28,15 @@ from .models import (
     MstEmpType,
     NationalityToEmpTypeMapping,
     CrewChangeRelieverMapping,
+    MstWorkgroup,
+    WkgrpIndicatorTypeMapping,
+    MstOrganisationalGrp,
+    MstBusinessGrp,
+    MstCompany,
+    CostCentreToCompanyMapping,
+    RigSiteMapping,
+    RigCrewException,
+    CrewScheduleException,
     MstOperator,
     MstPartsOfBody,
     MstQhseCategory,
@@ -479,6 +488,135 @@ class CrewChangeRelieverMappingSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj):
         return f"{obj.rank.rank_name} — {obj.reliever_rank.rank_name}"
+
+
+class MstWorkgroupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstWorkgroup
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class WkgrpIndicatorTypeMappingSerializer(serializers.ModelSerializer):
+    workgroup_name = serializers.CharField(source="workgroup.workgroup_name", read_only=True, default="")
+    indicator_type_name = serializers.CharField(
+        source="indicator_type.indicator_type_name", read_only=True, default=""
+    )
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WkgrpIndicatorTypeMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.workgroup.workgroup_name} — {obj.indicator_type.indicator_type_name}"
+
+
+class MstOrganisationalGrpSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstOrganisationalGrp
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstBusinessGrpSerializer(serializers.ModelSerializer):
+    parent_business_grp_name = serializers.CharField(
+        source="parent_business_grp.business_grp_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstBusinessGrp
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCompany
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class CostCentreToCompanyMappingSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.company_name", read_only=True, default="")
+    cost_centre_name = serializers.CharField(source="cost_centre.cost_centre_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CostCentreToCompanyMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.company.company_name} — {obj.cost_centre.cost_centre_name}"
+
+
+class RigSiteMappingSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    company_name = serializers.CharField(source="company.company_name", read_only=True, default="")
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
+    contact_fs_emp_1_name = serializers.SerializerMethodField()
+    contact_fs_emp_2_name = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RigSiteMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_contact_fs_emp_1_name(self, obj):
+        return str(obj.contact_fs_emp_1) if obj.contact_fs_emp_1_id else ""
+
+    def get_contact_fs_emp_2_name(self, obj):
+        return str(obj.contact_fs_emp_2) if obj.contact_fs_emp_2_id else ""
+
+    def get_display_name(self, obj):
+        return f"{obj.rig.rig_name} — {obj.company.company_name}"
+
+
+class RigCrewExceptionSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(
+        source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True, default="")
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
+    fs_emp_name = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RigCrewException
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_fs_emp_name(self, obj):
+        return str(obj.fs_emp) if obj.fs_emp_id else ""
+
+    def get_display_name(self, obj):
+        exception_for = obj.fs_emp or obj.rank or obj.emp_type
+        return f"{obj.fs_category.fs_category_name} — {exception_for}" if exception_for else obj.fs_category.fs_category_name
+
+
+class CrewScheduleExceptionSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(
+        source="fs_category.fs_category_name", read_only=True, default=""
+    )
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True, default="")
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
+    fs_emp_name = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CrewScheduleException
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_fs_emp_name(self, obj):
+        return str(obj.fs_emp) if obj.fs_emp_id else ""
+
+    def get_display_name(self, obj):
+        exception_for = obj.fs_emp or obj.rank or obj.emp_type
+        return f"{obj.fs_category.fs_category_name} — {exception_for}" if exception_for else obj.fs_category.fs_category_name
 
 
 class MstContinentSerializer(serializers.ModelSerializer):

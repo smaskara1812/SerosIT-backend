@@ -105,6 +105,33 @@ router.register(
     masters_views.CrewChangeRelieverMappingViewSet,
     basename="crew-change-reliever-mapping",
 )
+router.register("masters/workgroups", masters_views.MstWorkgroupViewSet, basename="mst-workgroup")
+router.register(
+    "masters/wkgrp-indicator-type-mapping",
+    masters_views.WkgrpIndicatorTypeMappingViewSet,
+    basename="wkgrp-indicator-type-mapping",
+)
+router.register(
+    "masters/organisational-grps", masters_views.MstOrganisationalGrpViewSet, basename="mst-organisational-grp"
+)
+router.register("masters/business-grps", masters_views.MstBusinessGrpViewSet, basename="mst-business-grp")
+router.register("masters/companies", masters_views.MstCompanyViewSet, basename="mst-company")
+router.register(
+    "masters/cost-centre-to-company-mapping",
+    masters_views.CostCentreToCompanyMappingViewSet,
+    basename="cost-centre-to-company-mapping",
+)
+router.register(
+    "masters/rig-site-mapping", masters_views.RigSiteMappingViewSet, basename="rig-site-mapping"
+)
+router.register(
+    "masters/rig-crew-exceptions", masters_views.RigCrewExceptionViewSet, basename="rig-crew-exception"
+)
+router.register(
+    "masters/crew-schedule-exceptions",
+    masters_views.CrewScheduleExceptionViewSet,
+    basename="crew-schedule-exception",
+)
 router.register("masters/continents", masters_views.MstContinentViewSet, basename="mst-continent")
 router.register("masters/countries", masters_views.MstCountryViewSet, basename="mst-country")
 router.register("masters/country-states", masters_views.MstCountryStateViewSet, basename="mst-country-state")

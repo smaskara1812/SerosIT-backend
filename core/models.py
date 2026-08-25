@@ -1091,6 +1091,298 @@ class CrewChangeRelieverMapping(models.Model):
         return f"{self.rank.rank_name} — {self.reliever_rank.rank_name}"
 
 
+class MstWorkgroup(models.Model):
+    workgroup_id = models.AutoField(primary_key=True)
+    workgroup_name = models.CharField(max_length=15)
+    workgroup_order = models.IntegerField(default=0)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_workgroup"
+
+    def __str__(self):
+        return self.workgroup_name
+
+
+class WkgrpIndicatorTypeMapping(models.Model):
+    """Straight copy of legacy eos_Wkgrp_Indicator_Type_Mapping — first of
+    the HSE Mapping Masters group."""
+
+    wkgrp_ind_type_map_id = models.AutoField(primary_key=True)
+    workgroup = models.ForeignKey(
+        MstWorkgroup, db_column="workgroup_id", on_delete=models.PROTECT, related_name="indicator_type_mappings"
+    )
+    indicator_type = models.ForeignKey(
+        MstIndicatorType, db_column="indicator_type_id", on_delete=models.PROTECT, related_name="workgroup_mappings"
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "wkgrp_indicator_type_mapping"
+
+    def __str__(self):
+        return f"{self.workgroup.workgroup_name} — {self.indicator_type.indicator_type_name}"
+
+
+class MstOrganisationalGrp(models.Model):
+    organisational_grp_id = models.AutoField(primary_key=True)
+    organisational_grp_name = models.CharField(max_length=50, blank=True)
+    organisational_grp_abrv = models.CharField(max_length=10, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_organisational_grp"
+
+    def __str__(self):
+        return self.organisational_grp_name
+
+
+class MstBusinessGrp(models.Model):
+    business_grp_id = models.AutoField(primary_key=True)
+    business_grp_name = models.CharField(max_length=50)
+    parent_business_grp = models.ForeignKey(
+        "self",
+        db_column="parent_business_grp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="children",
+    )
+    business_grp_abrv = models.CharField(max_length=15)
+    business_grp_order = models.IntegerField(default=0)
+    business_grp_from = models.DateField()
+    business_grp_to = models.DateField(null=True, blank=True)
+    business_grp_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_business_grp"
+
+    def __str__(self):
+        return self.business_grp_name
+
+
+class MstCompany(models.Model):
+    """No dedicated nav page yet — reachable only as a dropdown source for
+    Cost Centre To Company Mapping and via direct API access. Kept to the
+    columns that matter for identifying/displaying a company rather than
+    every legacy SAP-integration field (Company_PAN/TAN, SAP_Company,
+    Payroll_Area, Personnel_Area, etc. — unused outside SAP sync)."""
+
+    company_id = models.AutoField(primary_key=True)
+    organisational_grp = models.ForeignKey(
+        MstOrganisationalGrp, db_column="organisational_grp_id", on_delete=models.PROTECT, related_name="companies"
+    )
+    business_grp = models.ForeignKey(
+        MstBusinessGrp, db_column="business_grp_id", on_delete=models.PROTECT, related_name="companies"
+    )
+    company_name = models.CharField(max_length=75)
+    parent_company = models.ForeignKey(
+        "self",
+        db_column="parent_company_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="subsidiaries",
+    )
+    company_abrv = models.CharField(max_length=8)
+    company_code = models.CharField(max_length=4, null=True, blank=True)
+    country = models.ForeignKey(
+        "MstCountry", db_column="country_id", on_delete=models.PROTECT, related_name="companies"
+    )
+    currency = models.ForeignKey(
+        "MstCurrency", db_column="currency_id", on_delete=models.PROTECT, related_name="companies"
+    )
+    company_order = models.IntegerField(null=True, blank=True)
+    company_from = models.DateField()
+    company_to = models.DateField(null=True, blank=True)
+    company_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_company"
+
+    def __str__(self):
+        return self.company_name
+
+
+class CostCentreToCompanyMapping(models.Model):
+    """Straight copy of legacy eos_Cost_Centre_To_Company_Mapping — legacy's
+    own id column (Comp_To_CC_Map_Id) isn't actually unique (one value had
+    two rows), so this uses a fresh auto-assigned PK instead of preserving
+    it."""
+
+    company = models.ForeignKey(
+        MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="cost_centre_mappings"
+    )
+    cost_centre = models.ForeignKey(
+        MstCostCentre, db_column="cost_centre_id", on_delete=models.PROTECT, related_name="company_mappings"
+    )
+    mapping_from = models.DateField()
+    mapping_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "cost_centre_to_company_mapping"
+
+    def __str__(self):
+        return f"{self.company.company_name} — {self.cost_centre.cost_centre_name}"
+
+
+class RigSiteMapping(models.Model):
+    """Straight copy of legacy eos_Rig_Site_Mapping — camp office/site
+    contact details for a rig under a company, at a location."""
+
+    rig_site_mapping_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="site_mappings")
+    company = models.ForeignKey(
+        MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="rig_site_mappings"
+    )
+    camp_office_addr = models.CharField(max_length=150)
+    contact_fs_emp_1 = models.ForeignKey(
+        MstEmployee,
+        db_column="contact_fs_emp_id_1",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="rig_site_contacts_1",
+    )
+    contact_tel_no_1 = models.CharField(max_length=10, null=True, blank=True)
+    contact_fs_emp_2 = models.ForeignKey(
+        MstEmployee,
+        db_column="contact_fs_emp_id_2",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="rig_site_contacts_2",
+    )
+    contact_tel_no_2 = models.CharField(max_length=10, null=True, blank=True)
+    location = models.ForeignKey(
+        "MstLocation", db_column="location_id", on_delete=models.PROTECT, related_name="rig_site_mappings"
+    )
+    site_from = models.DateField()
+    site_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_site_mapping"
+
+    def __str__(self):
+        return f"{self.rig.rig_name} — {self.company.company_name}"
+
+
+class RigCrewException(models.Model):
+    """Straight copy of legacy eos_Rig_Crew_Exceptions — an override that
+    excludes/exempts a specific Emp Type, Rank, or individual Employee
+    (all optional/independent — legacy's own data only ever sets one at a
+    time) from a Fs Category's normal crew rules, for a date range."""
+
+    rig_crew_exception_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="crew_exceptions"
+    )
+    emp_type = models.ForeignKey(
+        MstEmpType,
+        db_column="emp_type_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="crew_exceptions",
+    )
+    rank = models.ForeignKey(
+        MstRank, db_column="rank_id", null=True, blank=True, on_delete=models.PROTECT, related_name="crew_exceptions"
+    )
+    fs_emp = models.ForeignKey(
+        MstEmployee,
+        db_column="fs_emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="crew_exceptions",
+    )
+    exception_from = models.DateField()
+    exception_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_crew_exception"
+
+    def __str__(self):
+        return f"{self.fs_category.fs_category_name} exception"
+
+
+class CrewScheduleException(models.Model):
+    """Straight copy of legacy eos_Crew_Schedule_Exceptions — same shape as
+    RigCrewException (an override targeting an Emp Type, Rank, or individual
+    Employee, all optional/independent) but for crew scheduling rather than
+    rig crew rules."""
+
+    cs_exception_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="schedule_exceptions"
+    )
+    emp_type = models.ForeignKey(
+        MstEmpType,
+        db_column="emp_type_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="schedule_exceptions",
+    )
+    rank = models.ForeignKey(
+        MstRank,
+        db_column="rank_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="schedule_exceptions",
+    )
+    fs_emp = models.ForeignKey(
+        MstEmployee,
+        db_column="fs_emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="schedule_exceptions",
+    )
+    exception_from = models.DateField()
+    exception_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "crew_schedule_exception"
+
+    def __str__(self):
+        return f"{self.fs_category.fs_category_name} exception"
+
+
 # ── Project masters ──────────────────────────────────────────────────────────
 # Location/Currency/Drilling Rate (type) are plain lookups with no CRUD page
 # of their own in legacy either — they only ever populate a dropdown on the
