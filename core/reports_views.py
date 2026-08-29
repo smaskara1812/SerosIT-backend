@@ -1,7 +1,7 @@
 import csv
 import datetime
 
-from django.db.models import F, Func, IntegerField
+from django.db.models import F, Func, IntegerField, Prefetch
 from django.db.models.functions import Coalesce, ExtractYear, Now
 from django.http import HttpResponse
 from rest_framework import viewsets
@@ -9,9 +9,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from . import audit as _audit
-from .models import HazardCard, Incident
+from .models import HazardCard, Incident, ItAssetHolder, MstItAsset
 from .permissions import HasMenuPermission
-from .reports_serializers import SEVERITY_LABELS, HazardCardSerializer, IncidentSerializer
+from .reports_serializers import (
+    SEVERITY_LABELS,
+    HazardCardSerializer,
+    IncidentSerializer,
+    ItAssetReportSerializer,
+)
 
 
 def _audit_export(request, entity_key, label, row_count):
@@ -286,4 +291,102 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
                 ]
             )
         _audit_export(request, self.entity_key, "Hazard Cards export", row_count)
+        return response
+
+
+class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only 'Asset Information' report — legacy's Print/Select-report
+    screen (Asset Report / Asset Tech Dtls are the same underlying rows,
+    the frontend just switches columns). GET supports ?holder_company=,
+    ?location=, ?purchase_date_from=/?purchase_date_to= (YYYY-MM-DD), ?active=(Y|N), ?search=
+    (sr no/tag/SAP code) and ?ordering=sr_no (prefix '-' to reverse).
+    ?it_asset_type=, ?it_asset_mfg=, ?it_asset_model= and ?vendor= each
+    accept a comma-separated list of ids for multi-select filtering."""
+
+    queryset = MstItAsset.objects.select_related(
+        "it_asset_type", "it_asset_subtype", "it_asset_mfg", "it_asset_model", "own_company", "vendor"
+    ).prefetch_related(
+        Prefetch(
+            "holders",
+            queryset=ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
+            .select_related("emp", "holder_company", "company_loc")
+            .order_by("-it_asset_holder_from"),
+            to_attr="current_holders",
+        )
+    )
+    serializer_class = ItAssetReportSerializer
+    entity_key = "reports.it_assets"
+    permission_classes = [HasMenuPermission]
+    search_fields = ["it_asset_sr_no", "it_asset_tag", "it_asset_sap_code"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        params = self.request.query_params
+
+        holder_company = params.get("holder_company")
+        if holder_company:
+            qs = qs.filter(holders__holder_company_id=holder_company, holders__it_asset_holder_to__isnull=True)
+        location = params.get("location")
+        if location:
+            qs = qs.filter(holders__company_loc_id=location, holders__it_asset_holder_to__isnull=True)
+        it_asset_type = params.get("it_asset_type")
+        if it_asset_type:
+            qs = qs.filter(it_asset_type_id__in=it_asset_type.split(","))
+        it_asset_mfg = params.get("it_asset_mfg")
+        if it_asset_mfg:
+            qs = qs.filter(it_asset_mfg_id__in=it_asset_mfg.split(","))
+        it_asset_model = params.get("it_asset_model")
+        if it_asset_model:
+            qs = qs.filter(it_asset_model_id__in=it_asset_model.split(","))
+        vendor = params.get("vendor")
+        if vendor:
+            qs = qs.filter(vendor_id__in=vendor.split(","))
+        purchase_date_from = params.get("purchase_date_from")
+        if purchase_date_from:
+            qs = qs.filter(it_asset_pur_dt__gte=purchase_date_from)
+        purchase_date_to = params.get("purchase_date_to")
+        if purchase_date_to:
+            qs = qs.filter(it_asset_pur_dt__lte=purchase_date_to)
+        active = params.get("active")
+        if active in ("Y", "N"):
+            qs = qs.filter(it_asset_active=active)
+        if holder_company or location:
+            qs = qs.distinct()
+
+        ordering = params.get("ordering", "sr_no")
+        reverse = ordering.startswith("-")
+        field = "it_asset_sr_no"
+        qs = qs.order_by(f"-{field}" if reverse else field)
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request):
+        qs = self.get_queryset()
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="it_assets_report.csv"'
+        writer = csv.writer(response)
+        writer.writerow(
+            [
+                "Asset Type", "Serial No", "Asset Tag", "SAP Code", "Make", "Model", "Subtype", "RAM", "HDD",
+                "Specifications", "Product No", "MAC Address", "Owned By", "Holding Company", "Employee/Holder",
+                "Location", "Holder Remark", "Vendor", "Purchase Date", "Warranty Date", "Active",
+            ]
+        )
+        row_count = 0
+        for r in qs.iterator(chunk_size=200):
+            row_count += 1
+            ser = self.serializer_class(r)
+            d = ser.data
+            writer.writerow(
+                [
+                    d["it_asset_type_name"], d["it_asset_sr_no"], d["it_asset_tag"] or "",
+                    d["it_asset_sap_code"] or "", d["it_asset_mfg_name"], d["it_asset_model_name"],
+                    d["it_asset_subtype_name"], d["it_asset_ram"] or "", d["it_asset_hdd"] or "",
+                    d["it_asset_particulars"] or "", d["it_asset_product_no"] or "", d["it_asset_mac_addr"] or "",
+                    d["own_company_abrv"], d["holding_company_abrv"], d["holder_name"], d["location_name"],
+                    d["holder_remark"], d["vendor_name"], d["it_asset_pur_dt"] or "",
+                    d["it_asset_warranty_upto"] or "", d["it_asset_active"],
+                ]
+            )
+        _audit_export(request, self.entity_key, "IT Assets report export", row_count)
         return response

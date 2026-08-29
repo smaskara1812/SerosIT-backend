@@ -61,6 +61,14 @@ from .models import (
     ProjectDrillingRate,
     ReportingStructure,
     TravelEligibility,
+    MstItAssetType,
+    MstItAssetSubtype,
+    MstItAssetMfg,
+    MstItAssetModel,
+    MstxVendor,
+    MstItAsset,
+    MstCompanyLocation,
+    ItAssetHolder,
 )
 
 
@@ -740,3 +748,142 @@ class MstDrillingWorkShiftSerializer(serializers.ModelSerializer):
         model = MstDrillingWorkShift
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAssetTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstItAssetType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAssetSubtypeSerializer(serializers.ModelSerializer):
+    it_asset_type_name = serializers.CharField(
+        source="it_asset_type.it_asset_type_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstItAssetSubtype
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAssetMfgSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstItAssetMfg
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAssetModelSerializer(serializers.ModelSerializer):
+    # Lets the IT Assets form derive Subtype/Type/Manufacturer straight from
+    # a picked Model without a second round trip (same pattern as Rig
+    # Subtype deriving Rig Type).
+    it_asset_subtype_name = serializers.CharField(
+        source="it_asset_subtype.it_asset_subtype_name", read_only=True, default=""
+    )
+    it_asset_type = serializers.IntegerField(
+        source="it_asset_subtype.it_asset_type_id", read_only=True, default=None
+    )
+    it_asset_type_name = serializers.CharField(
+        source="it_asset_subtype.it_asset_type.it_asset_type_name", read_only=True, default=""
+    )
+    it_asset_mfg_name = serializers.CharField(
+        source="it_asset_mfg.it_asset_mfg_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstItAssetModel
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstxVendorSerializer(serializers.ModelSerializer):
+    vendor_type_name = serializers.CharField(
+        source="vendor_type.vendor_type_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstxVendor
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAssetSerializer(serializers.ModelSerializer):
+    it_asset_model_name = serializers.CharField(
+        source="it_asset_model.it_asset_model_name", read_only=True, default=""
+    )
+    it_asset_type_name = serializers.CharField(
+        source="it_asset_type.it_asset_type_name", read_only=True, default=""
+    )
+    it_asset_subtype_name = serializers.CharField(
+        source="it_asset_subtype.it_asset_subtype_name", read_only=True, default=""
+    )
+    it_asset_mfg_name = serializers.CharField(
+        source="it_asset_mfg.it_asset_mfg_name", read_only=True, default=""
+    )
+    own_company_name = serializers.CharField(
+        source="own_company.company_name", read_only=True, default=""
+    )
+    cur_company_name = serializers.CharField(
+        source="cur_company.company_name", read_only=True, default=""
+    )
+    vendor_name = serializers.CharField(source="vendor.vendor_name", read_only=True, default="")
+
+    class Meta:
+        model = MstItAsset
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCompanyLocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCompanyLocation
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class ItAssetHolderSerializer(serializers.ModelSerializer):
+    # Read-only context about the asset being (re)assigned — lets the IT
+    # Assets Holder form show what it's holding without a second round trip,
+    # the same way the IT Assets form derives Type/Subtype from Model.
+    it_asset_sr_no = serializers.CharField(source="it_asset.it_asset_sr_no", read_only=True, default="")
+    it_asset_tag = serializers.CharField(source="it_asset.it_asset_tag", read_only=True, default="")
+    it_asset_sap_code = serializers.CharField(
+        source="it_asset.it_asset_sap_code", read_only=True, default=""
+    )
+    it_asset_model_name = serializers.CharField(
+        source="it_asset.it_asset_model.it_asset_model_name", read_only=True, default=""
+    )
+    it_asset_subtype_name = serializers.CharField(
+        source="it_asset.it_asset_subtype.it_asset_subtype_name", read_only=True, default=""
+    )
+    it_asset_mfg_name = serializers.CharField(
+        source="it_asset.it_asset_mfg.it_asset_mfg_name", read_only=True, default=""
+    )
+    it_asset_active = serializers.CharField(source="it_asset.it_asset_active", read_only=True, default="")
+    own_company_name = serializers.CharField(
+        source="it_asset.own_company.company_name", read_only=True, default=""
+    )
+    holder_company_name = serializers.CharField(
+        source="holder_company.company_name", read_only=True, default=""
+    )
+    holder_company_abrv = serializers.CharField(
+        source="holder_company.company_abrv", read_only=True, default=""
+    )
+    emp_name = serializers.SerializerMethodField()
+    department_name = serializers.CharField(
+        source="department.dept_dispname", read_only=True, default=""
+    )
+    department_abrv = serializers.CharField(source="department.dept_abrv", read_only=True, default="")
+    company_loc_name = serializers.CharField(
+        source="company_loc.company_loc_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = ItAssetHolder
+        fields = "__all__"
+        read_only_fields = ["mod_user_id", "mod_dt"]
+
+    def get_emp_name(self, obj):
+        return str(obj.emp) if obj.emp_id else ""

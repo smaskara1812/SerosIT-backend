@@ -2075,3 +2075,397 @@ class HazardCard(models.Model):
 
     def __str__(self):
         return f"{self.haz_id_card_no} — {self.event_dt:%Y-%m-%d}"
+
+
+# ── IT Module lookups ─────────────────────────────────────────────────────
+
+
+class MstVendorType(models.Model):
+    vendor_type_id = models.AutoField(primary_key=True)
+    vendor_type_name = models.CharField(max_length=40)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_vendor_type"
+
+    def __str__(self):
+        return self.vendor_type_name
+
+
+class MstCompanyLocation(models.Model):
+    """Kept to the columns that matter for identifying/using a company
+    site — drops legacy's VOIP/EssarNet telephony-integration columns."""
+
+    company_loc_id = models.AutoField(primary_key=True)
+    company_loc_name = models.CharField(max_length=75)
+    company_loc_abrv = models.CharField(max_length=8, null=True, blank=True)
+    company_loc_address = models.CharField(max_length=150, null=True, blank=True)
+    location = models.ForeignKey(
+        "MstLocation", db_column="location_id", on_delete=models.PROTECT, related_name="company_locations"
+    )
+    postal_code = models.CharField(max_length=10, null=True, blank=True)
+    country = models.ForeignKey(
+        "MstCountry", db_column="country_id", on_delete=models.PROTECT, related_name="company_locations"
+    )
+    latitude = models.CharField(max_length=14, null=True, blank=True)
+    longitude = models.CharField(max_length=14, null=True, blank=True)
+    # 'H'=Head Office / 'B'=Branch / etc. — legacy's Company_Loc_Type code,
+    # kept as-is (no reference doc for the full choice set).
+    company_loc_type = models.CharField(max_length=1)
+    company_loc_ownership = models.CharField(max_length=1, null=True, blank=True)
+    company_loc_order = models.IntegerField(default=0)
+    company_loc_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_company_location"
+
+    def __str__(self):
+        return self.company_loc_name
+
+
+class MstxVendor(models.Model):
+    """Kept to the columns that matter for identifying/using a vendor —
+    drops legacy's SAP/business-system integration flags."""
+
+    vendor_id = models.AutoField(primary_key=True)
+    vendor_name = models.CharField(max_length=50)
+    vendor_type = models.ForeignKey(
+        MstVendorType, db_column="vendor_type_id", on_delete=models.PROTECT, related_name="vendors"
+    )
+    vendor_sap_code = models.IntegerField(null=True, blank=True)
+    vendor_address = models.CharField(max_length=200, null=True, blank=True)
+    country = models.ForeignKey(
+        "MstCountry", db_column="country_id", on_delete=models.PROTECT, related_name="vendors"
+    )
+    vendor_tel_no = models.CharField(max_length=50, null=True, blank=True)
+    vendor_email = models.EmailField(max_length=50, null=True, blank=True)
+    currency = models.ForeignKey(
+        "MstCurrency", db_column="currency_id", on_delete=models.PROTECT, related_name="vendors"
+    )
+    vendor_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mstx_vendor"
+
+    def __str__(self):
+        return self.vendor_name
+
+
+class MstItAssetMfg(models.Model):
+    it_asset_mfg_id = models.AutoField(primary_key=True)
+    it_asset_mfg_name = models.CharField(max_length=30)
+    it_asset_mfg_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_asset_mfg"
+
+    def __str__(self):
+        return self.it_asset_mfg_name
+
+
+class MstItAssetType(models.Model):
+    it_asset_type_id = models.AutoField(primary_key=True)
+    it_asset_type_name = models.CharField(max_length=20)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_asset_type"
+
+    def __str__(self):
+        return self.it_asset_type_name
+
+
+class MstItAssetSubtype(models.Model):
+    it_asset_subtype_id = models.AutoField(primary_key=True)
+    it_asset_type = models.ForeignKey(
+        MstItAssetType, db_column="it_asset_type_id", on_delete=models.PROTECT, related_name="subtypes"
+    )
+    it_asset_subtype_name = models.CharField(max_length=30)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_asset_subtype"
+
+    def __str__(self):
+        return self.it_asset_subtype_name
+
+
+class MstItAssetModel(models.Model):
+    it_asset_model_id = models.AutoField(primary_key=True)
+    it_asset_mfg = models.ForeignKey(
+        MstItAssetMfg, db_column="it_asset_mfg_id", on_delete=models.PROTECT, related_name="models"
+    )
+    it_asset_subtype = models.ForeignKey(
+        MstItAssetSubtype, db_column="it_asset_subtype_id", on_delete=models.PROTECT, related_name="models"
+    )
+    it_asset_model_name = models.CharField(max_length=50)
+    it_asset_model_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_asset_model"
+
+    def __str__(self):
+        return self.it_asset_model_name
+
+
+class MstItAccessory(models.Model):
+    it_accessory_id = models.AutoField(primary_key=True)
+    it_accessory_name = models.CharField(max_length=30)
+    it_accessory_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_accessory"
+
+    def __str__(self):
+        return self.it_accessory_name
+
+
+class MstItApplicationType(models.Model):
+    it_appl_type_id = models.AutoField(primary_key=True)
+    it_appl_type_name = models.CharField(max_length=20)
+    max_resources = models.IntegerField()
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_application_type"
+
+    def __str__(self):
+        return self.it_appl_type_name
+
+
+class MstItApplicationSubtype(models.Model):
+    it_appl_subtype_id = models.AutoField(primary_key=True)
+    it_appl_type = models.ForeignKey(
+        MstItApplicationType, db_column="it_appl_type_id", on_delete=models.PROTECT, related_name="subtypes"
+    )
+    it_appl_subtype_name = models.CharField(max_length=40)
+    max_resources = models.IntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_application_subtype"
+
+    def __str__(self):
+        return self.it_appl_subtype_name
+
+
+class MstItAsset(models.Model):
+    """Straight copy of legacy it_Mst_IT_Asset. it_asset_model/it_asset_mfg
+    are nullable despite legacy's NOT NULL columns: 10 of 10786 rows
+    reference model ids (435-438) or a mfg id (45) that don't exist even in
+    the raw legacy lookup tables — genuine dangling references, nulled out
+    on import rather than blocking the whole table (same handling as
+    Incident's dangling Rig_Operation_Id/Contact_Expo_Type_Id)."""
+
+    it_asset_id = models.AutoField(primary_key=True)
+    it_asset_model = models.ForeignKey(
+        MstItAssetModel,
+        db_column="it_asset_model_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="assets",
+    )
+    it_asset_type = models.ForeignKey(
+        MstItAssetType, db_column="it_asset_type_id", on_delete=models.PROTECT, related_name="assets"
+    )
+    it_asset_subtype = models.ForeignKey(
+        MstItAssetSubtype, db_column="it_asset_subtype_id", on_delete=models.PROTECT, related_name="assets"
+    )
+    it_asset_mfg = models.ForeignKey(
+        MstItAssetMfg,
+        db_column="it_asset_mfg_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="assets",
+    )
+    own_company = models.ForeignKey(
+        MstCompany, db_column="own_company_id", on_delete=models.PROTECT, related_name="owned_it_assets"
+    )
+    it_asset_mac_addr = models.CharField(max_length=17, null=True, blank=True)
+    it_asset_sr_no = models.CharField(max_length=40)
+    it_asset_tag = models.CharField(max_length=40, null=True, blank=True)
+    it_asset_sap_code = models.CharField(max_length=10, null=True, blank=True)
+    it_asset_ram = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    it_asset_hdd = models.IntegerField(null=True, blank=True)
+    it_asset_particulars = models.CharField(max_length=75, null=True, blank=True)
+    it_asset_product_no = models.CharField(max_length=40, null=True, blank=True)
+    cur_company = models.ForeignKey(
+        MstCompany, db_column="cur_company_id", on_delete=models.PROTECT, related_name="held_it_assets"
+    )
+    emp = models.ForeignKey(
+        MstEmployee, db_column="emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="it_assets"
+    )
+    department = models.ForeignKey(
+        MstDepartment,
+        db_column="dept_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_assets",
+    )
+    company_loc = models.ForeignKey(
+        MstCompanyLocation,
+        db_column="company_loc_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_assets",
+    )
+    po_no = models.CharField(max_length=20, null=True, blank=True)
+    po_dt = models.DateField(null=True, blank=True)
+    vendor = models.ForeignKey(
+        MstxVendor, db_column="vendor_id", null=True, blank=True, on_delete=models.PROTECT, related_name="it_assets"
+    )
+    invoice_no = models.CharField(max_length=20, null=True, blank=True)
+    it_asset_pur_dt = models.DateField(null=True, blank=True)
+    it_asset_warranty_upto = models.DateField(null=True, blank=True)
+    it_asset_amc_dt = models.DateField(null=True, blank=True)
+    # Legacy free code (e.g. 'E'=Employee/'V'=Vessel/'C'=Common) — kept as-is,
+    # no reference doc for the full choice set.
+    it_asset_holder_type = models.CharField(max_length=1)
+    remarks = models.CharField(max_length=75, null=True, blank=True)
+    it_asset_allocated = models.CharField(max_length=1)
+    it_asset_active = models.CharField(max_length=1, default="Y")
+    it_asset_to_dt = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_it_asset"
+
+    def __str__(self):
+        return self.it_asset_sr_no
+
+
+class ItAssetHolder(models.Model):
+    """Straight copy of legacy it_IT_Asset_Holder — the holder history for
+    one IT Asset. Vessel_Id is carried over as a raw int (not FK'd — the
+    Vessel master itself was ruled out of scope, see MstItAsset's note on
+    Own_Ship_Co_Id/Mgr_Ship_Co_Id), same as legacy."""
+
+    it_asset_holder_id = models.AutoField(primary_key=True)
+    it_asset = models.ForeignKey(
+        MstItAsset, db_column="it_asset_id", on_delete=models.CASCADE, related_name="holders"
+    )
+    it_asset_holder_from = models.DateField()
+    holder_company = models.ForeignKey(
+        MstCompany, db_column="holder_company_id", on_delete=models.PROTECT, related_name="it_asset_holdings"
+    )
+    emp = models.ForeignKey(
+        MstEmployee,
+        db_column="emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_asset_holdings",
+    )
+    department = models.ForeignKey(
+        MstDepartment,
+        db_column="dept_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_asset_holdings",
+    )
+    company_loc = models.ForeignKey(
+        MstCompanyLocation,
+        db_column="company_loc_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_asset_holdings",
+    )
+    holder_name = models.CharField(max_length=40, null=True, blank=True)
+    holder_remark = models.CharField(max_length=150, null=True, blank=True)
+    vessel_id = models.IntegerField(null=True, blank=True)
+    it_asset_holder_to = models.DateField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "it_asset_holder"
+
+    def __str__(self):
+        return f"{self.it_asset} — {self.holder_name or self.emp}"
+
+
+class ItAccessoryHolder(models.Model):
+    """Straight copy of legacy it_IT_Accessory_Holder — standalone
+    accessory (not linked to a specific Mst_IT_Asset row)."""
+
+    it_accessory_holder_id = models.AutoField(primary_key=True)
+    it_accessory = models.ForeignKey(
+        MstItAccessory, db_column="it_accessory_id", on_delete=models.PROTECT, related_name="holders"
+    )
+    emp = models.ForeignKey(
+        MstEmployee,
+        db_column="emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_accessory_holdings",
+    )
+    it_accessory_holder_name = models.CharField(max_length=40, null=True, blank=True)
+    it_asset_mfg = models.ForeignKey(
+        MstItAssetMfg,
+        db_column="it_asset_mfg_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="accessory_holdings",
+    )
+    it_accessory_model = models.CharField(max_length=20, null=True, blank=True)
+    it_accessory_sr_no = models.CharField(max_length=40, null=True, blank=True)
+    it_accessory_product_no = models.CharField(max_length=40, null=True, blank=True)
+    it_accessory_holder_from = models.DateField()
+    it_accessory_holder_remark = models.CharField(max_length=50, null=True, blank=True)
+    it_accessory_holder_to = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "it_accessory_holder"
+
+    def __str__(self):
+        return f"{self.it_accessory} — {self.it_accessory_holder_name or self.emp}"

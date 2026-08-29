@@ -1,4 +1,7 @@
+import datetime
+
 from django.db.models import ProtectedError
+from django.db.models.functions import Coalesce
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -67,6 +70,14 @@ from .models import (
     ReportingStructure,
     TravelEligibility,
     UserProfile,
+    MstItAssetType,
+    MstItAssetSubtype,
+    MstItAssetMfg,
+    MstItAssetModel,
+    MstxVendor,
+    MstItAsset,
+    MstCompanyLocation,
+    ItAssetHolder,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -129,6 +140,14 @@ from .masters_serializers import (
     ProjectDrillingRateSerializer,
     ReportingStructureSerializer,
     TravelEligibilitySerializer,
+    MstItAssetTypeSerializer,
+    MstItAssetSubtypeSerializer,
+    MstItAssetMfgSerializer,
+    MstItAssetModelSerializer,
+    MstxVendorSerializer,
+    MstItAssetSerializer,
+    MstCompanyLocationSerializer,
+    ItAssetHolderSerializer,
 )
 from .permissions import HasMenuPermission
 
@@ -1169,3 +1188,220 @@ class MstDrillingWorkShiftViewSet(BaseMasterViewSet):
 
     def label_for(self, instance):
         return f"{instance.rig.rig_name} — {instance.get_work_shift_display()}"
+
+
+class MstItAssetTypeViewSet(BaseMasterViewSet):
+    """No dedicated nav page — reachable only as a dropdown source (derived
+    read-only on the IT Assets form) and via direct API access."""
+
+    queryset = MstItAssetType.objects.all()
+    serializer_class = MstItAssetTypeSerializer
+    entity_key = "masters.it_asset_types"
+    name_field = "it_asset_type_name"
+    reference_checks = [("subtypes", "IT Asset Subtypes"), ("assets", "IT Assets")]
+    search_fields = ["it_asset_type_name"]
+
+
+class MstItAssetSubtypeViewSet(BaseMasterViewSet):
+    """No dedicated nav page — reachable only as a dropdown source (derived
+    read-only on the IT Assets form) and via direct API access."""
+
+    queryset = MstItAssetSubtype.objects.select_related("it_asset_type").all()
+    serializer_class = MstItAssetSubtypeSerializer
+    entity_key = "masters.it_asset_subtypes"
+    name_field = "it_asset_subtype_name"
+    reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
+    search_fields = ["it_asset_subtype_name"]
+
+
+class MstItAssetMfgViewSet(BaseMasterViewSet):
+    """No dedicated nav page — reachable only as a dropdown source (derived
+    read-only on the IT Assets form) and via direct API access."""
+
+    queryset = MstItAssetMfg.objects.all()
+    serializer_class = MstItAssetMfgSerializer
+    entity_key = "masters.it_asset_mfgs"
+    name_field = "it_asset_mfg_name"
+    reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
+    search_fields = ["it_asset_mfg_name"]
+
+
+class MstItAssetModelViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable as the IT Assets form's Model
+    search (which derives Subtype/Type/Manufacturer from the picked row) and
+    via direct API access."""
+
+    queryset = MstItAssetModel.objects.select_related(
+        "it_asset_mfg", "it_asset_subtype", "it_asset_subtype__it_asset_type"
+    ).all()
+    serializer_class = MstItAssetModelSerializer
+    entity_key = "masters.it_asset_models"
+    name_field = "it_asset_model_name"
+    reference_checks = [("assets", "IT Assets")]
+    search_fields = ["it_asset_model_name"]
+
+
+class MstxVendorViewSet(BaseMasterViewSet):
+    """No dedicated nav page yet — reachable as the IT Assets form's Vendor
+    search and via direct API access."""
+
+    queryset = MstxVendor.objects.select_related("vendor_type", "country", "currency").all()
+    serializer_class = MstxVendorSerializer
+    entity_key = "masters.vendors"
+    name_field = "vendor_name"
+    reference_checks = [("it_assets", "IT Assets")]
+    search_fields = ["vendor_name"]
+
+
+IT_ASSET_ORDERING_FIELDS = {
+    "sr_no": "it_asset_sr_no",
+    "model": "it_asset_model__it_asset_model_name",
+    "asset_tag": "it_asset_tag",
+    "mfg": "it_asset_mfg__it_asset_mfg_name",
+    "own_company": "own_company__company_name",
+    "cur_company": "cur_company__company_name",
+    "pur_dt": "it_asset_pur_dt",
+}
+
+
+class MstItAssetViewSet(BaseMasterViewSet):
+    """Listed as a reports-style table (not the generic masters drawer —
+    too many fields for that) with its own list page driving ?search=,
+    ?active=, ?holder_type=, ?own_company=, ?it_asset_type=,
+    ?it_asset_subtype=, ?it_asset_mfg= and ?ordering= (one of
+    sr_no/model/asset_tag/mfg/own_company/cur_company/pur_dt, prefix '-' to
+    reverse)."""
+
+    queryset = MstItAsset.objects.select_related(
+        "it_asset_model", "it_asset_type", "it_asset_subtype", "it_asset_mfg",
+        "own_company", "cur_company", "vendor",
+    ).all()
+    serializer_class = MstItAssetSerializer
+    entity_key = "it_asset.it_assets"
+    name_field = "it_asset_sr_no"
+    reference_checks = [("holders", "IT Asset Holders")]
+    search_fields = ["it_asset_sr_no", "it_asset_tag", "it_asset_sap_code"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        params = self.request.query_params
+
+        active = params.get("active")
+        if active in ("Y", "N"):
+            qs = qs.filter(it_asset_active=active)
+        holder_type = params.get("holder_type")
+        if holder_type:
+            qs = qs.filter(it_asset_holder_type=holder_type)
+        own_company = params.get("own_company")
+        if own_company:
+            qs = qs.filter(own_company_id=own_company)
+        it_asset_type = params.get("it_asset_type")
+        if it_asset_type:
+            qs = qs.filter(it_asset_type_id=it_asset_type)
+        it_asset_subtype = params.get("it_asset_subtype")
+        if it_asset_subtype:
+            qs = qs.filter(it_asset_subtype_id=it_asset_subtype)
+        it_asset_mfg = params.get("it_asset_mfg")
+        if it_asset_mfg:
+            qs = qs.filter(it_asset_mfg_id=it_asset_mfg)
+
+        ordering = params.get("ordering", "-cr_dt")
+        reverse = ordering.startswith("-")
+        field = IT_ASSET_ORDERING_FIELDS.get(ordering.lstrip("-"))
+        if field:
+            qs = qs.order_by(f"-{field}" if reverse else field)
+        else:
+            qs = qs.order_by("-cr_dt")
+        return qs
+
+
+class MstCompanyLocationViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only lookup for other masters' Company Location dropdowns (IT
+    Assets, IT Assets Holder) — not yet its own delegable master, just data
+    anyone authenticated can read to populate a select."""
+
+    queryset = MstCompanyLocation.objects.filter(company_loc_active="Y").order_by("company_loc_name")
+    serializer_class = MstCompanyLocationSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["company_loc_name", "company_loc_abrv"]
+
+
+class ItAssetHolderViewSet(BaseMasterViewSet):
+    """Reassignment history for one IT Asset — who/where it's currently (or
+    was previously) held by. Listed as a reports-style table like IT Assets.
+    GET supports ?it_asset=, ?holder_company=, ?own_company=,
+    ?it_asset_type=, ?it_asset_subtype=, ?it_asset_mfg=,
+    ?status=(ongoing|ended), ?search= (asset sr no/tag/SAP code, holder
+    name), and ?ordering=sr_no (prefix '-' to reverse; defaults to legacy's
+    ongoing-first sort).
+
+    Legacy's Cr_User_Id/Cr_Dt don't exist on it_IT_Asset_Holder — only
+    Mod_User_Id/Mod_Dt — so perform_create is overridden to skip them
+    rather than crash on an unknown kwarg."""
+
+    queryset = ItAssetHolder.objects.select_related(
+        "it_asset", "it_asset__it_asset_model", "it_asset__it_asset_subtype", "it_asset__it_asset_mfg",
+        "it_asset__own_company", "holder_company", "emp", "department", "company_loc",
+    ).all()
+    serializer_class = ItAssetHolderSerializer
+    entity_key = "it_asset.it_asset_holders"
+    name_field = "it_asset_holder_id"
+    reference_checks = []
+    search_fields = [
+        "it_asset__it_asset_sr_no", "it_asset__it_asset_tag", "it_asset__it_asset_sap_code", "holder_name",
+    ]
+
+    def get_queryset(self):
+        qs = self.queryset
+        params = self.request.query_params
+
+        it_asset = params.get("it_asset")
+        if it_asset:
+            qs = qs.filter(it_asset_id=it_asset)
+        holder_company = params.get("holder_company")
+        if holder_company:
+            qs = qs.filter(holder_company_id=holder_company)
+        own_company = params.get("own_company")
+        if own_company:
+            qs = qs.filter(it_asset__own_company_id=own_company)
+        it_asset_type = params.get("it_asset_type")
+        if it_asset_type:
+            qs = qs.filter(it_asset__it_asset_type_id=it_asset_type)
+        it_asset_subtype = params.get("it_asset_subtype")
+        if it_asset_subtype:
+            qs = qs.filter(it_asset__it_asset_subtype_id=it_asset_subtype)
+        it_asset_mfg = params.get("it_asset_mfg")
+        if it_asset_mfg:
+            qs = qs.filter(it_asset__it_asset_mfg_id=it_asset_mfg)
+        today = datetime.date.today()
+        status = params.get("status")
+        if status == "ongoing":
+            qs = qs.filter(it_asset_holder_to__isnull=True) | qs.filter(it_asset_holder_to__gte=today)
+        elif status == "ended":
+            qs = qs.filter(it_asset_holder_to__lt=today)
+
+        ordering = params.get("ordering")
+        if ordering and ordering.lstrip("-") == "sr_no":
+            field = "it_asset__it_asset_sr_no"
+            return qs.order_by(f"-{field}" if ordering.startswith("-") else field)
+
+        # Same intent as legacy's ORDER BY ISNULL(To, GETDATE()+50) DESC —
+        # ongoing assignments (no end date) sort first, then most-recently
+        # ended first.
+        far_future = datetime.date(2100, 1, 1)
+        return qs.annotate(
+            _sort_to=Coalesce("it_asset_holder_to", far_future)
+        ).order_by("-_sort_to", "-it_asset_holder_from")
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        changes = {
+            k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
+        }
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+        )
+
+    def label_for(self, instance):
+        who = instance.emp or instance.holder_name or "Common"
+        return f"{instance.it_asset.it_asset_sr_no} — {who}"

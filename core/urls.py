@@ -7,6 +7,7 @@ from . import masters_views, reports_views, views
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
+router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")
 router.register("masters/contractors", masters_views.MstContractorViewSet, basename="mst-contractor")
 router.register("masters/cert-institutes", masters_views.MstCertInstituteViewSet, basename="mst-cert-institute")
@@ -164,6 +165,22 @@ router.register(
     "masters/drilling-work-shifts",
     masters_views.MstDrillingWorkShiftViewSet,
     basename="drilling-work-shift",
+)
+router.register("masters/it-asset-types", masters_views.MstItAssetTypeViewSet, basename="mst-it-asset-type")
+router.register(
+    "masters/it-asset-subtypes", masters_views.MstItAssetSubtypeViewSet, basename="mst-it-asset-subtype"
+)
+router.register("masters/it-asset-mfgs", masters_views.MstItAssetMfgViewSet, basename="mst-it-asset-mfg")
+router.register(
+    "masters/it-asset-models", masters_views.MstItAssetModelViewSet, basename="mst-it-asset-model"
+)
+router.register("masters/vendors", masters_views.MstxVendorViewSet, basename="mstx-vendor")
+router.register("it-asset/it-assets", masters_views.MstItAssetViewSet, basename="it-asset")
+router.register(
+    "masters/company-locations", masters_views.MstCompanyLocationViewSet, basename="mst-company-location"
+)
+router.register(
+    "it-asset/it-asset-holders", masters_views.ItAssetHolderViewSet, basename="it-asset-holder"
 )
 
 urlpatterns = [

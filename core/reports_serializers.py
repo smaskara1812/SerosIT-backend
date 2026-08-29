@@ -2,7 +2,7 @@ import datetime
 
 from rest_framework import serializers
 
-from .models import HazardCard, Incident
+from .models import HazardCard, Incident, MstItAsset
 
 SEVERITY_LABELS = {"H": "High", "M": "Medium", "L": "Low"}
 
@@ -116,3 +116,59 @@ class HazardCardSerializer(serializers.ModelSerializer):
 
     def get_year(self, obj):
         return obj.event_dt.year
+
+
+class ItAssetReportSerializer(serializers.ModelSerializer):
+    """Backs both of legacy's 'Select report' variants (Asset Report / Asset
+    Tech Dtls) — a single row shape wide enough for either; the frontend
+    just picks which columns to show. 'Current holder' is whichever of the
+    asset's holder-history rows is still ongoing (no To date), prefetched
+    via `current_holders` (see ItAssetReportViewSet.get_queryset) rather
+    than queried per-row."""
+
+    it_asset_type_name = serializers.CharField(source="it_asset_type.it_asset_type_name", read_only=True, default="")
+    it_asset_subtype_name = serializers.CharField(
+        source="it_asset_subtype.it_asset_subtype_name", read_only=True, default=""
+    )
+    it_asset_mfg_name = serializers.CharField(source="it_asset_mfg.it_asset_mfg_name", read_only=True, default="")
+    it_asset_model_name = serializers.CharField(
+        source="it_asset_model.it_asset_model_name", read_only=True, default=""
+    )
+    own_company_abrv = serializers.CharField(source="own_company.company_abrv", read_only=True, default="")
+    vendor_name = serializers.CharField(source="vendor.vendor_name", read_only=True, default="")
+    holder_name = serializers.SerializerMethodField()
+    location_name = serializers.SerializerMethodField()
+    holder_remark = serializers.SerializerMethodField()
+    holding_company_abrv = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MstItAsset
+        fields = [
+            "it_asset_id", "it_asset_type_name", "it_asset_sr_no", "it_asset_tag", "it_asset_sap_code",
+            "it_asset_mfg_name", "it_asset_model_name", "it_asset_subtype_name", "it_asset_ram", "it_asset_hdd",
+            "it_asset_particulars", "it_asset_product_no", "it_asset_mac_addr", "own_company_abrv",
+            "vendor_name", "it_asset_pur_dt", "it_asset_warranty_upto", "it_asset_active",
+            "holder_name", "location_name", "holder_remark", "holding_company_abrv",
+        ]
+
+    def _current_holder(self, obj):
+        holders = getattr(obj, "current_holders", None)
+        return holders[0] if holders else None
+
+    def get_holder_name(self, obj):
+        h = self._current_holder(obj)
+        if not h:
+            return ""
+        return str(h.emp) if h.emp_id else (h.holder_name or "")
+
+    def get_location_name(self, obj):
+        h = self._current_holder(obj)
+        return h.company_loc.company_loc_name if h and h.company_loc_id else ""
+
+    def get_holder_remark(self, obj):
+        h = self._current_holder(obj)
+        return (h.holder_remark or "") if h else ""
+
+    def get_holding_company_abrv(self, obj):
+        h = self._current_holder(obj)
+        return h.holder_company.company_abrv if h and h.holder_company_id else ""
