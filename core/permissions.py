@@ -95,3 +95,25 @@ class HasMenuPermission(BasePermission):
         entity_key = getattr(view, "entity_key", None)
         required = _ACTION_PERM.get(getattr(view, "action", None), "view")
         return bool(access["perms"].get(entity_key, {}).get(required))
+
+
+class HasMenuPermissionOrOpenRead(HasMenuPermission):
+    """Same real per-action enforcement as HasMenuPermission for writes, but
+    list/retrieve/check-delete are open to any authenticated user.
+
+    Reserved for lookup-only masters that exist purely as a dropdown source
+    for some other page's form (Rig Type, Company, IT Asset Mfg, ...) and
+    have no dedicated nav page of their own — which means no sys_menu row,
+    which means a User Rights admin has no row in the grid to grant a
+    non-admin explicit view rights on. Gating reads the same way as a real
+    delegable master would silently make these permanently unreachable for
+    every non-admin, however legitimately they're permitted on the page
+    that needs the dropdown — this happened for real (an IT Asset page's
+    lookups 403'd for a user who had view rights on the page itself)."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if getattr(view, "action", None) in ("list", "retrieve", "check_delete"):
+            return True
+        return super().has_permission(request, view)

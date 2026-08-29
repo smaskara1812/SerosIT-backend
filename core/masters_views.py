@@ -149,7 +149,7 @@ from .masters_serializers import (
     MstCompanyLocationSerializer,
     ItAssetHolderSerializer,
 )
-from .permissions import HasMenuPermission
+from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
 
 class BaseMasterViewSet(viewsets.ModelViewSet):
@@ -320,6 +320,7 @@ class MstRigTypeViewSet(BaseMasterViewSet):
     queryset = MstRigType.objects.all()
     serializer_class = MstRigTypeSerializer
     entity_key = "masters.rig_types"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "rig_type_name"
     reference_checks = [("rigs", "Rigs"), ("subtypes", "Rig Subtypes")]
     search_fields = ["rig_type_name"]
@@ -333,6 +334,7 @@ class MstRigSubtypeViewSet(BaseMasterViewSet):
     queryset = MstRigSubtype.objects.select_related("rig_type").all()
     serializer_class = MstRigSubtypeSerializer
     entity_key = "masters.rig_subtypes"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "rig_subtype_name"
     reference_checks = [("rigs", "Rigs")]
     search_fields = ["rig_subtype_name"]
@@ -793,6 +795,7 @@ class MstEmpNatureViewSet(BaseMasterViewSet):
     queryset = MstEmpNature.objects.all()
     serializer_class = MstEmpNatureSerializer
     entity_key = "masters.emp_natures"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "emp_nature_name"
     reference_checks = [("emp_types", "Emp Types")]
     search_fields = ["emp_nature_name"]
@@ -805,6 +808,7 @@ class MstEmpTypeViewSet(BaseMasterViewSet):
     queryset = MstEmpType.objects.select_related("emp_nature", "currency").all()
     serializer_class = MstEmpTypeSerializer
     entity_key = "masters.emp_types"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "emp_type_name"
     reference_checks = [("nationality_mappings", "Nationality To Emp Type Mapping")]
     search_fields = ["emp_type_name"]
@@ -843,6 +847,7 @@ class MstWorkgroupViewSet(BaseMasterViewSet):
     queryset = MstWorkgroup.objects.all()
     serializer_class = MstWorkgroupSerializer
     entity_key = "masters.workgroups"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "workgroup_name"
     reference_checks = [("indicator_type_mappings", "Workgroup To Indicator Type Mapping")]
     search_fields = ["workgroup_name"]
@@ -868,6 +873,7 @@ class MstOrganisationalGrpViewSet(BaseMasterViewSet):
     queryset = MstOrganisationalGrp.objects.all()
     serializer_class = MstOrganisationalGrpSerializer
     entity_key = "masters.organisational_grps"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "organisational_grp_name"
     reference_checks = [("companies", "Companies")]
     search_fields = ["organisational_grp_name"]
@@ -880,6 +886,7 @@ class MstBusinessGrpViewSet(BaseMasterViewSet):
     queryset = MstBusinessGrp.objects.select_related("parent_business_grp").all()
     serializer_class = MstBusinessGrpSerializer
     entity_key = "masters.business_grps"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "business_grp_name"
     reference_checks = [("companies", "Companies"), ("children", "Business Groups")]
     search_fields = ["business_grp_name", "business_grp_abrv"]
@@ -894,6 +901,7 @@ class MstCompanyViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstCompanySerializer
     entity_key = "masters.companies"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_name"
     reference_checks = [("cost_centre_mappings", "Cost Centre To Company Mapping"), ("subsidiaries", "Companies")]
     search_fields = ["company_name", "company_abrv", "company_code"]
@@ -964,6 +972,7 @@ class MstContinentViewSet(BaseMasterViewSet):
     queryset = MstContinent.objects.all()
     serializer_class = MstContinentSerializer
     entity_key = "masters.continents"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "continent_name"
     reference_checks = [("countries", "Countries")]
     search_fields = ["continent_name"]
@@ -976,6 +985,7 @@ class MstCountryViewSet(BaseMasterViewSet):
     queryset = MstCountry.objects.select_related("continent").all()
     serializer_class = MstCountrySerializer
     entity_key = "masters.countries"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "country_name"
     reference_checks = [("states", "Country States"), ("locations", "Locations"), ("operators", "Operators")]
     search_fields = ["country_name", "country_known_name", "country_iso_cd"]
@@ -988,6 +998,7 @@ class MstCountryStateViewSet(BaseMasterViewSet):
     queryset = MstCountryState.objects.select_related("country").all()
     serializer_class = MstCountryStateSerializer
     entity_key = "masters.country_states"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "country_state_name"
     reference_checks = [("locations", "Locations")]
     search_fields = ["country_state_name", "country_state_abrv"]
@@ -1000,6 +1011,7 @@ class MstVesselDeptViewSet(BaseMasterViewSet):
     queryset = MstVesselDept.objects.all()
     serializer_class = MstVesselDeptSerializer
     entity_key = "masters.vessel_depts"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vessel_dept_name"
     reference_checks = [("ranks", "Ranks")]
     search_fields = ["vessel_dept_name"]
@@ -1197,6 +1209,7 @@ class MstItAssetTypeViewSet(BaseMasterViewSet):
     queryset = MstItAssetType.objects.all()
     serializer_class = MstItAssetTypeSerializer
     entity_key = "masters.it_asset_types"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_type_name"
     reference_checks = [("subtypes", "IT Asset Subtypes"), ("assets", "IT Assets")]
     search_fields = ["it_asset_type_name"]
@@ -1209,6 +1222,7 @@ class MstItAssetSubtypeViewSet(BaseMasterViewSet):
     queryset = MstItAssetSubtype.objects.select_related("it_asset_type").all()
     serializer_class = MstItAssetSubtypeSerializer
     entity_key = "masters.it_asset_subtypes"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_subtype_name"
     reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
     search_fields = ["it_asset_subtype_name"]
@@ -1221,6 +1235,7 @@ class MstItAssetMfgViewSet(BaseMasterViewSet):
     queryset = MstItAssetMfg.objects.all()
     serializer_class = MstItAssetMfgSerializer
     entity_key = "masters.it_asset_mfgs"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_mfg_name"
     reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
     search_fields = ["it_asset_mfg_name"]
@@ -1236,6 +1251,7 @@ class MstItAssetModelViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstItAssetModelSerializer
     entity_key = "masters.it_asset_models"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_model_name"
     reference_checks = [("assets", "IT Assets")]
     search_fields = ["it_asset_model_name"]
@@ -1248,6 +1264,7 @@ class MstxVendorViewSet(BaseMasterViewSet):
     queryset = MstxVendor.objects.select_related("vendor_type", "country", "currency").all()
     serializer_class = MstxVendorSerializer
     entity_key = "masters.vendors"
+    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vendor_name"
     reference_checks = [("it_assets", "IT Assets")]
     search_fields = ["vendor_name"]
