@@ -2469,3 +2469,30 @@ class ItAccessoryHolder(models.Model):
 
     def __str__(self):
         return f"{self.it_accessory} — {self.it_accessory_holder_name or self.emp}"
+
+
+class PermissionPreset(models.Model):
+    """A named, reusable selection of menu_key -> {view,add,edit,delete,export}
+    flags an app admin can save from the User Rights grid and later apply to
+    any other user in one click — it only pre-fills that user's grid in the
+    browser, the real Save button still has to be clicked to persist it.
+
+    `menus_json` holds the selection as a JSON string in a plain TextField
+    rather than a native JSON column: prod runs on SQL Server (dev is MySQL),
+    and hand-rolled JSON via a TextField sidesteps any dialect-specific JSON
+    column support question entirely."""
+
+    preset_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=255, null=True, blank=True)
+    menus_json = models.TextField()
+    created_by_user_id = models.IntegerField(null=True, blank=True)
+    cr_dt = models.DateTimeField(auto_now_add=True)
+    mod_dt = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sys_permission_preset"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name

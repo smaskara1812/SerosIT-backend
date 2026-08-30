@@ -195,6 +195,18 @@ urlpatterns = [
     path("admin/users/<int:user_id>/perms/", views.admin_user_perms_api, name="admin_user_perms"),
     path("admin/users/<int:user_id>/perms/save/",views.admin_user_perms_save_api,name="admin_user_perms_save"),
     path("admin/users/<int:user_id>/toggle-admin/",views.admin_user_admin_toggle_api,name="admin_user_admin_toggle"),
+    # Permission presets
+    path("admin/permission-presets/", views.admin_permission_presets_api, name="admin_permission_presets"),
+    path(
+        "admin/permission-presets/create/",
+        views.admin_permission_preset_create_api,
+        name="admin_permission_preset_create",
+    ),
+    path(
+        "admin/permission-presets/<int:preset_id>/delete/",
+        views.admin_permission_preset_delete_api,
+        name="admin_permission_preset_delete",
+    ),
     # Audit Trail
     path("admin/audit/facets/", views.admin_audit_facets_api, name="admin_audit_facets"),
     path("admin/audit/", views.admin_audit_list_api, name="admin_audit_list"),

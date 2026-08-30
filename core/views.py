@@ -1,3 +1,4 @@
+import json
 from zoneinfo import ZoneInfo
 
 from django.db.models import Q
@@ -9,7 +10,15 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from . import audit as _audit
 from .auth_backend import _sha256
-from .models import SysAuditLog, SysMenu, MstUser, MstUserPassword, UserPermission, UserProfile
+from .models import (
+    SysAuditLog,
+    SysMenu,
+    MstUser,
+    MstUserPassword,
+    UserPermission,
+    UserProfile,
+    PermissionPreset,
+)
 from .permissions import IsAppAdmin, get_menu_registry, get_user_access
 
 
@@ -243,6 +252,87 @@ def admin_user_admin_toggle_api(request, user_id):
         {"is_app_admin": {"old": was_admin, "new": profile.is_app_admin}},
     )
     return Response({"is_app_admin": profile.is_app_admin})
+
+
+# ── Permission presets ───────────────────────────────────────────────────────
+# Named, reusable checkbox selections for the User Rights grid — save one
+# from whatever's currently checked (e.g. "Req Master View Only"), then
+# apply it to any other user with one click. Applying only pre-fills that
+# user's grid client-side; the real Save still has to be clicked.
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_permission_presets_api(request):
+    presets = PermissionPreset.objects.all()
+    return Response(
+        [
+            {
+                "id": p.preset_id,
+                "name": p.name,
+                "description": p.description or "",
+                "menus": json.loads(p.menus_json),
+            }
+            for p in presets
+        ]
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAppAdmin])
+def admin_permission_preset_create_api(request):
+    name = (request.data.get("name") or "").strip()
+    description = (request.data.get("description") or "").strip()
+    menus = request.data.get("menus") or {}
+
+    if not name:
+        return Response({"error": "Name is required"}, status=400)
+    if PermissionPreset.objects.filter(name=name).exists():
+        return Response({"error": "A preset with this name already exists"}, status=400)
+
+    valid_keys = set(get_menu_registry().keys())
+    cleaned = {}
+    for key, p in menus.items():
+        if key not in valid_keys:
+            continue
+        flags = {a: bool(p.get(a)) for a in ("view", "add", "edit", "delete", "export")}
+        if any(flags.values()):
+            cleaned[key] = flags
+    if not cleaned:
+        return Response({"error": "Select at least one permission before saving a preset"}, status=400)
+
+    try:
+        creator_id = UserProfile.objects.get(user_login_id=request.user.username).user_id
+    except UserProfile.DoesNotExist:
+        creator_id = None
+
+    preset = PermissionPreset.objects.create(
+        name=name,
+        description=description or None,
+        menus_json=json.dumps(cleaned),
+        created_by_user_id=creator_id,
+    )
+    _audit.record_action(
+        request,
+        "create",
+        "admin.permission_presets",
+        preset.preset_id,
+        name,
+        {"menu_count": {"old": None, "new": len(cleaned)}},
+    )
+    return Response({"id": preset.preset_id, "name": preset.name}, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAppAdmin])
+def admin_permission_preset_delete_api(request, preset_id):
+    try:
+        preset = PermissionPreset.objects.get(preset_id=preset_id)
+    except PermissionPreset.DoesNotExist:
+        return Response(status=204)
+    name = preset.name
+    preset.delete()
+    _audit.record_action(request, "delete", "admin.permission_presets", preset_id, name, None)
+    return Response(status=204)
 
 
 # ── Audit Trail ──────────────────────────────────────────────────────────────
