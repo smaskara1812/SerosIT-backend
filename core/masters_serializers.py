@@ -69,6 +69,7 @@ from .models import (
     MstItAsset,
     MstCompanyLocation,
     ItAssetHolder,
+    MstVendorType,
 )
 
 
@@ -802,9 +803,20 @@ class MstxVendorSerializer(serializers.ModelSerializer):
     vendor_type_name = serializers.CharField(
         source="vendor_type.vendor_type_name", read_only=True, default=""
     )
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+    currency_name = serializers.CharField(
+        source="currency.currency_name", read_only=True, default=""
+    )
 
     class Meta:
         model = MstxVendor
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstVendorTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstVendorType
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 

@@ -78,6 +78,7 @@ from .models import (
     MstItAsset,
     MstCompanyLocation,
     ItAssetHolder,
+    MstVendorType,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -148,6 +149,7 @@ from .masters_serializers import (
     MstItAssetSerializer,
     MstCompanyLocationSerializer,
     ItAssetHolderSerializer,
+    MstVendorTypeSerializer,
 )
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
@@ -1270,6 +1272,16 @@ class MstxVendorViewSet(BaseMasterViewSet):
     search_fields = ["vendor_name"]
 
 
+class MstVendorTypeViewSet(BaseMasterViewSet):
+    queryset = MstVendorType.objects.all()
+    serializer_class = MstVendorTypeSerializer
+    entity_key = "masters.vendor_types"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "vendor_type_name"
+    reference_checks = [("vendors", "Vendors")]
+    search_fields = ["vendor_type_name"]
+
+
 IT_ASSET_ORDERING_FIELDS = {
     "sr_no": "it_asset_sr_no",
     "model": "it_asset_model__it_asset_model_name",
@@ -1332,14 +1344,19 @@ class MstItAssetViewSet(BaseMasterViewSet):
         return qs
 
 
-class MstCompanyLocationViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only lookup for other masters' Company Location dropdowns (IT
-    Assets, IT Assets Holder) — not yet its own delegable master, just data
-    anyone authenticated can read to populate a select."""
+class MstCompanyLocationViewSet(BaseMasterViewSet):
+    """Promoted from a read-only dropdown source to a real delegable master
+    (General section) — reads stay open to any authenticated user via
+    HasMenuPermissionOrOpenRead so the IT Assets/IT Assets Holder forms'
+    Location picker keeps working for everyone, same as before; only
+    add/edit/delete now go through the real per-user permission grid."""
 
-    queryset = MstCompanyLocation.objects.filter(company_loc_active="Y").order_by("company_loc_name")
+    queryset = MstCompanyLocation.objects.select_related("location", "country").all()
     serializer_class = MstCompanyLocationSerializer
-    permission_classes = [IsAuthenticated]
+    entity_key = "masters.company_locations"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "company_loc_name"
+    reference_checks = [("it_assets", "IT Assets"), ("it_asset_holdings", "IT Asset Holders")]
     search_fields = ["company_loc_name", "company_loc_abrv"]
 
 

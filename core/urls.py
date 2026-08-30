@@ -175,6 +175,7 @@ router.register(
     "masters/it-asset-models", masters_views.MstItAssetModelViewSet, basename="mst-it-asset-model"
 )
 router.register("masters/vendors", masters_views.MstxVendorViewSet, basename="mstx-vendor")
+router.register("masters/vendor-types", masters_views.MstVendorTypeViewSet, basename="mst-vendor-type")
 router.register("it-asset/it-assets", masters_views.MstItAssetViewSet, basename="it-asset")
 router.register(
     "masters/company-locations", masters_views.MstCompanyLocationViewSet, basename="mst-company-location"
