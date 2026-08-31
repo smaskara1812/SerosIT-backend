@@ -1,7 +1,7 @@
 import datetime
 
-from django.db.models import ProtectedError
-from django.db.models.functions import Coalesce
+from django.db.models import DateTimeField, ProtectedError, Value
+from django.db.models.functions import Cast, Coalesce
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -374,10 +374,15 @@ class MstDepartmentViewSet(viewsets.ReadOnlyModelViewSet):
     just data anyone authenticated can read to populate a select.
     """
 
-    queryset = MstDepartment.objects.filter(dept_active="Y").order_by("dept_dispname")
+    queryset = MstDepartment.objects.filter(dept_active="Y").order_by("dept_name")
     serializer_class = MstDepartmentSerializer
     permission_classes = [IsAuthenticated]
-    search_fields = ["dept_dispname"]
+    # dept_name is the full name shown on the IT Asset Holder form's
+    # Department picker (dept_dispname is a shorter display variant used
+    # elsewhere) — search has to cover whichever field a caller displays,
+    # so both (plus the abbreviation) are searchable regardless of which
+    # one a given dropdown shows.
+    search_fields = ["dept_name", "dept_dispname", "dept_abrv"]
     # Paginated like every other lookup (see MstUserViewSet) so the frontend
     # combobox can tell from `count` whether it's safe to preload in full.
 
@@ -651,6 +656,15 @@ class MstUserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MstUserSerializer
     permission_classes = [IsAuthenticated]
     search_fields = ["user_name", "user_login_id"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        # IT Asset Holder's Employee picker only wants users that resolve
+        # to a real emp_id (that's what actually gets saved) — a login
+        # with no linked employee record isn't a valid pick there.
+        if self.request.query_params.get("has_emp"):
+            qs = qs.filter(emp__isnull=False)
+        return qs
 
 
 class MstEmployeeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1244,9 +1258,11 @@ class MstItAssetMfgViewSet(BaseMasterViewSet):
 
 
 class MstItAssetModelViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable as the IT Assets form's Model
-    search (which derives Subtype/Type/Manufacturer from the picked row) and
-    via direct API access."""
+    """Reachable as the IT Assets form's Model search (which derives
+    Subtype/Type/Manufacturer from the picked row) and via direct API
+    access. Also supports narrowing the other way: the IT Assets form lets
+    Manufacturer/Type/Subtype be picked first to filter this list down via
+    ?mfg=/?type=/?subtype=, before Model is even opened."""
 
     queryset = MstItAssetModel.objects.select_related(
         "it_asset_mfg", "it_asset_subtype", "it_asset_subtype__it_asset_type"
@@ -1257,6 +1273,19 @@ class MstItAssetModelViewSet(BaseMasterViewSet):
     name_field = "it_asset_model_name"
     reference_checks = [("assets", "IT Assets")]
     search_fields = ["it_asset_model_name"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        mfg_id = self.request.query_params.get("mfg")
+        if mfg_id:
+            qs = qs.filter(it_asset_mfg_id=mfg_id)
+        subtype_id = self.request.query_params.get("subtype")
+        if subtype_id:
+            qs = qs.filter(it_asset_subtype_id=subtype_id)
+        type_id = self.request.query_params.get("type")
+        if type_id:
+            qs = qs.filter(it_asset_subtype__it_asset_type_id=type_id)
+        return qs
 
 
 class MstxVendorViewSet(BaseMasterViewSet):
@@ -1293,13 +1322,41 @@ IT_ASSET_ORDERING_FIELDS = {
 }
 
 
+def _parse_action_date(request):
+    """Mark as Scrap / Mark as Lost / Remove Assignment / Reassign all take
+    an optional `action_date` (default: today) so a past or future-dated
+    record can be entered, not just "right now". Returns None on a missing
+    or unparseable value's caller-visible sentinel: missing -> today,
+    invalid -> None (caller turns that into a 400)."""
+    from django.utils import timezone
+    from django.utils.dateparse import parse_date
+
+    raw = request.data.get("action_date")
+    if not raw:
+        return timezone.localdate()
+    return parse_date(raw)
+
+
+def _close_datetime_for(action_date):
+    """it_asset_holder_to is a DateTimeField specifically so a *today*
+    close is unambiguous the instant it happens (see the model's note) —
+    so today keeps that exact-moment precision, while a backdated or
+    future-dated close uses that day's last moment, the same convention
+    used when an end date is typed into the holder edit form."""
+    from django.utils import timezone
+
+    if action_date == timezone.localdate():
+        return timezone.now()
+    return timezone.make_aware(datetime.datetime.combine(action_date, datetime.time(23, 59, 59)))
+
+
 class MstItAssetViewSet(BaseMasterViewSet):
     """Listed as a reports-style table (not the generic masters drawer —
     too many fields for that) with its own list page driving ?search=,
-    ?active=, ?holder_type=, ?own_company=, ?it_asset_type=,
-    ?it_asset_subtype=, ?it_asset_mfg= and ?ordering= (one of
-    sr_no/model/asset_tag/mfg/own_company/cur_company/pur_dt, prefix '-' to
-    reverse)."""
+    ?active=, ?holder_type=, ?allocated=(Y|N|S|L — S is Scrap, L is Lost),
+    ?own_company=, ?it_asset_type=, ?it_asset_subtype=, ?it_asset_mfg= and
+    ?ordering= (one of sr_no/model/asset_tag/mfg/own_company/cur_company/
+    pur_dt, prefix '-' to reverse)."""
 
     queryset = MstItAsset.objects.select_related(
         "it_asset_model", "it_asset_type", "it_asset_subtype", "it_asset_mfg",
@@ -1321,6 +1378,24 @@ class MstItAssetViewSet(BaseMasterViewSet):
         holder_type = params.get("holder_type")
         if holder_type:
             qs = qs.filter(it_asset_holder_type=holder_type)
+        # `it_asset_allocated` was backfilled from real holder history (was
+        # stale — see ItAssetHolderViewSet) and is now kept in sync on every
+        # holder create/update/delete, so filtering on it directly is safe
+        # and avoids a join on every list request. Scrap and Lost are two
+        # further mutually-exclusive buckets on top of it (see
+        # mark_scrap/unscrap, mark_lost/unlost) — Unassigned excludes both
+        # so none of the three overlap.
+        allocated = params.get("allocated")
+        if allocated == "Y":
+            qs = qs.filter(it_asset_allocated="Y")
+        elif allocated == "N":
+            qs = qs.filter(
+                it_asset_allocated="N", it_asset_scrap_dt__isnull=True, it_asset_lost_dt__isnull=True
+            )
+        elif allocated == "S":
+            qs = qs.filter(it_asset_scrap_dt__isnull=False)
+        elif allocated == "L":
+            qs = qs.filter(it_asset_lost_dt__isnull=False)
         own_company = params.get("own_company")
         if own_company:
             qs = qs.filter(own_company_id=own_company)
@@ -1342,6 +1417,87 @@ class MstItAssetViewSet(BaseMasterViewSet):
         else:
             qs = qs.order_by("-cr_dt")
         return qs
+
+    def _retire(self, request, dt_field, label, other_dt_field, other_label):
+        """Shared body for mark_scrap/mark_lost: close out whatever holder
+        row is currently ongoing (as of an optionally backdated/future-dated
+        `action_date`) and retire the asset. Scrap and Lost are mutually
+        exclusive — trying to mark one while the other is already set is
+        rejected rather than silently overwritten."""
+        from django.utils import timezone
+
+        asset = self.get_object()
+        if getattr(asset, dt_field) is not None:
+            return Response({"error": f"Already marked as {label}."}, status=400)
+        if getattr(asset, other_dt_field) is not None:
+            return Response(
+                {"error": f"This asset is marked as {other_label} — unmark it first."}, status=400
+            )
+        action_date = _parse_action_date(request)
+        if action_date is None:
+            return Response({"error": "Invalid action_date."}, status=400)
+        close_dt = _close_datetime_for(action_date)
+        closed = ItAssetHolder.objects.filter(it_asset=asset, it_asset_holder_to__isnull=True).update(
+            it_asset_holder_to=close_dt
+        )
+        old_snapshot = self._snapshot(asset)
+        asset.it_asset_active = "N"
+        asset.it_asset_allocated = "N"
+        setattr(asset, dt_field, action_date)
+        asset.mod_user_id = self._current_user_id(request)
+        asset.mod_dt = timezone.now()
+        asset.save()
+        changes = self._diff(old_snapshot, self._snapshot(asset))
+        _audit.record_action(
+            request, "update", self.entity_key, asset.pk, f"{self.label_for(asset)} (marked {label})", changes or None
+        )
+        return Response({"closed_holder_rows": closed, **MstItAssetSerializer(asset).data})
+
+    def _unretire(self, request, dt_field, label):
+        from django.utils import timezone
+
+        asset = self.get_object()
+        if getattr(asset, dt_field) is None:
+            return Response({"error": f"This asset isn't marked as {label}."}, status=400)
+        old_snapshot = self._snapshot(asset)
+        asset.it_asset_active = "Y"
+        setattr(asset, dt_field, None)
+        asset.mod_user_id = self._current_user_id(request)
+        asset.mod_dt = timezone.now()
+        asset.save()
+        changes = self._diff(old_snapshot, self._snapshot(asset))
+        _audit.record_action(
+            request, "update", self.entity_key, asset.pk, f"{self.label_for(asset)} (un-{label})", changes or None
+        )
+        return Response(MstItAssetSerializer(asset).data)
+
+    @action(detail=True, methods=["post"], url_path="mark-scrap")
+    def mark_scrap(self, request, pk=None):
+        """Replaces the old manual workaround (typing 'SCRAP' into a holder
+        row's name and leaving it open) with one real action. Accepts an
+        optional `action_date` (default: today) in the POST body to
+        backdate or future-date the record."""
+        return self._retire(request, "it_asset_scrap_dt", "scrap", "it_asset_lost_dt", "lost")
+
+    @action(detail=True, methods=["post"], url_path="unscrap")
+    def unscrap(self, request, pk=None):
+        """Reverses Mark as Scrap: brings the asset back into the active
+        fleet. Does not reopen the holder row that scrapping closed — it
+        stays Unassigned until reassigned through the normal flow."""
+        return self._unretire(request, "it_asset_scrap_dt", "scrap")
+
+    @action(detail=True, methods=["post"], url_path="mark-lost")
+    def mark_lost(self, request, pk=None):
+        """Same as Mark as Scrap but for a device that's gone missing
+        rather than been decommissioned — a separate filter bucket. Accepts
+        an optional `action_date` (default: today) to backdate/future-date."""
+        return self._retire(request, "it_asset_lost_dt", "lost", "it_asset_scrap_dt", "scrap")
+
+    @action(detail=True, methods=["post"], url_path="unlost")
+    def unlost(self, request, pk=None):
+        """Reverses Mark as Lost (the device turned up) — same shape as
+        Unscrap."""
+        return self._unretire(request, "it_asset_lost_dt", "lost")
 
 
 class MstCompanyLocationViewSet(BaseMasterViewSet):
@@ -1375,7 +1531,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
 
     queryset = ItAssetHolder.objects.select_related(
         "it_asset", "it_asset__it_asset_model", "it_asset__it_asset_subtype", "it_asset__it_asset_mfg",
-        "it_asset__own_company", "holder_company", "emp", "department", "company_loc",
+        "it_asset__own_company", "holder_company", "emp", "holder_user", "department", "company_loc",
     ).all()
     serializer_class = ItAssetHolderSerializer
     entity_key = "it_asset.it_asset_holders"
@@ -1383,6 +1539,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
     reference_checks = []
     search_fields = [
         "it_asset__it_asset_sr_no", "it_asset__it_asset_tag", "it_asset__it_asset_sap_code", "holder_name",
+        "holder_user__user_name",
     ]
 
     def get_queryset(self):
@@ -1407,12 +1564,20 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         it_asset_mfg = params.get("it_asset_mfg")
         if it_asset_mfg:
             qs = qs.filter(it_asset__it_asset_mfg_id=it_asset_mfg)
-        today = datetime.date.today()
+        # `it_asset_holder_to` is a DateTimeField specifically so this
+        # comparison is unambiguous: "ongoing" means no end date, or an end
+        # moment still in the future — never "ended earlier today". Remove
+        # Assignment / Reassign / Mark as Scrap all close a row by stamping
+        # timezone.now(), so a row they closed a second ago is immediately
+        # >lte< now and reads as ended, not ongoing-for-the-rest-of-today.
+        from django.utils import timezone
+
+        now = timezone.now()
         status = params.get("status")
         if status == "ongoing":
-            qs = qs.filter(it_asset_holder_to__isnull=True) | qs.filter(it_asset_holder_to__gte=today)
+            qs = qs.filter(it_asset_holder_to__isnull=True) | qs.filter(it_asset_holder_to__gt=now)
         elif status == "ended":
-            qs = qs.filter(it_asset_holder_to__lt=today)
+            qs = qs.filter(it_asset_holder_to__lte=now)
 
         ordering = params.get("ordering")
         if ordering and ordering.lstrip("-") == "sr_no":
@@ -1422,9 +1587,18 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         # Same intent as legacy's ORDER BY ISNULL(To, GETDATE()+50) DESC —
         # ongoing assignments (no end date) sort first, then most-recently
         # ended first.
-        far_future = datetime.date(2100, 1, 1)
+        # MySQL's own COALESCE(datetime_column, string_literal_param) comes
+        # back over the wire typed as a string, not a datetime — even with
+        # the fallback wrapped in Value(output_field=DateTimeField()) — so
+        # Django's result converter (which trusts the annotation's declared
+        # output_field) crashes trying to timezone-convert a str. Wrapping
+        # the whole thing in Cast(..., DateTimeField()) forces MySQL to
+        # CAST(... AS DATETIME) and actually report the right column type.
+        far_future = Value(
+            datetime.datetime(2100, 1, 1, tzinfo=datetime.timezone.utc), output_field=DateTimeField()
+        )
         return qs.annotate(
-            _sort_to=Coalesce("it_asset_holder_to", far_future)
+            _sort_to=Cast(Coalesce("it_asset_holder_to", far_future), output_field=DateTimeField())
         ).order_by("-_sort_to", "-it_asset_holder_from")
 
     def perform_create(self, serializer):
@@ -1435,7 +1609,107 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         _audit.record_action(
             self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
         )
+        self._sync_allocated(instance.it_asset_id)
+
+    def perform_update(self, serializer):
+        from django.utils import timezone
+
+        old_snapshot = self._snapshot(serializer.instance)
+        uid = self._current_user_id(self.request)
+        instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
+        changes = self._diff(old_snapshot, self._snapshot(instance))
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None
+        )
+        self._sync_allocated(instance.it_asset_id)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        it_asset_id = instance.it_asset_id
+        response = super().destroy(request, *args, **kwargs)
+        if response.status_code < 400:
+            self._sync_allocated(it_asset_id)
+        return response
+
+    @action(detail=True, methods=["post"], url_path="remove-assignment")
+    def remove_assignment(self, request, pk=None):
+        """One-click close: ends this holder row as of an optionally
+        backdated/future-dated `action_date` (default: today — and today
+        closes at the exact instant, not just "as of today", see
+        it_asset_holder_to's DateTimeField note on the model) without
+        needing the full edit form, then syncs the asset back to
+        Unassigned."""
+        from django.utils import timezone
+
+        instance = self.get_object()
+        action_date = _parse_action_date(request)
+        if action_date is None:
+            return Response({"error": "Invalid action_date."}, status=400)
+        now = timezone.now()
+        if instance.it_asset_holder_to is not None and instance.it_asset_holder_to <= now:
+            return Response({"error": "This assignment has already ended."}, status=400)
+        old_snapshot = self._snapshot(instance)
+        instance.it_asset_holder_to = _close_datetime_for(action_date)
+        instance.mod_user_id = self._current_user_id(request)
+        instance.mod_dt = timezone.now()
+        instance.save()
+        changes = self._diff(old_snapshot, self._snapshot(instance))
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None
+        )
+        self._sync_allocated(instance.it_asset_id)
+        return Response(self.get_serializer(instance).data)
+
+    @action(detail=False, methods=["post"], url_path="reassign")
+    def reassign(self, request):
+        """Closes whatever holder row is currently ongoing for the given
+        asset (if any) — as of the new record's own `it_asset_holder_from`,
+        so a backdated/future-dated reassignment closes the old row and
+        opens the new one on the same chosen day — and creates the new one
+        in the same request, so a reassignment never leaves the asset
+        transiently Unassigned between two separate calls."""
+        from django.db import transaction
+        from django.utils.dateparse import parse_date
+
+        it_asset_id = request.data.get("it_asset")
+        if not it_asset_id:
+            return Response({"error": "it_asset is required"}, status=400)
+        effective_date = parse_date(request.data.get("it_asset_holder_from") or "")
+        if not effective_date:
+            return Response(
+                {"error": "it_asset_holder_from is required and must be a valid date."}, status=400
+            )
+        with transaction.atomic():
+            ItAssetHolder.objects.filter(it_asset_id=it_asset_id, it_asset_holder_to__isnull=True).update(
+                it_asset_holder_to=_close_datetime_for(effective_date)
+            )
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            changes = {
+                k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
+            }
+            _audit.record_action(
+                request, "create", self.entity_key, instance.pk, f"{self.label_for(instance)} (reassigned)", changes or None
+            )
+            self._sync_allocated(instance.it_asset_id)
+        return Response(self.get_serializer(instance).data, status=201)
+
+    def _sync_allocated(self, it_asset_id):
+        """`it_asset_allocated` is kept as a plain column (not derived live)
+        so the IT Assets list can filter on it directly without joining —
+        recomputed here on every holder create/update/delete so it never
+        drifts from the real ongoing-holder-row truth again."""
+        is_assigned = ItAssetHolder.objects.filter(
+            it_asset_id=it_asset_id, it_asset_holder_to__isnull=True
+        ).exists()
+        MstItAsset.objects.filter(it_asset_id=it_asset_id).update(
+            it_asset_allocated="Y" if is_assigned else "N"
+        )
 
     def label_for(self, instance):
-        who = instance.emp or instance.holder_name or "Common"
+        if instance.holder_user_id:
+            who = instance.holder_user.user_name.strip()
+        else:
+            who = instance.emp or instance.holder_name or "Common"
         return f"{instance.it_asset.it_asset_sr_no} — {who}"

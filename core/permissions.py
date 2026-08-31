@@ -76,6 +76,12 @@ _ACTION_PERM = {
     "destroy": "delete",
     "check_delete": "view",
     "export": "export",
+    "mark_scrap": "edit",
+    "unscrap": "edit",
+    "mark_lost": "edit",
+    "unlost": "edit",
+    "remove_assignment": "edit",
+    "reassign": "add",
 }
 
 

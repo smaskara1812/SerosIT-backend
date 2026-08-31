@@ -309,7 +309,7 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
         Prefetch(
             "holders",
             queryset=ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
-            .select_related("emp", "holder_company", "company_loc")
+            .select_related("emp", "holder_user", "holder_company", "company_loc")
             .order_by("-it_asset_holder_from"),
             to_attr="current_holders",
         )

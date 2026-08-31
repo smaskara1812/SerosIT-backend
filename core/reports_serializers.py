@@ -159,6 +159,8 @@ class ItAssetReportSerializer(serializers.ModelSerializer):
         h = self._current_holder(obj)
         if not h:
             return ""
+        if h.holder_user_id:
+            return h.holder_user.user_name.strip()
         return str(h.emp) if h.emp_id else (h.holder_name or "")
 
     def get_location_name(self, obj):

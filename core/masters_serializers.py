@@ -324,7 +324,11 @@ class MstUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MstUser
-        fields = ["user_id", "user_name", "user_login_id", "display_name"]
+        # emp_id exposed (the raw FK column, not a nested object) so the IT
+        # Asset Holder form's Employee picker can search this — real user
+        # accounts, not the whole 28k-row HR roster — while still writing
+        # to ItAssetHolder.emp_id, which targets Mst_Employee same as ever.
+        fields = ["user_id", "user_name", "user_login_id", "emp_id", "display_name"]
 
     def get_display_name(self, obj):
         return f"{obj.user_name} ({obj.user_login_id})"
@@ -884,6 +888,7 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
         source="holder_company.company_abrv", read_only=True, default=""
     )
     emp_name = serializers.SerializerMethodField()
+    holder_user_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(
         source="department.dept_dispname", read_only=True, default=""
     )
@@ -899,3 +904,6 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
 
     def get_emp_name(self, obj):
         return str(obj.emp) if obj.emp_id else ""
+
+    def get_holder_user_name(self, obj):
+        return obj.holder_user.user_name.strip() if obj.holder_user_id else ""

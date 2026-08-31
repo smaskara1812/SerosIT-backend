@@ -2363,6 +2363,14 @@ class MstItAsset(models.Model):
     remarks = models.CharField(max_length=75, null=True, blank=True)
     it_asset_allocated = models.CharField(max_length=1)
     it_asset_active = models.CharField(max_length=1, default="Y")
+    # Set (and cleared) only by the Mark as Scrap / Unscrap actions — the
+    # real signal for the Scrap filter bucket, kept separate from
+    # it_asset_active so "inactive for some other reason" doesn't get
+    # mistaken for scrapped.
+    it_asset_scrap_dt = models.DateField(null=True, blank=True)
+    # Same idea as it_asset_scrap_dt but for Mark as Lost / Unlost — a
+    # separate bucket, not a second flavour of scrap.
+    it_asset_lost_dt = models.DateField(null=True, blank=True)
     it_asset_to_dt = models.DateField(null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -2398,6 +2406,21 @@ class ItAssetHolder(models.Model):
         on_delete=models.PROTECT,
         related_name="it_asset_holdings",
     )
+    # Added alongside emp (not replacing it) — emp_id only resolves for
+    # people with an HR record, but plenty of real system users who hold
+    # assets don't have one (206 active users, e.g. Savita Bodake). The
+    # Employee picker now searches Mst_User and writes here; it still
+    # derives emp_id too when the picked user has one, so old emp-based
+    # lookups keep working going forward. Existing historical rows keep
+    # using emp/holder_name only — this stays null for those.
+    holder_user = models.ForeignKey(
+        MstUser,
+        db_column="holder_user_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="it_asset_holdings",
+    )
     department = models.ForeignKey(
         MstDepartment,
         db_column="dept_id",
@@ -2417,7 +2440,14 @@ class ItAssetHolder(models.Model):
     holder_name = models.CharField(max_length=40, null=True, blank=True)
     holder_remark = models.CharField(max_length=150, null=True, blank=True)
     vessel_id = models.IntegerField(null=True, blank=True)
-    it_asset_holder_to = models.DateField(null=True, blank=True)
+    # DateTimeField (not DateField) so a system-closed assignment (Remove
+    # Assignment / Reassign / Mark as Scrap — all stamp timezone.now()) is
+    # unambiguously "ended" the instant it happens, rather than remaining
+    # "ongoing" for the rest of that same calendar day. A manually-entered
+    # end date from the edit form is normalized to that day's 23:59:59 —
+    # see ItAssetHolderFormPage's handleSave — so it still reads as
+    # "ongoing through end of day" the way a plain date would.
+    it_asset_holder_to = models.DateTimeField(null=True, blank=True)
     mod_user_id = models.IntegerField(null=True, blank=True)
     mod_dt = models.DateTimeField(null=True, blank=True)
 
