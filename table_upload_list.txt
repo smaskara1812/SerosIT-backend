@@ -1,0 +1,115 @@
+SerosIT — table insertion order for production data migration
+Generated from the real Django model FK graph (topological sort), 92 tables.
+[SELF-REF] = has a parent_*_id pointing at its own table — insert with
+             parent NULL first, then a second UPDATE pass to set parents.
+Tier 1 — no FK dependencies at all (pure lookups)
+  1. mst_business_grp [SELF-REF]
+  2. mst_company_loc_ownership
+  3. mst_company_loc_type
+  4. mst_contact_exposure_type
+  5. mst_continent
+  6. mst_contractor
+  7. mst_cost_centre_type
+  8. mst_currency
+  9. mst_department
+ 10. mst_drilling_operation
+ 11. mst_drilling_rate
+ 12. mst_drilling_section
+ 13. mst_email_notification_type
+ 14. mst_emp_nature
+ 15. mst_employee
+ 16. mst_financial_year
+ 17. mst_fs_category
+ 18. mst_hazard_type
+ 19. mst_hse_activity
+ 20. mst_hse_consumable
+ 21. mst_incident_cause
+ 22. mst_incident_type
+ 23. mst_indicator_type
+ 24. mst_it_accessory
+ 25. mst_it_application_type
+ 26. mst_it_asset_mfg
+ 27. mst_it_asset_type
+ 28. mst_organisational_grp
+ 29. mst_parts_of_body
+ 30. mst_qhse_category
+ 31. mst_rig_operation
+ 32. mst_rig_type
+ 33. mst_vendor_type
+ 34. mst_vessel_dept
+ 35. mst_work_location
+ 36. mst_workgroup
+ 37. sys_audit_log        (new-system table — start empty, don't migrate)
+ 38. sys_menu             (new-system table — seed via script, don't migrate)
+ 39. sys_permission_preset(new-system table — start empty, don't migrate)
+ 40. sys_user_permissions (new-system table — re-provision, don't blind-copy)
+ 41. sys_user_profile     (new-system table — re-provision, don't blind-copy)
+Tier 2 — depend only on Tier 1
+ 42. doc_to_sign_mapping
+ 43. fs_catg_to_rig_type_mapping
+ 44. it_accessory_holder
+ 45. mst_competency
+ 46. mst_country
+ 47. mst_emp_type
+ 48. mst_incident_subcause
+ 49. mst_indicator_subtype
+ 50. mst_it_application_subtype
+ 51. mst_it_asset_subtype
+ 52. mst_rank
+ 53. mst_rig_subtype
+ 54. mst_user
+ 55. wkgrp_indicator_type_mapping
+Tier 3 — depend on Tier 1/2
+ 56. crew_change_reliever_mapping
+ 57. crew_schedule_exception
+ 58. job_description_hdr
+ 59. mst_company [SELF-REF]
+ 60. mst_country_state
+ 61. mst_interviewer
+ 62. mst_it_asset_model
+ 63. mst_rig
+ 64. mst_user_password    (new-system table — this app's own auth, don't migrate)
+ 65. mstx_vendor
+ 66. nationality_to_emp_type_mapping
+ 67. rank_classification
+ 68. reporting_structure
+ 69. rig_crew_exception
+ 70. travel_eligibility
+ 71. user_fs_catg_mapping
+Tier 4
+ 72. job_description_dtl
+ 73. mst_location
+ 74. user_rig_mapping
+Tier 5
+ 75. mst_cert_institute
+ 76. mst_company_location
+ 77. mst_cost_centre
+ 78. mst_operator
+ 79. rig_site_mapping
+Tier 6
+ 80. company_to_location_mapping  (new table — no legacy source, starts empty)
+ 81. cost_centre_to_company_mapping
+ 82. incident
+ 83. mst_it_asset
+ 84. project_contract
+Tier 7 — leaves
+ 85. hazard_card
+ 86. incident_action
+ 87. incident_photo
+ 88. incident_root_cause
+ 89. it_asset_holder
+ 90. mst_drilling_work_shift
+ 91. project_contract_dtl
+ 92. project_drilling_rate
+Notes:
+- "new-system table" entries above (sys_*, mst_user_password,
+  company_to_location_mapping, mst_company_loc_type/ownership) have no
+  1:1 legacy row data — seed or leave empty, don't try to map legacy rows
+  onto them. mst_company_loc_type/ownership DO need their handful of
+  lookup values seeded (Office/Hypermart/Plant, Essar/Aegis/etc.) but as
+  a small manual seed, not a bulk migration.
+- Before writing the real migration script, grep each model's docstring
+  in backend/core/models.py for "New table" / "no legacy" / "straight
+  copy of legacy X" — this codebase has been documenting that distinction
+  per-model throughout the build, so it's the fastest way to confirm which
+  of the 92 need real legacy data vs a fresh/empty start.

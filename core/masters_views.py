@@ -1,7 +1,9 @@
+import csv
 import datetime
 
 from django.db.models import DateTimeField, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
+from django.http import HttpResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -244,6 +246,45 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         """Override when the model has no plain name_field (e.g. FK-combo
         rows like TravelEligibility) to build a readable audit label."""
         return getattr(instance, self.name_field, "")
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request):
+        """CSV export, generic across every master — whatever the list
+        endpoint currently returns (same search/ordering/active/filterable
+        params already applied via get_queryset, plus DRF's own ?search=)
+        is what gets exported, so "export" always matches what's on
+        screen. Columns are exactly the serializer's own fields — every
+        master gets this for free, at the cost of raw field names rather
+        than hand-picked friendly ones."""
+        qs = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(qs, many=True)
+        rows = serializer.data
+        filename = (self.entity_key or "export").split(".")[-1]
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+        if not rows:
+            self._audit_export(request, len(rows))
+            return response
+        fieldnames = list(rows[0].keys())
+        writer = csv.DictWriter(response, fieldnames=fieldnames)
+        writer.writerow({f: f.replace("_", " ").title() for f in fieldnames})
+        for row in rows:
+            writer.writerow(row)
+        self._audit_export(request, len(rows))
+        return response
+
+    def _audit_export(self, request, row_count):
+        """Same shape as the report exports' own _audit_export in
+        reports_views.py — the filters that produced the download go in
+        the changes column (no real "old" side for an export, so it's left
+        blank) rather than inventing a separate audit shape for this one
+        action."""
+        changes = {
+            k: {"old": None, "new": v} for k, v in request.query_params.items() if v not in (None, "")
+        }
+        changes["rows_exported"] = {"old": None, "new": row_count}
+        title = (self.entity_key or "export").split(".")[-1].replace("_", " ").title()
+        _audit.record_action(request, "export", self.entity_key, record_label=f"{title} export", changes=changes)
 
     def _current_user_id(self, request):
         try:
