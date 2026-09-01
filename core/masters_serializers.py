@@ -34,6 +34,7 @@ from .models import (
     MstBusinessGrp,
     MstCompany,
     CostCentreToCompanyMapping,
+    CompanyToLocationMapping,
     RigSiteMapping,
     RigCrewException,
     CrewScheduleException,
@@ -68,6 +69,8 @@ from .models import (
     MstxVendor,
     MstItAsset,
     MstCompanyLocation,
+    MstCompanyLocType,
+    MstCompanyLocOwnership,
     ItAssetHolder,
     MstVendorType,
 )
@@ -545,6 +548,16 @@ class MstBusinessGrpSerializer(serializers.ModelSerializer):
 
 
 class MstCompanySerializer(serializers.ModelSerializer):
+    organisational_grp_name = serializers.CharField(
+        source="organisational_grp.organisational_grp_name", read_only=True, default=""
+    )
+    business_grp_name = serializers.CharField(source="business_grp.business_grp_name", read_only=True, default="")
+    parent_company_name = serializers.CharField(
+        source="parent_company.company_name", read_only=True, default=""
+    )
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+    currency_name = serializers.CharField(source="currency.currency_name", read_only=True, default="")
+
     class Meta:
         model = MstCompany
         fields = "__all__"
@@ -563,6 +576,20 @@ class CostCentreToCompanyMappingSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj):
         return f"{obj.company.company_name} — {obj.cost_centre.cost_centre_name}"
+
+
+class CompanyToLocationMappingSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.company_name", read_only=True, default="")
+    company_loc_name = serializers.CharField(source="company_loc.company_loc_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CompanyToLocationMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.company.company_name} — {obj.company_loc.company_loc_name}"
 
 
 class RigSiteMappingSerializer(serializers.ModelSerializer):
@@ -852,7 +879,22 @@ class MstItAssetSerializer(serializers.ModelSerializer):
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
+class MstCompanyLocTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCompanyLocType
+        fields = "__all__"
+
+
+class MstCompanyLocOwnershipSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCompanyLocOwnership
+        fields = "__all__"
+
+
 class MstCompanyLocationSerializer(serializers.ModelSerializer):
+    location_name = serializers.CharField(source="location.location_name", read_only=True, default="")
+    country_name = serializers.CharField(source="country.country_name", read_only=True, default="")
+
     class Meta:
         model = MstCompanyLocation
         fields = "__all__"

@@ -123,6 +123,11 @@ router.register(
     basename="cost-centre-to-company-mapping",
 )
 router.register(
+    "masters/company-to-location-mapping",
+    masters_views.CompanyToLocationMappingViewSet,
+    basename="company-to-location-mapping",
+)
+router.register(
     "masters/rig-site-mapping", masters_views.RigSiteMappingViewSet, basename="rig-site-mapping"
 )
 router.register(
@@ -179,6 +184,14 @@ router.register("masters/vendor-types", masters_views.MstVendorTypeViewSet, base
 router.register("it-asset/it-assets", masters_views.MstItAssetViewSet, basename="it-asset")
 router.register(
     "masters/company-locations", masters_views.MstCompanyLocationViewSet, basename="mst-company-location"
+)
+router.register(
+    "masters/company-loc-types", masters_views.MstCompanyLocTypeViewSet, basename="mst-company-loc-type"
+)
+router.register(
+    "masters/company-loc-ownerships",
+    masters_views.MstCompanyLocOwnershipViewSet,
+    basename="mst-company-loc-ownership",
 )
 router.register(
     "it-asset/it-asset-holders", masters_views.ItAssetHolderViewSet, basename="it-asset-holder"

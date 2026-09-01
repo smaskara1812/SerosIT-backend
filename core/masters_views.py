@@ -1,6 +1,6 @@
 import datetime
 
-from django.db.models import DateTimeField, ProtectedError, Value
+from django.db.models import DateTimeField, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -44,6 +44,7 @@ from .models import (
     MstBusinessGrp,
     MstCompany,
     CostCentreToCompanyMapping,
+    CompanyToLocationMapping,
     RigSiteMapping,
     RigCrewException,
     CrewScheduleException,
@@ -77,6 +78,8 @@ from .models import (
     MstxVendor,
     MstItAsset,
     MstCompanyLocation,
+    MstCompanyLocType,
+    MstCompanyLocOwnership,
     ItAssetHolder,
     MstVendorType,
 )
@@ -116,6 +119,7 @@ from .masters_serializers import (
     MstBusinessGrpSerializer,
     MstCompanySerializer,
     CostCentreToCompanyMappingSerializer,
+    CompanyToLocationMappingSerializer,
     RigSiteMappingSerializer,
     RigCrewExceptionSerializer,
     CrewScheduleExceptionSerializer,
@@ -148,6 +152,8 @@ from .masters_serializers import (
     MstxVendorSerializer,
     MstItAssetSerializer,
     MstCompanyLocationSerializer,
+    MstCompanyLocTypeSerializer,
+    MstCompanyLocOwnershipSerializer,
     ItAssetHolderSerializer,
     MstVendorTypeSerializer,
 )
@@ -166,16 +172,73 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     labels and default ordering), reference_checks (list of
     (related_manager_accessor, human_label) — every other in-schema master
     that FKs to this one, so check-delete/destroy can report exactly what's
-    blocking a deletion instead of a raw DB error).
+    blocking a deletion instead of a raw DB error), and optionally
+    active_field (the model's real Active-flag column, if it has one) to
+    turn on generic ?active=Y/N filtering.
+
+    Generic list-page sort/filter, on by default for every subclass that
+    doesn't override get_queryset itself: ?ordering=name / -name sorts by
+    name_field (frontend only ever needs to know its own nameField, not
+    the real column), and ?active=Y/N filters on active_field when set.
     """
 
     permission_classes = [HasMenuPermission]
     entity_key = None
     name_field = None
     reference_checks = []
+    # Set ONE of these when the master has an Active concept: active_field
+    # for a real Y/N column, date_active_field for masters where "active"
+    # is really "no end date yet, or one still in the future" (mapping_to /
+    # eligible_to / exception_to / sign_to style columns).
+    active_field = None
+    date_active_field = None
+    # Plain-value fields safe to filter on exactly via ?<field>=<value> —
+    # e.g. Rank Classification's rank_class (J/S). Deliberately only for
+    # small fixed-choice fields, not FK ids (those already have their own
+    # remote-search pickers on the frontend).
+    filterable_fields = []
+
+    def _apply_active_filter(self, qs):
+        """Shared by the default get_queryset below and by subclasses that
+        override get_queryset for their own ordering/scoping — call this
+        from inside that override to still get ?active=Y/N support."""
+        if self.active_field:
+            active = self.request.query_params.get("active")
+            # Some legacy rows have '' rather than a real 'N' — treat
+            # anything but an explicit 'Y' as Inactive rather than
+            # requiring an exact 'N' match (same reasoning as IT Asset's
+            # Allocated flag elsewhere in this app).
+            if active == "Y":
+                qs = qs.filter(**{self.active_field: "Y"})
+            elif active == "N":
+                qs = qs.exclude(**{self.active_field: "Y"})
+        elif self.date_active_field:
+            active = self.request.query_params.get("active")
+            if active in ("Y", "N"):
+                from django.utils import timezone
+
+                today = timezone.localdate()
+                ongoing = Q(**{f"{self.date_active_field}__isnull": True}) | Q(
+                    **{f"{self.date_active_field}__gte": today}
+                )
+                qs = qs.filter(ongoing) if active == "Y" else qs.exclude(ongoing)
+        return qs
+
+    def _apply_filterable_fields(self, qs):
+        for field in self.filterable_fields:
+            value = self.request.query_params.get(field)
+            if value:
+                qs = qs.filter(**{field: value})
+        return qs
 
     def get_queryset(self):
-        return self.queryset.order_by(self.name_field)
+        qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
+        ordering = self.request.query_params.get("ordering")
+        if ordering in ("name", "-name"):
+            qs = qs.order_by(f"-{self.name_field}" if ordering.startswith("-") else self.name_field)
+        else:
+            qs = qs.order_by(self.name_field)
+        return qs
 
     def label_for(self, instance):
         """Override when the model has no plain name_field (e.g. FK-combo
@@ -278,6 +341,7 @@ class MstCostCentreTypeViewSet(BaseMasterViewSet):
     serializer_class = MstCostCentreTypeSerializer
     entity_key = "masters.cost_centre_types"
     name_field = "cost_centre_type_name"
+    active_field = "cost_centre_type_active"
     reference_checks = [("cost_centres", "Cost Centres")]
     search_fields = ["cost_centre_type_name", "cost_centre_type_shortname"]
 
@@ -303,6 +367,7 @@ class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
     serializer_class = MstEmailNotificationTypeSerializer
     entity_key = "masters.email_notification_types"
     name_field = "en_type_name"
+    active_field = "en_type_active"
     search_fields = ["en_type_name"]
 
 
@@ -311,6 +376,7 @@ class MstOperatorViewSet(BaseMasterViewSet):
     serializer_class = MstOperatorSerializer
     entity_key = "masters.operators"
     name_field = "operator_name"
+    active_field = "operator_active"
     search_fields = ["operator_name", "operator_short_name"]
 
 
@@ -347,6 +413,7 @@ class MstRigViewSet(BaseMasterViewSet):
     serializer_class = MstRigSerializer
     entity_key = "masters.rigs"
     name_field = "rig_name"
+    active_field = "rig_active"
     reference_checks = [("cost_centres", "Cost Centres")]
     search_fields = ["rig_name", "rig_short_name"]
 
@@ -356,6 +423,7 @@ class MstCostCentreViewSet(BaseMasterViewSet):
     serializer_class = MstCostCentreSerializer
     entity_key = "masters.cost_centres"
     name_field = "cost_centre_name"
+    active_field = "cost_centre_active"
     search_fields = ["cost_centre_name", "old_cost_centre_name"]
 
 
@@ -367,16 +435,27 @@ class MstCompetencyViewSet(BaseMasterViewSet):
     search_fields = ["competency_name"]
 
 
-class MstDepartmentViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Read-only lookup for other masters' Department dropdowns (Competency,
-    and Mst_User's own department field) — not yet its own delegable master,
-    just data anyone authenticated can read to populate a select.
-    """
+class MstDepartmentViewSet(BaseMasterViewSet):
+    """Promoted from a read-only dropdown source to a real delegable master
+    (General section) — reads stay open to any authenticated user via
+    HasMenuPermissionOrOpenRead so the many forms that use Department as a
+    lookup (Competency, User, IT Asset Holder, ...) keep working for
+    everyone; only add/edit/delete now go through the real permission grid.
+    List shows every row (active and inactive) like any other real master —
+    dropdown consumers that only want active options filter with ?ids= or
+    client-side, same as before."""
 
-    queryset = MstDepartment.objects.filter(dept_active="Y").order_by("dept_name")
+    queryset = MstDepartment.objects.all()
     serializer_class = MstDepartmentSerializer
-    permission_classes = [IsAuthenticated]
+    entity_key = "masters.departments"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "dept_name"
+    reference_checks = [
+        ("competencies", "Competency"),
+        ("users", "Users"),
+        ("it_assets", "IT Assets"),
+        ("it_asset_holdings", "IT Asset Holders"),
+    ]
     # dept_name is the full name shown on the IT Asset Holder form's
     # Department picker (dept_dispname is a shorter display variant used
     # elsewhere) — search has to cover whichever field a caller displays,
@@ -387,7 +466,7 @@ class MstDepartmentViewSet(viewsets.ReadOnlyModelViewSet):
     # combobox can tell from `count` whether it's safe to preload in full.
 
     def get_queryset(self):
-        qs = self.queryset
+        qs = self.queryset.order_by(self.name_field)
         ids = self.request.query_params.get("ids")
         if ids:
             qs = qs.filter(dept_id__in=[i for i in ids.split(",") if i.isdigit()])
@@ -474,10 +553,15 @@ class TravelEligibilityViewSet(BaseMasterViewSet):
     queryset = TravelEligibility.objects.select_related("rank", "fs_category").all()
     serializer_class = TravelEligibilitySerializer
     entity_key = "masters.travel_eligibility"
+    date_active_field = "eligible_to"
     search_fields = ["rank__rank_name", "travel_class"]
 
     def get_queryset(self):
-        return self.queryset.order_by("rank__rank_name", "travel_mode")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        if ordering == "-name":
+            return qs.order_by("-rank__rank_name", "travel_mode")
+        return qs.order_by("rank__rank_name", "travel_mode")
 
     def label_for(self, instance):
         return f"{instance.rank.rank_name} — {instance.get_travel_mode_display()}"
@@ -682,10 +766,13 @@ class MstUserRigMappingViewSet(BaseMasterViewSet):
     queryset = MstUserRigMapping.objects.select_related("user", "rig").all()
     serializer_class = MstUserRigMappingSerializer
     entity_key = "masters.user_rig_mapping"
+    date_active_field = "mapping_to"
     search_fields = ["user__user_name", "user__user_login_id", "rig__rig_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("user__user_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-user__user_name" if ordering == "-name" else "user__user_name")
 
     def label_for(self, instance):
         return f"{instance.user.user_name} — {instance.rig.rig_name}"
@@ -695,10 +782,13 @@ class MstUserFsCatgMappingViewSet(BaseMasterViewSet):
     queryset = MstUserFsCatgMapping.objects.select_related("user", "fs_category").all()
     serializer_class = MstUserFsCatgMappingSerializer
     entity_key = "masters.user_category_mapping"
+    date_active_field = "mapping_to"
     search_fields = ["user__user_name", "user__user_login_id", "fs_category__fs_category_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("user__user_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-user__user_name" if ordering == "-name" else "user__user_name")
 
     def label_for(self, instance):
         return f"{instance.user.user_name} — {instance.fs_category.fs_category_name}"
@@ -708,10 +798,13 @@ class DocToSignMappingViewSet(BaseMasterViewSet):
     queryset = DocToSignMapping.objects.select_related("employee").all()
     serializer_class = DocToSignMappingSerializer
     entity_key = "masters.doc_to_sign_mapping"
+    date_active_field = "sign_to"
     search_fields = ["doc_name", "employee__emp_fname", "employee__emp_sname"]
 
     def get_queryset(self):
-        return self.queryset.order_by("doc_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-doc_name" if ordering == "-name" else "doc_name")
 
     def label_for(self, instance):
         return f"{instance.doc_name} — {instance.employee}"
@@ -795,10 +888,15 @@ class RankClassificationViewSet(BaseMasterViewSet):
     queryset = RankClassification.objects.select_related("rank").all()
     serializer_class = RankClassificationSerializer
     entity_key = "masters.rank_classification"
+    filterable_fields = ["rank_class"]
     search_fields = ["rank__rank_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("rank__rank_name")
+        qs = self._apply_filterable_fields(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        if ordering == "-name":
+            return qs.order_by("-rank__rank_name")
+        return qs.order_by("rank__rank_name")
 
     def label_for(self, instance):
         return f"{instance.rank.rank_name} — {instance.get_rank_class_display()}"
@@ -904,6 +1002,7 @@ class MstBusinessGrpViewSet(BaseMasterViewSet):
     entity_key = "masters.business_grps"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "business_grp_name"
+    active_field = "business_grp_active"
     reference_checks = [("companies", "Companies"), ("children", "Business Groups")]
     search_fields = ["business_grp_name", "business_grp_abrv"]
 
@@ -919,6 +1018,7 @@ class MstCompanyViewSet(BaseMasterViewSet):
     entity_key = "masters.companies"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_name"
+    active_field = "company_active"
     reference_checks = [("cost_centre_mappings", "Cost Centre To Company Mapping"), ("subsidiaries", "Companies")]
     search_fields = ["company_name", "company_abrv", "company_code"]
 
@@ -927,13 +1027,32 @@ class CostCentreToCompanyMappingViewSet(BaseMasterViewSet):
     queryset = CostCentreToCompanyMapping.objects.select_related("company", "cost_centre").all()
     serializer_class = CostCentreToCompanyMappingSerializer
     entity_key = "masters.cost_centre_to_company_mapping"
+    date_active_field = "mapping_to"
     search_fields = ["company__company_name", "cost_centre__cost_centre_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("company__company_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-company__company_name" if ordering == "-name" else "company__company_name")
 
     def label_for(self, instance):
         return f"{instance.company.company_name} — {instance.cost_centre.cost_centre_name}"
+
+
+class CompanyToLocationMappingViewSet(BaseMasterViewSet):
+    queryset = CompanyToLocationMapping.objects.select_related("company", "company_loc").all()
+    serializer_class = CompanyToLocationMappingSerializer
+    entity_key = "masters.company_to_location_mapping"
+    active_field = "company_loc_mapp_active"
+    search_fields = ["company__company_name", "company_loc__company_loc_name"]
+
+    def get_queryset(self):
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-company__company_name" if ordering == "-name" else "company__company_name")
+
+    def label_for(self, instance):
+        return f"{instance.company.company_name} — {instance.company_loc.company_loc_name}"
 
 
 class RigSiteMappingViewSet(BaseMasterViewSet):
@@ -942,10 +1061,13 @@ class RigSiteMappingViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = RigSiteMappingSerializer
     entity_key = "masters.rig_site_mapping"
+    date_active_field = "site_to"
     search_fields = ["rig__rig_name", "company__company_name", "camp_office_addr"]
 
     def get_queryset(self):
-        return self.queryset.order_by("rig__rig_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by("-rig__rig_name" if ordering == "-name" else "rig__rig_name")
 
     def label_for(self, instance):
         return f"{instance.rig.rig_name} — {instance.company.company_name}"
@@ -955,10 +1077,15 @@ class RigCrewExceptionViewSet(BaseMasterViewSet):
     queryset = RigCrewException.objects.select_related("fs_category", "emp_type", "rank", "fs_emp").all()
     serializer_class = RigCrewExceptionSerializer
     entity_key = "masters.rig_crew_exceptions"
+    date_active_field = "exception_to"
     search_fields = ["fs_category__fs_category_name", "rank__rank_name", "emp_type__emp_type_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("fs_category__fs_category_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by(
+            "-fs_category__fs_category_name" if ordering == "-name" else "fs_category__fs_category_name"
+        )
 
     def label_for(self, instance):
         return str(instance)
@@ -968,10 +1095,15 @@ class CrewScheduleExceptionViewSet(BaseMasterViewSet):
     queryset = CrewScheduleException.objects.select_related("fs_category", "emp_type", "rank", "fs_emp").all()
     serializer_class = CrewScheduleExceptionSerializer
     entity_key = "masters.crew_schedule_exceptions"
+    date_active_field = "exception_to"
     search_fields = ["fs_category__fs_category_name", "rank__rank_name", "emp_type__emp_type_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("fs_category__fs_category_name")
+        qs = self._apply_active_filter(self.queryset)
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by(
+            "-fs_category__fs_category_name" if ordering == "-name" else "fs_category__fs_category_name"
+        )
 
     def label_for(self, instance):
         return str(instance)
@@ -1102,6 +1234,9 @@ class ProjectContractViewSet(BaseMasterViewSet):
             qs = qs.filter(prj_end_dt__isnull=True)
         elif status == "closed":
             qs = qs.filter(prj_end_dt__isnull=False)
+        ordering = self.request.query_params.get("ordering")
+        if ordering in ("name", "-name"):
+            return qs.order_by(f"-{self.name_field}" if ordering.startswith("-") else self.name_field)
         return qs.order_by("-prj_start_dt")
 
     def label_for(self, instance):
@@ -1500,6 +1635,29 @@ class MstItAssetViewSet(BaseMasterViewSet):
         return self._unretire(request, "it_asset_lost_dt", "lost")
 
 
+class MstCompanyLocTypeViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only lookup for Company Location's Type dropdown — writes go
+    through Django admin only (see MstCompanyLocType's docstring), so
+    there's no BaseMasterViewSet CRUD here, same pattern as Department."""
+
+    queryset = MstCompanyLocType.objects.filter(company_loc_type_active="Y").order_by("company_loc_type_order")
+    serializer_class = MstCompanyLocTypeSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["company_loc_type_name", "company_loc_type_code"]
+
+
+class MstCompanyLocOwnershipViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only lookup for Company Location's Ownership dropdown — same
+    admin-only-writes pattern as MstCompanyLocTypeViewSet above."""
+
+    queryset = MstCompanyLocOwnership.objects.filter(company_loc_ownership_active="Y").order_by(
+        "company_loc_ownership_order"
+    )
+    serializer_class = MstCompanyLocOwnershipSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["company_loc_ownership_name", "company_loc_ownership_code"]
+
+
 class MstCompanyLocationViewSet(BaseMasterViewSet):
     """Promoted from a read-only dropdown source to a real delegable master
     (General section) — reads stay open to any authenticated user via
@@ -1512,6 +1670,7 @@ class MstCompanyLocationViewSet(BaseMasterViewSet):
     entity_key = "masters.company_locations"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_loc_name"
+    active_field = "company_loc_active"
     reference_checks = [("it_assets", "IT Assets"), ("it_asset_holdings", "IT Asset Holders")]
     search_fields = ["company_loc_name", "company_loc_abrv"]
 

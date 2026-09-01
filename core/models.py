@@ -1175,11 +1175,12 @@ class MstBusinessGrp(models.Model):
 
 
 class MstCompany(models.Model):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Cost Centre To Company Mapping and via direct API access. Kept to the
-    columns that matter for identifying/displaying a company rather than
-    every legacy SAP-integration field (Company_PAN/TAN, SAP_Company,
-    Payroll_Area, Personnel_Area, etc. — unused outside SAP sync)."""
+    """Now has a real Masters page (General section). Company_PAN/TAN are
+    still left out (not shown on the legacy form, unused outside SAP sync);
+    SAP_Company/Cost_Center/Payroll_Area/Personnel_Area were added back in
+    since the legacy form does show them, even though real data is sparse —
+    Seros_Data has SAP_Company entirely NULL across all 318 rows, and only
+    one row each with a Cost_Center/Payroll_Area/Personnel_Area value."""
 
     company_id = models.AutoField(primary_key=True)
     organisational_grp = models.ForeignKey(
@@ -1206,6 +1207,10 @@ class MstCompany(models.Model):
         "MstCurrency", db_column="currency_id", on_delete=models.PROTECT, related_name="companies"
     )
     company_order = models.IntegerField(null=True, blank=True)
+    sap_company = models.CharField(max_length=75, null=True, blank=True)
+    cost_center = models.CharField(max_length=35, null=True, blank=True)
+    payroll_area = models.CharField(max_length=35, null=True, blank=True)
+    personnel_area = models.CharField(max_length=35, null=True, blank=True)
     company_from = models.DateField()
     company_to = models.DateField(null=True, blank=True)
     company_active = models.CharField(max_length=1, default="Y")
@@ -1245,6 +1250,33 @@ class CostCentreToCompanyMapping(models.Model):
 
     def __str__(self):
         return f"{self.company.company_name} — {self.cost_centre.cost_centre_name}"
+
+
+class CompanyToLocationMapping(models.Model):
+    """New table — no Seros_Data counterpart to copy; built fresh from the
+    mentor-supplied DDL for dbo.Mst_Company_To_Location_Mapping. Its own
+    PK isn't preserved (nothing existing references it), same reasoning
+    as CostCentreToCompanyMapping above."""
+
+    company = models.ForeignKey(
+        MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="location_mappings"
+    )
+    company_loc = models.ForeignKey(
+        "MstCompanyLocation", db_column="company_loc_id", on_delete=models.PROTECT, related_name="company_mappings"
+    )
+    # 'PROJECT' / 'REGISTER' confirmed from the legacy form's dropdown.
+    comp_addr_type = models.CharField(max_length=10, null=True, blank=True)
+    company_loc_mapp_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "company_to_location_mapping"
+
+    def __str__(self):
+        return f"{self.company.company_name} — {self.company_loc.company_loc_name}"
 
 
 class RigSiteMapping(models.Model):
@@ -2095,9 +2127,58 @@ class MstVendorType(models.Model):
         return self.vendor_type_name
 
 
+class MstCompanyLocType(models.Model):
+    """Backend-only lookup feeding Company Location's Type dropdown — no
+    Masters nav page of its own; new values are added directly via Django
+    admin. This is the exact case flagged for upgrading: legacy hardcoded
+    this list (O/H/P), so it needed to become admin-editable instead.
+
+    Company Location itself keeps no real FK to this table — it just
+    stores company_loc_type_code as a plain string, same shape as the
+    legacy single-letter code, so existing data (O/H/P) needed no
+    migration at all; this only widens what a *new* code can be."""
+
+    company_loc_type_id = models.AutoField(primary_key=True)
+    company_loc_type_code = models.CharField(max_length=20, unique=True)
+    company_loc_type_name = models.CharField(max_length=50)
+    company_loc_type_order = models.IntegerField(default=0)
+    company_loc_type_active = models.CharField(max_length=1, default="Y")
+    cr_dt = models.DateTimeField(auto_now_add=True)
+    mod_dt = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mst_company_loc_type"
+        ordering = ["company_loc_type_order"]
+
+    def __str__(self):
+        return self.company_loc_type_name
+
+
+class MstCompanyLocOwnership(models.Model):
+    """Same idea as MstCompanyLocType, for Company Location's Ownership
+    dropdown — admin-editable, no real FK from Company Location (which
+    just stores company_loc_ownership_code as a plain string)."""
+
+    company_loc_ownership_id = models.AutoField(primary_key=True)
+    company_loc_ownership_code = models.CharField(max_length=20, unique=True)
+    company_loc_ownership_name = models.CharField(max_length=50)
+    company_loc_ownership_order = models.IntegerField(default=0)
+    company_loc_ownership_active = models.CharField(max_length=1, default="Y")
+    cr_dt = models.DateTimeField(auto_now_add=True)
+    mod_dt = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mst_company_loc_ownership"
+        ordering = ["company_loc_ownership_order"]
+
+    def __str__(self):
+        return self.company_loc_ownership_name
+
+
 class MstCompanyLocation(models.Model):
-    """Kept to the columns that matter for identifying/using a company
-    site — drops legacy's VOIP/EssarNet telephony-integration columns."""
+    """Has a real Masters page (General section). Still drops legacy's
+    EssarNet telephony-integration flag (not shown on the legacy form) —
+    but VOIP Code *is* shown there, so it's kept as company_loc_voip_code."""
 
     company_loc_id = models.AutoField(primary_key=True)
     company_loc_name = models.CharField(max_length=75)
@@ -2110,12 +2191,20 @@ class MstCompanyLocation(models.Model):
     country = models.ForeignKey(
         "MstCountry", db_column="country_id", on_delete=models.PROTECT, related_name="company_locations"
     )
+    # Legacy stores these as one freeform DMS string per axis (e.g.
+    # 18°58'00.00" / 072°49'00.00"E) — the legacy form splits that into
+    # Degree/Minutes/Zone sub-fields purely for editing, there's no
+    # separate underlying column per part.
     latitude = models.CharField(max_length=14, null=True, blank=True)
     longitude = models.CharField(max_length=14, null=True, blank=True)
-    # 'H'=Head Office / 'B'=Branch / etc. — legacy's Company_Loc_Type code,
-    # kept as-is (no reference doc for the full choice set).
-    company_loc_type = models.CharField(max_length=1)
-    company_loc_ownership = models.CharField(max_length=1, null=True, blank=True)
+    company_loc_voip_code = models.IntegerField(null=True, blank=True)
+    # Plain code strings, not FKs — see MstCompanyLocType/MstCompanyLocOwnership
+    # above for the admin-editable list of valid codes+labels each feeds.
+    # Widened from legacy's 1-char columns so a newly-admin-added code
+    # isn't stuck at a single letter; existing O/H/P-style values are
+    # untouched, just sitting in a roomier column now.
+    company_loc_type = models.CharField(max_length=20)
+    company_loc_ownership = models.CharField(max_length=20, null=True, blank=True)
     company_loc_order = models.IntegerField(default=0)
     company_loc_active = models.CharField(max_length=1, default="Y")
     cr_user_id = models.IntegerField()
