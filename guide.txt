@@ -1,0 +1,27 @@
+Here are the three commands, all run from `backend/` with the venv active:
+
+**1. Document schema/table changes** (regenerates the legacy→new column-mapping doc):
+```bash
+python manage.py build_migration_map > docs/migration_map.md
+```
+
+**2. Export all tables** (one Excel file, one sheet per table):
+```bash
+python manage.py export_all_tables
+```
+Optional: `--output <path>` (default `docs/full_export_<timestamp>.xlsx`), `--tables mst_rig,mst_company` for a subset.
+
+**3. Import all tables** (reload an export back into the DB — MySQL only):
+```bash
+python manage.py import_all_tables docs/full_export_20260901.xlsx --dry-run   # validate only, no writes
+python manage.py import_all_tables docs/full_export_20260901.xlsx --truncate  # wipe + reload for real
+```
+Optional: `--tables mst_rig,mst_company` for a subset (drop `--truncate` to add rows to an already-populated table instead of replacing it).
+
+**Typical workflow when you've added/changed tables:**
+```bash
+python manage.py build_migration_map > docs/migration_map.md   # 1. update the doc
+python manage.py export_all_tables                              # 2. snapshot current data
+# ... clean/reset the database ...
+python manage.py import_all_tables docs/full_export_<ts>.xlsx --truncate   # 3. reload it
+```

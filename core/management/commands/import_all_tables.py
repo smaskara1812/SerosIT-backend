@@ -13,13 +13,18 @@ save()/bulk_create() — two real landmines forced that:
 Raw SQL sidesteps both: it writes exactly the literal value that was in the
 sheet, with no per-field ORM side effects.
 
-MySQL-only: it relies on `SET FOREIGN_KEY_CHECKS=0` to write tables in
-whatever order the sheets happen to be in, instead of hand-computing FK
-insertion order — safe here because the export is already a self-consistent
-snapshot of a live DB, so there's nothing invalid to protect against while
-the checks are off. (Prod is SQL Server, which needs a different mechanism
-for this; this command is a dev-database convenience, not the production
-migration path — see build_migration_map for that.)
+Works against MySQL (dev) and SQL Server (prod) — both backends implement
+Django's standard `connection.constraint_checks_disabled()` (MySQL via
+`SET FOREIGN_KEY_CHECKS`, mssql-django via `ALTER TABLE ... NOCHECK
+CONSTRAINT ALL` on every table), so this writes tables in whatever order the
+sheets happen to be in rather than hand-computing FK insertion order — safe
+because the export is already a self-consistent snapshot of a live DB, so
+there's nothing invalid to protect against while checks are off.
+mssql-django's cursor also transparently rewrites this file's `%s`
+placeholders to pyodbc's `?`, so the parameterized SQL itself needs no
+vendor branching — only identifier quoting (`` ` `` vs `[ ]`) and SQL
+Server's `IDENTITY_INSERT` (required for *any* explicit identity-column
+value, not just 0 — MySQL only needs the explicit-0 workaround) differ.
 
     python manage.py import_all_tables docs/full_export_20260901.xlsx --dry-run
     python manage.py import_all_tables docs/full_export_20260901.xlsx --truncate
@@ -33,7 +38,23 @@ from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.db.models import DecimalField
+from django.db.models.fields import AutoFieldMixin
 from openpyxl import load_workbook
+
+SUPPORTED_VENDORS = {"mysql", "microsoft"}
+
+
+def _quote(name, vendor):
+    return f"[{name}]" if vendor == "microsoft" else f"`{name}`"
+
+
+def _has_identity_pk(model, db_columns):
+    """True if this table's PK is an identity/AUTO_INCREMENT column *and*
+    the sheet actually carries a value for it — SQL Server's IDENTITY_INSERT
+    requires every row to supply the identity column explicitly, so it's
+    only safe to turn on when that column is really present."""
+    pk = model._meta.pk
+    return isinstance(pk, AutoFieldMixin) and pk.column in db_columns
 
 
 class Command(BaseCommand):
@@ -61,10 +82,11 @@ class Command(BaseCommand):
         path = options["input"]
         if not os.path.isfile(path):
             raise CommandError(f"File not found: {path}")
-        if connection.vendor != "mysql":
+        vendor = connection.vendor
+        if vendor not in SUPPORTED_VENDORS:
             raise CommandError(
-                f"This command relies on MySQL's FOREIGN_KEY_CHECKS pragma — the current "
-                f"connection is '{connection.vendor}', not mysql."
+                f"This command supports MySQL and SQL Server only — the current connection is "
+                f"'{vendor}'."
             )
 
         wb = load_workbook(path, read_only=True, data_only=True)
@@ -95,7 +117,7 @@ class Command(BaseCommand):
                     )
                 )
 
-        # table -> (quoted db column list, [row tuple, ...])
+        # table -> (db column list, [row tuple, ...])
         planned = {}
         total_rows = 0
 
@@ -120,7 +142,7 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.WARNING(
                         f"  {table}: sheet is missing column(s) {missing_cols} — those columns will "
-                        f"get MySQL's own column default on every imported row."
+                        f"get the database's own column default on every imported row."
                     )
                 )
 
@@ -162,40 +184,51 @@ class Command(BaseCommand):
             )
             return
 
-        # The FOREIGN_KEY_CHECKS reset has to run on a *clean* connection —
-        # if anything below raises, transaction.atomic() rolls back before
-        # this finally runs, so the reset itself never fails and never
-        # masks whatever the real error was.
-        try:
-            with transaction.atomic():
-                with connection.cursor() as cur:
-                    cur.execute("SET FOREIGN_KEY_CHECKS=0")
-                    # Without this, MySQL treats an explicit 0 in an
-                    # AUTO_INCREMENT column as "assign the next value"
-                    # rather than literally storing 0 — and this DB has a
-                    # real PK-0 sentinel row (mst_user.user_id=0, "System"),
-                    # which would otherwise silently collide with PK 1.
-                    cur.execute("SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')")
+        with transaction.atomic():
+            with connection.constraint_checks_disabled():
+                if vendor == "mysql":
+                    with connection.cursor() as cur:
+                        # Without this, MySQL treats an explicit 0 in an
+                        # AUTO_INCREMENT column as "assign the next value"
+                        # rather than literally storing 0 — and this DB has
+                        # a real PK-0 sentinel row (mst_user.user_id=0,
+                        # "System"), which would otherwise silently collide
+                        # with PK 1. SQL Server has no equivalent quirk —
+                        # IDENTITY_INSERT below handles explicit values,
+                        # 0 included, uniformly.
+                        cur.execute("SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_AUTO_VALUE_ON_ZERO')")
 
                 if options["truncate"]:
                     self.stdout.write("Truncating targeted tables...")
                     with connection.cursor() as cur:
                         for table in sheet_for_table:
-                            cur.execute(f"TRUNCATE TABLE `{table}`")
+                            cur.execute(f"TRUNCATE TABLE {_quote(table, vendor)}")
 
                 for table, (db_columns, row_tuples) in planned.items():
                     if not row_tuples:
                         continue
-                    col_list = ", ".join(f"`{c}`" for c in db_columns)
+                    model = by_table[table]
+                    quoted_table = _quote(table, vendor)
+                    col_list = ", ".join(_quote(c, vendor) for c in db_columns)
                     placeholders = ", ".join(["%s"] * len(db_columns))
-                    sql = f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders})"
+                    sql = f"INSERT INTO {quoted_table} ({col_list}) VALUES ({placeholders})"
+                    # SQL Server refuses to write an explicit value into an
+                    # identity column at all unless IDENTITY_INSERT is ON
+                    # for that table — and only one table may have it ON
+                    # per session, so it's scoped tightly around this one
+                    # table's insert rather than set once up front.
+                    identity_wrap = vendor == "microsoft" and _has_identity_pk(model, db_columns)
                     with connection.cursor() as cur:
+                        if identity_wrap:
+                            cur.execute(f"SET IDENTITY_INSERT {quoted_table} ON")
                         cur.executemany(sql, row_tuples)
+                        if identity_wrap:
+                            cur.execute(f"SET IDENTITY_INSERT {quoted_table} OFF")
                     self.stdout.write(f"  {table}: {len(row_tuples)} row(s) imported")
-        finally:
-            with connection.cursor() as cur:
-                cur.execute("SET FOREIGN_KEY_CHECKS=1")
-                cur.execute("SET SESSION sql_mode = @@GLOBAL.sql_mode")
+
+                if vendor == "mysql":
+                    with connection.cursor() as cur:
+                        cur.execute("SET SESSION sql_mode = @@GLOBAL.sql_mode")
 
         self.stdout.write(
             self.style.SUCCESS(f"\nImported {total_rows} row(s) across {len(sheet_for_table)} table(s) from {path}")
