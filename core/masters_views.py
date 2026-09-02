@@ -84,6 +84,8 @@ from .models import (
     MstCompanyLocOwnership,
     ItAssetHolder,
     MstVendorType,
+    MstItAccessory,
+    ItAccessoryHolder,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -158,6 +160,8 @@ from .masters_serializers import (
     MstCompanyLocOwnershipSerializer,
     ItAssetHolderSerializer,
     MstVendorTypeSerializer,
+    MstItAccessorySerializer,
+    ItAccessoryHolderSerializer,
 )
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
@@ -1485,6 +1489,43 @@ class MstVendorTypeViewSet(BaseMasterViewSet):
     name_field = "vendor_type_name"
     reference_checks = [("vendors", "Vendors")]
     search_fields = ["vendor_type_name"]
+
+
+class MstItAccessoryViewSet(BaseMasterViewSet):
+    queryset = MstItAccessory.objects.all()
+    serializer_class = MstItAccessorySerializer
+    entity_key = "masters.it_accessories"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "it_accessory_name"
+    active_field = "it_accessory_active"
+    reference_checks = [("holders", "IT Accessory Holders")]
+    search_fields = ["it_accessory_name"]
+
+
+class ItAccessoryHolderViewSet(BaseMasterViewSet):
+    """Standalone accessory holder record — not linked to a specific
+    Mst_IT_Asset row, straight copy of legacy it_IT_Accessory_Holder."""
+
+    queryset = ItAccessoryHolder.objects.select_related("it_accessory", "emp", "it_asset_mfg")
+    serializer_class = ItAccessoryHolderSerializer
+    entity_key = "it_asset.it_accessory_holders"
+    name_field = "it_accessory_holder_id"
+    date_active_field = "it_accessory_holder_to"
+    reference_checks = []
+    search_fields = [
+        "it_accessory__it_accessory_name", "it_accessory_holder_name", "emp__emp_fname", "emp__emp_sname",
+        "it_accessory_sr_no",
+    ]
+
+    def get_queryset(self):
+        qs = self._apply_active_filter(self.queryset)
+        accessory = self.request.query_params.get("it_accessory")
+        if accessory:
+            qs = qs.filter(it_accessory_id=accessory)
+        return qs.order_by("-it_accessory_holder_from")
+
+    def label_for(self, instance):
+        return f"{instance.it_accessory} — {instance.it_accessory_holder_name or instance.emp}"
 
 
 IT_ASSET_ORDERING_FIELDS = {

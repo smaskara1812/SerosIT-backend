@@ -73,6 +73,8 @@ from .models import (
     MstCompanyLocOwnership,
     ItAssetHolder,
     MstVendorType,
+    MstItAccessory,
+    ItAccessoryHolder,
 )
 
 
@@ -850,6 +852,31 @@ class MstVendorTypeSerializer(serializers.ModelSerializer):
         model = MstVendorType
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstItAccessorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstItAccessory
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class ItAccessoryHolderSerializer(serializers.ModelSerializer):
+    it_accessory_name = serializers.CharField(
+        source="it_accessory.it_accessory_name", read_only=True, default=""
+    )
+    emp_name = serializers.SerializerMethodField()
+    it_asset_mfg_name = serializers.CharField(
+        source="it_asset_mfg.it_asset_mfg_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = ItAccessoryHolder
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_emp_name(self, obj):
+        return str(obj.emp) if obj.emp_id else ""
 
 
 class MstItAssetSerializer(serializers.ModelSerializer):

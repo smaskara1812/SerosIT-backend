@@ -196,6 +196,10 @@ router.register(
 router.register(
     "it-asset/it-asset-holders", masters_views.ItAssetHolderViewSet, basename="it-asset-holder"
 )
+router.register("masters/it-accessories", masters_views.MstItAccessoryViewSet, basename="mst-it-accessory")
+router.register(
+    "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
+)
 
 urlpatterns = [
     path("", include(router.urls)),
