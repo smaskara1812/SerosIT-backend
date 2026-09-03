@@ -207,6 +207,13 @@ class Command(BaseCommand):
                 for table, (db_columns, row_tuples) in planned.items():
                     if not row_tuples:
                         continue
+                    # Printed before, not just after, the insert — a big
+                    # table's executemany() is one blocking call with no
+                    # progress in between, so without this line the tool
+                    # goes silent for however long that table takes and
+                    # looks hung rather than merely slow.
+                    self.stdout.write(f"  {table}: importing {len(row_tuples)} row(s)...")
+                    self.stdout.flush()
                     model = by_table[table]
                     quoted_table = _quote(table, vendor)
                     col_list = ", ".join(_quote(c, vendor) for c in db_columns)
@@ -219,6 +226,24 @@ class Command(BaseCommand):
                     # table's insert rather than set once up front.
                     identity_wrap = vendor == "microsoft" and _has_identity_pk(model, db_columns)
                     with connection.cursor() as cur:
+                        if vendor == "microsoft":
+                            # Default pyodbc executemany() sends one round
+                            # trip per row — for a table like mst_employee
+                            # (tens of thousands of rows) that's the
+                            # difference between seconds and many minutes,
+                            # with zero output in between either way (this
+                            # command only prints once a whole table is
+                            # done), so it looks identical to "stuck". This
+                            # is pyodbc's own documented batching flag;
+                            # reaching for the raw cursor through Django's
+                            # and mssql-django's wrapper layers because
+                            # neither exposes it directly. Best-effort: if
+                            # a future wrapper version changes shape, skip
+                            # the speedup rather than fail the import over it.
+                            try:
+                                cur.cursor.cursor.fast_executemany = True
+                            except AttributeError:
+                                pass
                         if identity_wrap:
                             cur.execute(f"SET IDENTITY_INSERT {quoted_table} ON")
                         cur.executemany(sql, row_tuples)

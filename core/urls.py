@@ -198,6 +198,18 @@ router.register(
 )
 router.register("masters/it-accessories", masters_views.MstItAccessoryViewSet, basename="mst-it-accessory")
 router.register(
+    "masters/financial-years", masters_views.MstFinancialYearViewSet, basename="mst-financial-year"
+)
+router.register(
+    "masters/buss-cert-issue-authorities",
+    masters_views.MstBussCertIssueAuthorityViewSet,
+    basename="mst-buss-cert-issue-authority",
+)
+router.register(
+    "masters/buss-cert-types", masters_views.MstBussCertTypeViewSet, basename="mst-buss-cert-type"
+)
+router.register("masters/buss-certs", masters_views.MstBussCertViewSet, basename="mst-buss-cert")
+router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )
 

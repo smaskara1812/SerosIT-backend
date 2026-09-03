@@ -75,6 +75,10 @@ from .models import (
     MstVendorType,
     MstItAccessory,
     ItAccessoryHolder,
+    MstFinancialYear,
+    MstBussCertIssueAuthority,
+    MstBussCertType,
+    MstBussCert,
 )
 
 
@@ -857,6 +861,36 @@ class MstVendorTypeSerializer(serializers.ModelSerializer):
 class MstItAccessorySerializer(serializers.ModelSerializer):
     class Meta:
         model = MstItAccessory
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstFinancialYearSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstFinancialYear
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstBussCertIssueAuthoritySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstBussCertIssueAuthority
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstBussCertTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstBussCertType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstBussCertSerializer(serializers.ModelSerializer):
+    buss_cert_type_name = serializers.CharField(source="buss_cert_type.buss_cert_type", read_only=True, default="")
+
+    class Meta:
+        model = MstBussCert
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 

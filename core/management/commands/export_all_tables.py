@@ -9,6 +9,7 @@ of the production migration path (see build_migration_map for that).
 """
 
 import datetime
+import json
 import os
 
 from django.apps import apps
@@ -47,6 +48,15 @@ def _cell_value(value):
     # stringified so the write never raises on an unrecognized type.
     if value is None or isinstance(value, (str, int, float, bool, datetime.date, datetime.datetime)):
         return value
+    if isinstance(value, (dict, list)):
+        # A JSON-backed field (e.g. SysAuditLog.changes, a PortableJSONField
+        # stored as TEXT) comes back from .values() already decoded into a
+        # real dict/list by from_db_value(). Python's own str() renders that
+        # as a repr — single-quoted keys, True/False/None — which looks like
+        # JSON but isn't; import_all_tables would write that literal text
+        # back into the TEXT column, and the next json.loads() on read
+        # fails. json.dumps() keeps it valid JSON through the round trip.
+        return json.dumps(value)
     return str(value)
 
 

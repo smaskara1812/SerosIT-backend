@@ -86,6 +86,10 @@ from .models import (
     MstVendorType,
     MstItAccessory,
     ItAccessoryHolder,
+    MstFinancialYear,
+    MstBussCertIssueAuthority,
+    MstBussCertType,
+    MstBussCert,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -162,6 +166,10 @@ from .masters_serializers import (
     MstVendorTypeSerializer,
     MstItAccessorySerializer,
     ItAccessoryHolderSerializer,
+    MstFinancialYearSerializer,
+    MstBussCertIssueAuthoritySerializer,
+    MstBussCertTypeSerializer,
+    MstBussCertSerializer,
 )
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
@@ -405,6 +413,33 @@ class MstCertInstituteViewSet(BaseMasterViewSet):
     entity_key = "masters.cert_institutes"
     name_field = "cert_institute_name"
     search_fields = ["cert_institute_name", "cert_institute_shortname"]
+
+
+class MstBussCertIssueAuthorityViewSet(BaseMasterViewSet):
+    queryset = MstBussCertIssueAuthority.objects.all()
+    serializer_class = MstBussCertIssueAuthoritySerializer
+    entity_key = "masters.buss_cert_issue_authorities"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "buss_cert_issue_authority"
+    search_fields = ["buss_cert_issue_authority", "buss_cert_issue_abrv"]
+
+
+class MstBussCertTypeViewSet(BaseMasterViewSet):
+    queryset = MstBussCertType.objects.all()
+    serializer_class = MstBussCertTypeSerializer
+    entity_key = "masters.buss_cert_types"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "buss_cert_type"
+    search_fields = ["buss_cert_type", "buss_cert_type_abrv"]
+
+
+class MstBussCertViewSet(BaseMasterViewSet):
+    queryset = MstBussCert.objects.select_related("buss_cert_type").all()
+    serializer_class = MstBussCertSerializer
+    entity_key = "masters.buss_certs"
+    name_field = "buss_cert_name"
+    active_field = "buss_cert_active"
+    search_fields = ["buss_cert_name", "buss_cert_type__buss_cert_type"]
 
 
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
@@ -1036,6 +1071,23 @@ class MstOrganisationalGrpViewSet(BaseMasterViewSet):
     name_field = "organisational_grp_name"
     reference_checks = [("companies", "Companies")]
     search_fields = ["organisational_grp_name"]
+
+
+class MstFinancialYearViewSet(BaseMasterViewSet):
+    queryset = MstFinancialYear.objects.all()
+    serializer_class = MstFinancialYearSerializer
+    entity_key = "masters.financial_years"
+    permission_classes = [HasMenuPermissionOrOpenRead]
+    name_field = "fin_year_text"
+    reference_checks = [("incidents", "Incidents")]
+    search_fields = ["fin_year_text", "fin_year_subtext", "assessment_year"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        ordering = self.request.query_params.get("ordering")
+        if ordering in ("name", "-name"):
+            return qs.order_by(f"-{self.name_field}" if ordering.startswith("-") else self.name_field)
+        return qs.order_by("-fin_year_from")
 
 
 class MstBusinessGrpViewSet(BaseMasterViewSet):

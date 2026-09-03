@@ -96,6 +96,13 @@ if DB_ENGINE == "mssql":
             "PASSWORD": os.getenv("MSSQL_PASSWORD", ""),
             "HOST": os.getenv("MSSQL_HOST", "localhost"),
             "PORT": os.getenv("MSSQL_PORT", "1433"),
+            # Without this, Django opens a fresh ODBC connection (TCP +
+            # driver init + SQL Server login) on every single request and
+            # tears it down at the end — negligible over MySQL on
+            # localhost, but a real tens-to-hundreds-of-ms tax per API call
+            # over pyodbc. Reusing the connection for this long instead is
+            # the single biggest lever for API latency on this backend.
+            "CONN_MAX_AGE": int(os.getenv("MSSQL_CONN_MAX_AGE", "600")),
             "OPTIONS": {
                 "driver": os.getenv("MSSQL_DRIVER", "ODBC Driver 17 for SQL Server"),
             },

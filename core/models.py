@@ -89,6 +89,87 @@ class MstCertInstitute(models.Model):
         return self.cert_institute_name
 
 
+class MstBussCertIssueAuthority(models.Model):
+    """Straight copy of legacy Mst_Buss_Cert_Issue_Authority — who issued a
+    business certificate (classification society, flag state authority,
+    etc.)."""
+
+    buss_cert_issue_auth_id = models.AutoField(primary_key=True)
+    buss_cert_issue_authority = models.CharField(max_length=75)
+    buss_cert_issue_abrv = models.CharField(max_length=7)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_buss_cert_issue_authority"
+
+    def __str__(self):
+        return self.buss_cert_issue_authority
+
+
+class MstBussCertType(models.Model):
+    """Straight copy of legacy Mst_Buss_Cert_Type — Mandatory / Non
+    Mandatory / Others classification for a business certificate."""
+
+    buss_cert_type_id = models.AutoField(primary_key=True)
+    buss_cert_type = models.CharField(max_length=15)
+    buss_cert_type_abrv = models.CharField(max_length=5)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_buss_cert_type"
+
+    def __str__(self):
+        return self.buss_cert_type
+
+
+class MstBussCert(models.Model):
+    """Straight copy of legacy Mst_Buss_Cert — a business certificate
+    (IAPP, Certificate of Class, etc.), its type and default validity
+    period.
+
+    The Business_System_Id_N columns are checkboxes in the legacy "Extended
+    to" section, fixed to seven rows of the legacy Mst_Business_System
+    master (2=Shipping, 5=Dredging, 6=Oilfield Services, 7=Logistics,
+    8=Oil Terminal, 9=Bulk Terminal, 11=Offshore Sub Sea) — checked stores
+    that business system's own id, unchecked is NULL. Kept as that exact
+    shape for a faithful copy rather than a join to a system-picker table
+    (Mst_Business_System itself isn't part of this app)."""
+
+    buss_cert_id = models.AutoField(primary_key=True)
+    buss_cert_name = models.CharField(max_length=90)
+    buss_cert_type = models.ForeignKey(
+        MstBussCertType,
+        db_column="buss_cert_type_id",
+        on_delete=models.PROTECT,
+        related_name="certificates",
+    )
+    buss_cert_validity = models.CharField(max_length=15)
+    business_system_id_2 = models.IntegerField(null=True, blank=True)  # Shipping
+    business_system_id_5 = models.IntegerField(null=True, blank=True)  # Dredging
+    business_system_id_6 = models.IntegerField(null=True, blank=True)  # Oilfield Services
+    business_system_id_7 = models.IntegerField(null=True, blank=True)  # Logistics
+    business_system_id_8 = models.IntegerField(null=True, blank=True)  # Oil Terminal
+    business_system_id_9 = models.IntegerField(null=True, blank=True)  # Bulk Terminal
+    business_system_id_11 = models.IntegerField(null=True, blank=True)  # Offshore Sub Sea
+    buss_cert_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_buss_cert"
+
+    def __str__(self):
+        return self.buss_cert_name
+
+
 class MstEmailNotificationType(models.Model):
     en_type_id = models.AutoField(primary_key=True)
     en_type_name = models.CharField(max_length=50)
@@ -1781,8 +1862,6 @@ class MstFinancialYear(models.Model):
     fin_year_text = models.CharField(max_length=9)
     fin_year_subtext = models.CharField(max_length=5)
     assessment_year = models.CharField(max_length=9)
-    nri_days = models.IntegerField()
-    fin_year_status = models.CharField(max_length=1)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
