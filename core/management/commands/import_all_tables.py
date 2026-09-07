@@ -202,7 +202,21 @@ class Command(BaseCommand):
                     self.stdout.write("Truncating targeted tables...")
                     with connection.cursor() as cur:
                         for table in sheet_for_table:
-                            cur.execute(f"TRUNCATE TABLE {_quote(table, vendor)}")
+                            quoted_table = _quote(table, vendor)
+                            if vendor == "microsoft":
+                                # SQL Server refuses TRUNCATE TABLE outright
+                                # on any table referenced by a FOREIGN KEY
+                                # constraint — a hard statement-level rule
+                                # that NOCHECK CONSTRAINT (constraint_checks_
+                                # disabled() above) does not lift, unlike
+                                # MySQL's FOREIGN_KEY_CHECKS=0. DELETE FROM
+                                # has no such restriction, and is just as
+                                # safe to run in arbitrary table order here
+                                # since every FK is already NOCHECK'd for
+                                # this whole block.
+                                cur.execute(f"DELETE FROM {quoted_table}")
+                            else:
+                                cur.execute(f"TRUNCATE TABLE {quoted_table}")
 
                 for table, (db_columns, row_tuples) in planned.items():
                     if not row_tuples:
