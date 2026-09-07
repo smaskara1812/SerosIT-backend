@@ -76,10 +76,14 @@ if DEBUG:
     # After AuthenticationMiddleware so silk can attribute requests to a
     # user; must run before the request reaches any view to time it fully.
     MIDDLEWARE.append("silk.middleware.SilkyMiddleware")
-    # Runs EXPLAIN on every captured query automatically — surfaces a
-    # missing index directly in the request detail view instead of having
-    # to copy the query out and run EXPLAIN by hand.
-    SILKY_ANALYZE_QUERIES = True
+    # Was True — ran an EXPLAIN on every single captured query, synchronously,
+    # inside the same response-teardown step that writes Silk's own log
+    # tables. On SQL Server that's enough extra round trips per request to
+    # deadlock (error 1205) Silk's own tables under any real concurrency
+    # (e.g. two admin tabs clicked back to back), 500ing the actual request
+    # even though the real endpoint already succeeded. Turn back on only for
+    # a focused profiling session, not as a standing default.
+    SILKY_ANALYZE_QUERIES = False
 
 ROOT_URLCONF = "config.urls"
 
