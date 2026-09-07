@@ -486,28 +486,18 @@ class MstOperatorViewSet(BaseMasterViewSet):
 
 
 class MstRigTypeViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    the Rigs form and via direct API access, gated the same as any other
-    master through entity_key."""
-
     queryset = MstRigType.objects.all()
     serializer_class = MstRigTypeSerializer
     entity_key = "masters.rig_types"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "rig_type_name"
     reference_checks = [("rigs", "Rigs"), ("subtypes", "Rig Subtypes")]
     search_fields = ["rig_type_name"]
 
 
 class MstRigSubtypeViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    the Rigs form and via direct API access, gated the same as any other
-    master through entity_key."""
-
     queryset = MstRigSubtype.objects.select_related("rig_type").all()
     serializer_class = MstRigSubtypeSerializer
     entity_key = "masters.rig_subtypes"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "rig_subtype_name"
     reference_checks = [("rigs", "Rigs")]
     search_fields = ["rig_subtype_name"]
@@ -1275,13 +1265,9 @@ class MstCountryStateViewSet(BaseMasterViewSet):
 
 
 class MstVesselDeptViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Ranks and via direct API access."""
-
     queryset = MstVesselDept.objects.all()
     serializer_class = MstVesselDeptSerializer
     entity_key = "masters.vessel_depts"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vessel_dept_name"
     reference_checks = [("ranks", "Ranks")]
     search_fields = ["vessel_dept_name"]

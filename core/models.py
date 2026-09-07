@@ -398,6 +398,13 @@ class MstVesselDept(models.Model):
     vessel_dept_id = models.AutoField(primary_key=True)
     vessel_dept_name = models.CharField(max_length=25)
     vessel_dept_order = models.IntegerField(default=0)
+    # Same "Extended to" shape as MstFsCategory/MstRank — checked stores
+    # 'Y', unchecked is NULL. Only Business_System_Id_6 (Oilfield Services)
+    # is surfaced on the form; the other three stay as whatever's in the DB.
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_5 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_11 = models.CharField(max_length=1, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
