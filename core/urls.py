@@ -220,6 +220,7 @@ urlpatterns = [
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", views.me, name="me"),
     path("auth/logout/", views.logout_api, name="logout"),
+    path("dashboard/", views.dashboard_api, name="dashboard"),
     # User Rights
     path("admin/users/", views.admin_users_api, name="admin_users"),
     path("admin/users/<int:user_id>/perms/", views.admin_user_perms_api, name="admin_user_perms"),

@@ -69,6 +69,28 @@ def me(request):
     )
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def dashboard_api(request):
+    """Landing-page data for the common dashboard. Deliberately open to any
+    authenticated user regardless of their User Rights grid — same trust
+    level as the login screen itself, so only non-sensitive, own-account
+    data belongs here (never a shared business figure)."""
+    ist = ZoneInfo("Asia/Kolkata")
+    last_login = (
+        SysAuditLog.objects.filter(username=request.user.username, action="login")
+        .order_by("-ts")
+        .values_list("ts", flat=True)
+        .first()
+    )
+    return Response(
+        {
+            "server_time": dj_timezone.localtime(dj_timezone.now(), ist).isoformat(),
+            "last_login": dj_timezone.localtime(last_login, ist).isoformat() if last_login else None,
+        }
+    )
+
+
 # ── User Rights ─────────────────────────────────────────────────────────────
 
 @api_view(["GET"])

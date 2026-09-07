@@ -75,8 +75,15 @@ class IncidentViewSet(viewsets.ReadOnlyModelViewSet):
         if severity in ("H", "M", "L"):
             qs = qs.filter(incident_severity=severity)
         person_injured = params.get("person_injured")
-        if person_injured in ("Y", "N"):
-            qs = qs.filter(person_injured=person_injured)
+        # Legacy rows commonly have '' rather than a real 'N' — the list's
+        # own display already treats anything but an explicit 'Y' as "No"
+        # (see IncidentSerializer.get_person_injured_bool), so the filter
+        # has to use the same rule or "No" silently excludes every row
+        # that isn't literally 'N' (most of them, in practice).
+        if person_injured == "Y":
+            qs = qs.filter(person_injured="Y")
+        elif person_injured == "N":
+            qs = qs.exclude(person_injured="Y")
         incident_type = params.get("incident_type")
         if incident_type:
             qs = qs.filter(incident_type_id=incident_type)

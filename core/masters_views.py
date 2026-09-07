@@ -1,7 +1,7 @@
 import csv
 import datetime
 
-from django.db.models import DateTimeField, ProtectedError, Q, Value
+from django.db.models import DateTimeField, Prefetch, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
 from django.http import HttpResponse
 from rest_framework import viewsets
@@ -253,6 +253,31 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         else:
             qs = qs.order_by(self.name_field)
         return qs
+
+    def get_serializer(self, *args, **kwargs):
+        """?fields=a,b,c trims the response to just those fields — opt-in,
+        so nothing changes for callers that don't pass it. Exists because a
+        FK/lookup picker (RemoteCombobox) or a filter dropdown often only
+        needs an id and a label out of a master that otherwise carries
+        15-20 columns and several derived FK-name fields; profiling a
+        318-row Company fetch found ~40ms of real query time next to
+        ~100ms of pure DRF serialization for columns nothing on the page
+        reads. Applied by popping fields off the already-built serializer
+        rather than swapping in a different serializer class, which is the
+        standard DRF idiom for this and keeps validation/read-only rules
+        untouched for whatever fields remain."""
+        serializer = super().get_serializer(*args, **kwargs)
+        # Read-only actions only — trimming fields on a create/update
+        # serializer would silently drop them from validation too, not just
+        # the response, which could corrupt a write if this param ever got
+        # attached to one by mistake.
+        fields_param = self.request.query_params.get("fields") if self.action in ("list", "retrieve") else None
+        if fields_param:
+            allowed = {f.strip() for f in fields_param.split(",") if f.strip()}
+            target = getattr(serializer, "child", serializer)
+            for name in set(target.fields) - allowed:
+                target.fields.pop(name)
+        return serializer
 
     def label_for(self, instance):
         """Override when the model has no plain name_field (e.g. FK-combo
@@ -1311,7 +1336,14 @@ class ProjectContractViewSet(BaseMasterViewSet):
     contract at a time, so this gets its own editor page instead of the
     generic single-table masters page."""
 
-    queryset = ProjectContract.objects.select_related("location", "operator").prefetch_related("lines")
+    # A plain string prefetch_related("lines") only avoids the N+1 of
+    # fetching each contract's lines — it does nothing for a line's own
+    # `rig` FK, which ProjectContractDtlSerializer.rig_name reads. Without
+    # this, every single line row (78 in dev) fires its own query for its
+    # rig, on top of the one query the plain-string prefetch already saved.
+    queryset = ProjectContract.objects.select_related("location", "operator").prefetch_related(
+        Prefetch("lines", queryset=ProjectContractDtl.objects.select_related("rig"))
+    )
     serializer_class = ProjectContractSerializer
     entity_key = "masters.project_contract"
     name_field = "prj_contract_no"
@@ -1827,6 +1859,36 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         "it_asset__own_company", "holder_company", "emp", "holder_user", "department", "company_loc",
     ).all()
     serializer_class = ItAssetHolderSerializer
+
+    # ItAssetHolderSerializer reads only a handful of columns off each of
+    # these 9 joined tables (e.g. 4 out of mst_it_asset's ~30) — plain
+    # select_related() always pulls every column of a joined table with no
+    # way to narrow it, so profiling this endpoint's list found MySQL
+    # returning and Django hydrating full rows of mst_it_asset/mst_company
+    # (x2)/mst_employee/mst_user/mst_department/mst_company_location for
+    # data nothing downstream reads. .only() narrows the SELECT itself.
+    # Scoped to the list action alone (via get_queryset below, not this
+    # class-level queryset) — retrieve/update/destroy reuse this same
+    # attribute via get_object(), and perform_update's audit diff reads the
+    # instance more broadly than the list serializer does, so trimming
+    # there risks a deferred-field lazy-load per missing attribute instead
+    # of the one-time list win this is meant to be.
+    _LIST_ONLY_FIELDS = [
+        "it_asset_holder_id", "it_asset", "it_asset_holder_from", "holder_company",
+        "emp", "holder_user", "department", "company_loc", "holder_name",
+        "holder_remark", "vessel_id", "it_asset_holder_to", "mod_user_id", "mod_dt",
+        "it_asset__it_asset_sr_no", "it_asset__it_asset_tag", "it_asset__it_asset_sap_code",
+        "it_asset__it_asset_active",
+        "it_asset__it_asset_model__it_asset_model_name",
+        "it_asset__it_asset_subtype__it_asset_subtype_name",
+        "it_asset__it_asset_mfg__it_asset_mfg_name",
+        "it_asset__own_company__company_name",
+        "holder_company__company_name", "holder_company__company_abrv",
+        "emp__emp_fname", "emp__emp_mname", "emp__emp_sname",
+        "holder_user__user_name",
+        "department__dept_dispname", "department__dept_abrv",
+        "company_loc__company_loc_name",
+    ]
     entity_key = "it_asset.it_asset_holders"
     name_field = "it_asset_holder_id"
     reference_checks = []
@@ -1871,6 +1933,9 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
             qs = qs.filter(it_asset_holder_to__isnull=True) | qs.filter(it_asset_holder_to__gt=now)
         elif status == "ended":
             qs = qs.filter(it_asset_holder_to__lte=now)
+
+        if self.action == "list":
+            qs = qs.only(*self._LIST_ONLY_FIELDS)
 
         ordering = params.get("ordering")
         if ordering and ordering.lstrip("-") == "sr_no":

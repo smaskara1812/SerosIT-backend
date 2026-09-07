@@ -40,6 +40,17 @@ INSTALLED_APPS = [
     "core",
 ]
 
+# django-silk is a request/query profiler that works on plain JSON API
+# responses (unlike Django Debug Toolbar, which injects itself into an HTML
+# body and has nothing to inject into here — this is a DRF API with no
+# server-rendered pages). It logs every request's timing plus the full SQL
+# query log, so N+1s show up directly instead of being inferred. Dev-only —
+# never run this against prod: it stores request/response bodies and query
+# params in its own DB tables, which is a real data-exposure risk in
+# production, on top of the profiling overhead itself.
+if DEBUG:
+    INSTALLED_APPS.append("silk")
+
 # Mst_User local-password/AD check first, ModelBackend after (for the Django
 # superuser account, which isn't in Mst_User at all).
 AUTHENTICATION_BACKENDS = [
@@ -60,6 +71,15 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+if DEBUG:
+    # After AuthenticationMiddleware so silk can attribute requests to a
+    # user; must run before the request reaches any view to time it fully.
+    MIDDLEWARE.append("silk.middleware.SilkyMiddleware")
+    # Runs EXPLAIN on every captured query automatically — surfaces a
+    # missing index directly in the request detail view instead of having
+    # to copy the query out and run EXPLAIN by hand.
+    SILKY_ANALYZE_QUERIES = True
 
 ROOT_URLCONF = "config.urls"
 
@@ -117,6 +137,12 @@ else:
             "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
             "HOST": os.getenv("MYSQL_HOST", "localhost"),
             "PORT": os.getenv("MYSQL_PORT", "3306"),
+            # Same reasoning as the mssql branch — a fresh-connection-per-
+            # request tax exists here too (confirmed via profiling: a
+            # request after any idle gap runs ~5x slower than a warm one,
+            # even on localhost), just smaller since MySQL's handshake is
+            # cheaper than pyodbc's.
+            "CONN_MAX_AGE": int(os.getenv("MYSQL_CONN_MAX_AGE", "600")),
             "OPTIONS": {"charset": "utf8mb4"},
         }
     }
