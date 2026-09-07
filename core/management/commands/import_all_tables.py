@@ -39,6 +39,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.db.models import DecimalField
 from django.db.models.fields import AutoFieldMixin
+from django.db.utils import DatabaseError
 from openpyxl import load_workbook
 
 SUPPORTED_VENDORS = {"mysql", "microsoft"}
@@ -260,7 +261,34 @@ class Command(BaseCommand):
                                 pass
                         if identity_wrap:
                             cur.execute(f"SET IDENTITY_INSERT {quoted_table} ON")
-                        cur.executemany(sql, row_tuples)
+                        try:
+                            cur.executemany(sql, row_tuples)
+                        except DatabaseError as exc:
+                            # fast_executemany sizes each string parameter's
+                            # buffer from an early sample of the batch, not
+                            # every row — a later, legitimately shorter-than-
+                            # the-column's-real-width value can still exceed
+                            # that guess and abort the whole batch with
+                            # "String data, right truncation". No XACT_ABORT
+                            # is set on this connection, so the failed
+                            # executemany() doesn't poison the transaction —
+                            # safe to just retry row-by-row without the fast
+                            # path, same "skip the speedup, don't fail the
+                            # import" fallback as the flag itself above.
+                            if vendor == "microsoft" and "right truncation" in str(exc).lower():
+                                self.stdout.write(
+                                    self.style.WARNING(
+                                        f"  {table}: fast_executemany batch hit a string-length "
+                                        f"truncation, retrying without it..."
+                                    )
+                                )
+                                try:
+                                    cur.cursor.cursor.fast_executemany = False
+                                except AttributeError:
+                                    pass
+                                cur.executemany(sql, row_tuples)
+                            else:
+                                raise
                         if identity_wrap:
                             cur.execute(f"SET IDENTITY_INSERT {quoted_table} OFF")
                     self.stdout.write(f"  {table}: {len(row_tuples)} row(s) imported")
