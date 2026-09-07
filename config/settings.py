@@ -48,7 +48,17 @@ INSTALLED_APPS = [
 # never run this against prod: it stores request/response bodies and query
 # params in its own DB tables, which is a real data-exposure risk in
 # production, on top of the profiling overhead itself.
-if DEBUG:
+#
+# Opt-in (ENABLE_SILK=True), not tied to DEBUG alone: on SQL Server, Silk's
+# own writes to its own log tables deadlock (error 1205) under completely
+# ordinary concurrency — two routine GETs firing on one page load is enough —
+# because SQL Server's default lock-based concurrency has none of MySQL's
+# tolerance for this pattern. Turning SILKY_ANALYZE_QUERIES off (below)
+# wasn't enough to stop it. Since profiling is a deliberate, occasional
+# session and not something the app needs to function, it's off by default
+# everywhere and switched on only when actually profiling.
+ENABLE_SILK = DEBUG and os.getenv("ENABLE_SILK", "False") == "True"
+if ENABLE_SILK:
     INSTALLED_APPS.append("silk")
 
 # Mst_User local-password/AD check first, ModelBackend after (for the Django
@@ -72,17 +82,14 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-if DEBUG:
+if ENABLE_SILK:
     # After AuthenticationMiddleware so silk can attribute requests to a
     # user; must run before the request reaches any view to time it fully.
     MIDDLEWARE.append("silk.middleware.SilkyMiddleware")
-    # Was True — ran an EXPLAIN on every single captured query, synchronously,
-    # inside the same response-teardown step that writes Silk's own log
-    # tables. On SQL Server that's enough extra round trips per request to
-    # deadlock (error 1205) Silk's own tables under any real concurrency
-    # (e.g. two admin tabs clicked back to back), 500ing the actual request
-    # even though the real endpoint already succeeded. Turn back on only for
-    # a focused profiling session, not as a standing default.
+    # Runs an EXPLAIN on every captured query, synchronously, inside the same
+    # response-teardown step that writes Silk's own log tables — extra load
+    # right at the point that already deadlocks on SQL Server (see above).
+    # Leave off; flip True only for a single focused profiling session.
     SILKY_ANALYZE_QUERIES = False
 
 ROOT_URLCONF = "config.urls"
