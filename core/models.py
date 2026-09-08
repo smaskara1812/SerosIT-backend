@@ -263,6 +263,189 @@ class MstQualification(models.Model):
         return self.qualification_name
 
 
+class MstRelationDtl(models.Model):
+    """Straight copy of legacy Mst_Relation_Dtl — a next-of-kin/family
+    relation (Mother, Father, Wife, ...)."""
+
+    relation_id = models.AutoField(primary_key=True)
+    relation = models.CharField(max_length=30)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_relation_dtl"
+
+    def __str__(self):
+        return self.relation
+
+
+class MstLeavingReason(models.Model):
+    """Straight copy of legacy Mst_Leaving_Reason — top-level reason an
+    employee left (Resigned, Retired, Terminated, ...)."""
+
+    leaving_reason_id = models.AutoField(primary_key=True)
+    leaving_reason = models.CharField(max_length=40)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_leaving_reason"
+
+    def __str__(self):
+        return self.leaving_reason
+
+
+class MstLeavingReasonDtl(models.Model):
+    """Straight copy of legacy Mst_Leaving_Reason_Dtl — a finer-grained
+    detail under one Leaving Reason (e.g. Terminated -> Incompetency)."""
+
+    leaving_reason_dtl_id = models.AutoField(primary_key=True)
+    leaving_reason = models.ForeignKey(
+        MstLeavingReason, db_column="leaving_reason_id", on_delete=models.PROTECT, related_name="details"
+    )
+    leaving_reason_dtl = models.CharField(max_length=40)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_leaving_reason_dtl"
+
+    def __str__(self):
+        return self.leaving_reason_dtl
+
+
+class MstBusinessSystem(models.Model):
+    """Straight copy of legacy Mst_Business_System — the 17 business-unit
+    rows whose ids are the same ones already used everywhere else in this
+    app as the business_system_id_N "Extended to" flag columns (2=Shipping,
+    5=Dredging, 6=Oilfield Services, 11=Offshore Sub Sea, etc.). Carries
+    each unit's own outbound-mail account, including a plaintext password —
+    already stored that way in the legacy source; kept as a faithful copy,
+    not a new exposure."""
+
+    business_system_id = models.AutoField(primary_key=True)
+    buss_system_dtl = models.CharField(max_length=30)
+    buss_system_abrv = models.CharField(max_length=6)
+    buss_system_schema_name = models.CharField(max_length=6)
+    mail_from_address = models.CharField(max_length=30, null=True, blank=True)
+    mail_user_name = models.CharField(max_length=30, null=True, blank=True)
+    mail_user_password = models.CharField(max_length=15, null=True, blank=True)
+    owner_emp = models.ForeignKey(
+        "MstEmployee",
+        db_column="owner_emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="owned_business_systems",
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_business_system"
+
+    def __str__(self):
+        return self.buss_system_dtl
+
+
+class MailAlertDtl(models.Model):
+    """Straight copy of legacy Mail_Alert_Dtl — an automated mail alert
+    definition (what triggers it, how often, what it says). Business_System
+    and Menu are deliberately dropped: Business_System_Id isn't carried over
+    at all (by request), and Menu_Id pointed at legacy's separate 528-row
+    Mst_Menu navigation tree, unrelated to this app's own sys_menu and with
+    no use here."""
+
+    ALERT_TYPE_CHOICES = [
+        ("S", "Scheduled"),
+        ("E", "Event"),
+        ("U", "User-based"),
+    ]
+    ALERT_CATEGORY_CHOICES = [
+        ("A", "Alert"),
+        ("R", "Report"),
+        ("M", "MIS"),
+        ("S", "Message"),
+    ]
+
+    alert_id = models.AutoField(primary_key=True)
+    alert_type = models.CharField(max_length=1, choices=ALERT_TYPE_CHOICES)
+    alert_category = models.CharField(max_length=1, choices=ALERT_CATEGORY_CHOICES)
+    alert_name = models.CharField(max_length=60)
+    alert_window = models.IntegerField()
+    alert_freq = models.IntegerField()
+    mail_subject = models.CharField(max_length=60)
+    particulars = models.CharField(max_length=125)
+    next_mail_dt = models.DateTimeField(null=True, blank=True)
+    start_time = models.IntegerField()
+    # Checked stores 'Y', unchecked is NULL — same "Extended to"-style flag
+    # shape used everywhere else, not this table's own invention.
+    additional_alert = models.CharField(max_length=1, null=True, blank=True)
+    # Legacy free text, not shown on the legacy form itself.
+    alert_display_name = models.CharField(max_length=125, null=True, blank=True)
+    alert_active = models.CharField(max_length=1, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mail_alert_dtl"
+
+    def __str__(self):
+        return self.alert_name
+
+
+class MailAlertToUser(models.Model):
+    """Straight copy of legacy Mail_Alert_To_User — one recipient on one
+    Alert's distribution list."""
+
+    ADDRESSEE_TYPE_CHOICES = [
+        ("T", "To"),
+        ("C", "Cc"),
+        ("B", "Bcc"),
+    ]
+
+    mail_alert_to_user_id = models.AutoField(primary_key=True)
+    alert = models.ForeignKey(
+        MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="recipients"
+    )
+    emp = models.ForeignKey(
+        "MstEmployee",
+        db_column="emp_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="mail_alerts",
+    )
+    email_addr = models.CharField(max_length=45)
+    # Checked stores 'Y', unchecked is NULL/blank.
+    read_receipt = models.CharField(max_length=1, null=True, blank=True)
+    mail_alert_from = models.DateField()
+    # Legacy free field, not shown on the legacy form.
+    mail_alert_to = models.DateField(null=True, blank=True)
+    addressee_type = models.CharField(max_length=1, choices=ADDRESSEE_TYPE_CHOICES)
+    mail_alert_order = models.IntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mail_alert_to_user"
+
+    def __str__(self):
+        return f"{self.alert.alert_name} — {self.email_addr}"
+
+
 class MstEmailNotificationType(models.Model):
     en_type_id = models.AutoField(primary_key=True)
     en_type_name = models.CharField(max_length=50)

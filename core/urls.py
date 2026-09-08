@@ -217,6 +217,22 @@ router.register("masters/serv-subtypes", masters_views.MstServSubtypeViewSet, ba
 router.register(
     "masters/fs-catg-to-sstype", masters_views.MstFsCatgToSstypeViewSet, basename="mst-fs-catg-to-sstype"
 )
+router.register("masters/incident-types", masters_views.MstIncidentTypeViewSet, basename="mst-incident-type")
+router.register("masters/incident-causes", masters_views.MstIncidentCauseViewSet, basename="mst-incident-cause")
+router.register(
+    "masters/incident-subcauses", masters_views.MstIncidentSubcauseViewSet, basename="mst-incident-subcause"
+)
+router.register("masters/work-locations", masters_views.MstWorkLocationViewSet, basename="mst-work-location")
+router.register("masters/relations", masters_views.MstRelationDtlViewSet, basename="mst-relation")
+router.register("masters/leaving-reasons", masters_views.MstLeavingReasonViewSet, basename="mst-leaving-reason")
+router.register(
+    "masters/leaving-reason-details", masters_views.MstLeavingReasonDtlViewSet, basename="mst-leaving-reason-dtl"
+)
+router.register("masters/business-systems", masters_views.MstBusinessSystemViewSet, basename="mst-business-system")
+router.register("masters/mail-alerts", masters_views.MailAlertDtlViewSet, basename="mail-alert-dtl")
+router.register(
+    "masters/mail-alert-to-users", masters_views.MailAlertToUserViewSet, basename="mail-alert-to-user"
+)
 router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )

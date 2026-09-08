@@ -96,6 +96,16 @@ from .models import (
     MstServType,
     MstServSubtype,
     MstFsCatgToSstype,
+    MstIncidentType,
+    MstIncidentCause,
+    MstIncidentSubcause,
+    MstWorkLocation,
+    MstRelationDtl,
+    MstLeavingReason,
+    MstLeavingReasonDtl,
+    MstBusinessSystem,
+    MailAlertDtl,
+    MailAlertToUser,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -108,6 +118,16 @@ from .masters_serializers import (
     MstServTypeSerializer,
     MstServSubtypeSerializer,
     MstFsCatgToSstypeSerializer,
+    MstIncidentTypeSerializer,
+    MstIncidentCauseSerializer,
+    MstIncidentSubcauseSerializer,
+    MstWorkLocationSerializer,
+    MstRelationDtlSerializer,
+    MstLeavingReasonSerializer,
+    MstLeavingReasonDtlSerializer,
+    MstBusinessSystemSerializer,
+    MailAlertDtlSerializer,
+    MailAlertToUserSerializer,
     MstCompetencySerializer,
     MstContinentSerializer,
     MstCountrySerializer,
@@ -540,6 +560,90 @@ class MstFsCatgToSstypeViewSet(BaseMasterViewSet):
             f"{instance.fs_category.fs_category_name} — {instance.emp_type.emp_type_name} — "
             f"{instance.serv_type.serv_type_name} — {instance.serv_subtype.serv_subtype_name}"
         )
+
+
+class MstIncidentTypeViewSet(BaseMasterViewSet):
+    queryset = MstIncidentType.objects.all()
+    serializer_class = MstIncidentTypeSerializer
+    entity_key = "masters.incident_types"
+    name_field = "incident_type"
+    search_fields = ["incident_type", "incident_abrv"]
+
+
+class MstIncidentCauseViewSet(BaseMasterViewSet):
+    queryset = MstIncidentCause.objects.all()
+    serializer_class = MstIncidentCauseSerializer
+    entity_key = "masters.incident_causes"
+    name_field = "incident_cause_desc"
+    reference_checks = [("subcauses", "Incident Subcause")]
+    search_fields = ["incident_cause_desc"]
+
+
+class MstIncidentSubcauseViewSet(BaseMasterViewSet):
+    queryset = MstIncidentSubcause.objects.select_related("incident_cause").all()
+    serializer_class = MstIncidentSubcauseSerializer
+    entity_key = "masters.incident_subcauses"
+    name_field = "incident_subcause"
+    search_fields = ["incident_subcause", "incident_cause__incident_cause_desc"]
+
+
+class MstWorkLocationViewSet(BaseMasterViewSet):
+    queryset = MstWorkLocation.objects.all()
+    serializer_class = MstWorkLocationSerializer
+    entity_key = "masters.work_locations"
+    name_field = "work_location"
+    search_fields = ["work_location"]
+
+
+class MstRelationDtlViewSet(BaseMasterViewSet):
+    queryset = MstRelationDtl.objects.all()
+    serializer_class = MstRelationDtlSerializer
+    entity_key = "masters.relations"
+    name_field = "relation"
+    search_fields = ["relation"]
+
+
+class MstLeavingReasonViewSet(BaseMasterViewSet):
+    queryset = MstLeavingReason.objects.all()
+    serializer_class = MstLeavingReasonSerializer
+    entity_key = "masters.leaving_reasons"
+    name_field = "leaving_reason"
+    reference_checks = [("details", "Leaving Reason Details")]
+    search_fields = ["leaving_reason"]
+
+
+class MstLeavingReasonDtlViewSet(BaseMasterViewSet):
+    queryset = MstLeavingReasonDtl.objects.select_related("leaving_reason").all()
+    serializer_class = MstLeavingReasonDtlSerializer
+    entity_key = "masters.leaving_reason_details"
+    name_field = "leaving_reason_dtl"
+    search_fields = ["leaving_reason_dtl", "leaving_reason__leaving_reason"]
+
+
+class MstBusinessSystemViewSet(BaseMasterViewSet):
+    queryset = MstBusinessSystem.objects.select_related("owner_emp").all()
+    serializer_class = MstBusinessSystemSerializer
+    entity_key = "masters.business_systems"
+    name_field = "buss_system_dtl"
+    search_fields = ["buss_system_dtl", "buss_system_abrv"]
+
+
+class MailAlertDtlViewSet(BaseMasterViewSet):
+    queryset = MailAlertDtl.objects.all()
+    serializer_class = MailAlertDtlSerializer
+    entity_key = "masters.mail_alerts"
+    name_field = "alert_name"
+    active_field = "alert_active"
+    reference_checks = [("recipients", "Alert Recipients")]
+    search_fields = ["alert_name", "mail_subject"]
+
+
+class MailAlertToUserViewSet(BaseMasterViewSet):
+    queryset = MailAlertToUser.objects.select_related("alert", "emp").all()
+    serializer_class = MailAlertToUserSerializer
+    entity_key = "masters.mail_alert_to_users"
+    name_field = "email_addr"
+    search_fields = ["email_addr", "alert__alert_name"]
 
 
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
@@ -1292,40 +1396,29 @@ class CrewScheduleExceptionViewSet(BaseMasterViewSet):
 
 
 class MstContinentViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Countries and via direct API access, gated the same as any other master
-    through entity_key."""
-
     queryset = MstContinent.objects.all()
     serializer_class = MstContinentSerializer
     entity_key = "masters.continents"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "continent_name"
     reference_checks = [("countries", "Countries")]
     search_fields = ["continent_name"]
 
 
 class MstCountryViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Locations/Operators and via direct API access."""
-
     queryset = MstCountry.objects.select_related("continent").all()
     serializer_class = MstCountrySerializer
     entity_key = "masters.countries"
-    permission_classes = [HasMenuPermissionOrOpenRead]
+    active_field = "country_active"
     name_field = "country_name"
     reference_checks = [("states", "Country States"), ("locations", "Locations"), ("operators", "Operators")]
     search_fields = ["country_name", "country_known_name", "country_iso_cd"]
 
 
 class MstCountryStateViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Locations and via direct API access."""
-
     queryset = MstCountryState.objects.select_related("country").all()
     serializer_class = MstCountryStateSerializer
     entity_key = "masters.country_states"
-    permission_classes = [HasMenuPermissionOrOpenRead]
+    active_field = "country_state_active"
     name_field = "country_state_name"
     reference_checks = [("locations", "Locations")]
     search_fields = ["country_state_name", "country_state_abrv"]
@@ -1340,29 +1433,31 @@ class MstVesselDeptViewSet(BaseMasterViewSet):
     search_fields = ["vessel_dept_name"]
 
 
-class MstLocationViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only lookup for Project Contract's Location field. ~700 rows —
-    paginated/searched like every other lookup so the frontend combobox can
-    tell from `count` whether it's safe to preload in full.
+class MstLocationViewSet(BaseMasterViewSet):
+    """GET supports ?country=<id> so a form can narrow the Location picker
+    to whatever Country was picked first (e.g. Operators)."""
 
-    GET supports ?country=<id> so a form can narrow the Location picker to
-    whatever Country was picked first (e.g. Operators)."""
-
-    queryset = (
-        MstLocation.objects.select_related("country", "country_state")
-        .filter(location_active="Y")
-        .order_by("location_name")
-    )
+    queryset = MstLocation.objects.select_related("country", "country_state").all()
     serializer_class = MstLocationSerializer
-    permission_classes = [IsAuthenticated]
+    entity_key = "masters.locations"
+    active_field = "location_active"
+    name_field = "location_name"
+    reference_checks = [
+        ("cert_institutes", "Cert Institutes"),
+        ("operators", "Operators"),
+        ("cost_centres", "Cost Centres"),
+        ("company_locations", "Company Locations"),
+        ("projectcontract_set", "Project Contracts"),
+    ]
     search_fields = ["location_name"]
 
     def get_queryset(self):
-        qs = self.queryset
+        qs = self._apply_active_filter(self.queryset)
         country_id = self.request.query_params.get("country")
         if country_id:
             qs = qs.filter(country_id=country_id)
-        return qs
+        ordering = self.request.query_params.get("ordering")
+        return qs.order_by(f"-{self.name_field}" if ordering == "-name" else self.name_field)
 
 
 class MstCurrencyViewSet(viewsets.ReadOnlyModelViewSet):

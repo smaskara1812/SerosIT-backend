@@ -9,6 +9,16 @@ from .models import (
     MstServType,
     MstServSubtype,
     MstFsCatgToSstype,
+    MstIncidentType,
+    MstIncidentCause,
+    MstIncidentSubcause,
+    MstWorkLocation,
+    MstRelationDtl,
+    MstLeavingReason,
+    MstLeavingReasonDtl,
+    MstBusinessSystem,
+    MailAlertDtl,
+    MailAlertToUser,
     MstCompetency,
     MstContactExposureType,
     MstContinent,
@@ -955,6 +965,95 @@ class MstFsCatgToSstypeSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj):
         return f"{obj.fs_category.fs_category_name} — {obj.emp_type.emp_type_name} — {obj.serv_subtype.serv_subtype_name}"
+
+
+class MstIncidentTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstIncidentType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstIncidentCauseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstIncidentCause
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstIncidentSubcauseSerializer(serializers.ModelSerializer):
+    incident_cause_desc = serializers.CharField(
+        source="incident_cause.incident_cause_desc", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstIncidentSubcause
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstWorkLocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstWorkLocation
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstRelationDtlSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstRelationDtl
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstLeavingReasonSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstLeavingReason
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstLeavingReasonDtlSerializer(serializers.ModelSerializer):
+    leaving_reason_name = serializers.CharField(
+        source="leaving_reason.leaving_reason", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstLeavingReasonDtl
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstBusinessSystemSerializer(serializers.ModelSerializer):
+    owner_emp_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MstBusinessSystem
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_owner_emp_name(self, obj):
+        return str(obj.owner_emp) if obj.owner_emp_id else ""
+
+
+class MailAlertDtlSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MailAlertDtl
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MailAlertToUserSerializer(serializers.ModelSerializer):
+    alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
+    emp_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MailAlertToUser
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_emp_name(self, obj):
+        return str(obj.emp) if obj.emp_id else ""
 
 
 class ItAccessoryHolderSerializer(serializers.ModelSerializer):
