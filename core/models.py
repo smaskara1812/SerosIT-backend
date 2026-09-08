@@ -170,6 +170,99 @@ class MstBussCert(models.Model):
         return self.buss_cert_name
 
 
+class MstCertType(models.Model):
+    """Straight copy of legacy Mst_Cert_Type — classification for a
+    Certificate (Mst_Cert), distinct from Mst_Buss_Cert_Type (which
+    classifies business certificates like IAPP, not personal/crew
+    certificates)."""
+
+    cert_type_id = models.AutoField(primary_key=True)
+    cert_type_name = models.CharField(max_length=40)
+    cert_type_abrv = models.CharField(max_length=5)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_cert_type"
+
+    def __str__(self):
+        return self.cert_type_name
+
+
+class MstCert(models.Model):
+    """Straight copy of legacy Mst_Cert — a personal/crew certificate
+    (distinct from Mst_Buss_Cert's business certificates).
+
+    Only two of the legacy "Extended to" flags exist on this master
+    (Business_System_Id_2=Shipping, Business_System_Id_6=Oilfield
+    Services) — unlike Mst_Fs_Category/Mst_Rank's four, this table's
+    legacy form only ever showed these two."""
+
+    cert_id = models.AutoField(primary_key=True)
+    cert_name = models.CharField(max_length=80)
+    cert_abrv = models.CharField(max_length=12)
+    cert_type = models.ForeignKey(
+        MstCertType,
+        db_column="cert_type_id",
+        on_delete=models.PROTECT,
+        related_name="certs",
+    )
+    vessel_dept = models.ForeignKey(
+        "MstVesselDept",
+        db_column="vessel_dept_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="certs",
+    )
+    # Legacy free code, not shown on the legacy form itself (real values are
+    # NULL/'E'/'I' — meaning undocumented). Kept for a faithful copy, same
+    # treatment as MstFsCategory's business_system_id_16.
+    cert_training_type = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)  # Shipping
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)  # Oilfield Services
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_cert"
+
+    def __str__(self):
+        return self.cert_name
+
+
+class MstQualification(models.Model):
+    """Straight copy of legacy Mst_Qualification — an academic or
+    professional qualification. Same two-flag "Extended to" shape as
+    Mst_Cert (Shipping/Oilfield Services only)."""
+
+    QUALIFICATION_TYPE_CHOICES = [
+        ("A", "Academic"),
+        ("P", "Professional"),
+    ]
+
+    qualification_id = models.AutoField(primary_key=True)
+    qualification_name = models.CharField(max_length=50)
+    qualification_abrv = models.CharField(max_length=10)
+    qualification_type = models.CharField(max_length=1, choices=QUALIFICATION_TYPE_CHOICES)
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)  # Shipping
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)  # Oilfield Services
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_qualification"
+
+    def __str__(self):
+        return self.qualification_name
+
+
 class MstEmailNotificationType(models.Model):
     en_type_id = models.AutoField(primary_key=True)
     en_type_name = models.CharField(max_length=50)
@@ -1114,6 +1207,14 @@ class MstEmpType(models.Model):
         on_delete=models.PROTECT,
         related_name="emp_types",
     )
+    # Same "Extended to" shape as MstFsCategory (5 flags including the
+    # unlabeled _16) — checked stores 'Y', unchecked is NULL. Only
+    # business_system_id_6 (Oilfield Services) is surfaced on the form.
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_5 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_11 = models.CharField(max_length=1, null=True, blank=True)
+    business_system_id_16 = models.CharField(max_length=1, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
@@ -1124,6 +1225,85 @@ class MstEmpType(models.Model):
 
     def __str__(self):
         return self.emp_type_name
+
+
+class MstServType(models.Model):
+    """Straight copy of legacy Mst_Serv_Type — On/Off Article, On/Off
+    Period service classification. Only two "Extended to" flags exist on
+    this master (Shipping/Oilfield Services), same shape as MstCert."""
+
+    serv_type_id = models.AutoField(primary_key=True)
+    serv_type_name = models.CharField(max_length=12)
+    serv_type_abrv = models.CharField(max_length=5)
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)  # Shipping
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)  # Oilfield Services
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_serv_type"
+
+    def __str__(self):
+        return self.serv_type_name
+
+
+class MstServSubtype(models.Model):
+    """Straight copy of legacy Mst_Serv_Subtype — same two-flag "Extended
+    to" shape as MstServType."""
+
+    serv_subtype_id = models.AutoField(primary_key=True)
+    serv_subtype_name = models.CharField(max_length=35)
+    serv_subtype_abrv = models.CharField(max_length=5)
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)  # Shipping
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)  # Oilfield Services
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_serv_subtype"
+
+    def __str__(self):
+        return self.serv_subtype_name
+
+
+class MstFsCatgToSstype(models.Model):
+    """Straight copy of legacy Mst_Fs_Catg_To_SSType — which Service
+    Type/Subtype combination applies to a given FS Category + Employment
+    Type pairing. All four FK legs are required, matching the legacy form.
+    Four "Extended to" flags (Shipping/Dredging/Oilfield Services/Offshore
+    Sub Sea), same shape as MstFsCategory/MstRank."""
+
+    catg_sstype_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(
+        MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="serv_subtype_mappings"
+    )
+    emp_type = models.ForeignKey(
+        MstEmpType, db_column="emp_type_id", on_delete=models.PROTECT, related_name="serv_subtype_mappings"
+    )
+    serv_type = models.ForeignKey(
+        MstServType, db_column="serv_type_id", on_delete=models.PROTECT, related_name="fs_catg_mappings"
+    )
+    serv_subtype = models.ForeignKey(
+        MstServSubtype, db_column="serv_subtype_id", on_delete=models.PROTECT, related_name="fs_catg_mappings"
+    )
+    business_system_id_2 = models.CharField(max_length=1, null=True, blank=True)  # Shipping
+    business_system_id_5 = models.CharField(max_length=1, null=True, blank=True)  # Dredging
+    business_system_id_6 = models.CharField(max_length=1, null=True, blank=True)  # Oilfield Services
+    business_system_id_11 = models.CharField(max_length=1, null=True, blank=True)  # Offshore Sub Sea
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_fs_catg_to_sstype"
+
+    def __str__(self):
+        return f"{self.fs_category.fs_category_name} — {self.serv_subtype.serv_subtype_name}"
 
 
 class NationalityToEmpTypeMapping(models.Model):

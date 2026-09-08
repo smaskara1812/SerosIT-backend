@@ -209,6 +209,14 @@ router.register(
     "masters/buss-cert-types", masters_views.MstBussCertTypeViewSet, basename="mst-buss-cert-type"
 )
 router.register("masters/buss-certs", masters_views.MstBussCertViewSet, basename="mst-buss-cert")
+router.register("masters/cert-types", masters_views.MstCertTypeViewSet, basename="mst-cert-type")
+router.register("masters/certs", masters_views.MstCertViewSet, basename="mst-cert")
+router.register("masters/qualifications", masters_views.MstQualificationViewSet, basename="mst-qualification")
+router.register("masters/serv-types", masters_views.MstServTypeViewSet, basename="mst-serv-type")
+router.register("masters/serv-subtypes", masters_views.MstServSubtypeViewSet, basename="mst-serv-subtype")
+router.register(
+    "masters/fs-catg-to-sstype", masters_views.MstFsCatgToSstypeViewSet, basename="mst-fs-catg-to-sstype"
+)
 router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )

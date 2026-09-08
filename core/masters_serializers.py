@@ -2,7 +2,13 @@ from rest_framework import serializers
 
 from .models import (
     DocToSignMapping,
+    MstCert,
     MstCertInstitute,
+    MstCertType,
+    MstQualification,
+    MstServType,
+    MstServSubtype,
+    MstFsCatgToSstype,
     MstCompetency,
     MstContactExposureType,
     MstContinent,
@@ -893,6 +899,62 @@ class MstBussCertSerializer(serializers.ModelSerializer):
         model = MstBussCert
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCertTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstCertType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstCertSerializer(serializers.ModelSerializer):
+    cert_type_name = serializers.CharField(source="cert_type.cert_type_name", read_only=True, default="")
+    vessel_dept_name = serializers.CharField(
+        source="vessel_dept.vessel_dept_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstCert
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstQualificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstQualification
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstServTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstServType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstServSubtypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstServSubtype
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstFsCatgToSstypeSerializer(serializers.ModelSerializer):
+    fs_category_name = serializers.CharField(source="fs_category.fs_category_name", read_only=True, default="")
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True, default="")
+    serv_type_name = serializers.CharField(source="serv_type.serv_type_name", read_only=True, default="")
+    serv_subtype_name = serializers.CharField(source="serv_subtype.serv_subtype_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MstFsCatgToSstype
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.fs_category.fs_category_name} — {obj.emp_type.emp_type_name} — {obj.serv_subtype.serv_subtype_name}"
 
 
 class ItAccessoryHolderSerializer(serializers.ModelSerializer):

@@ -90,12 +90,24 @@ from .models import (
     MstBussCertIssueAuthority,
     MstBussCertType,
     MstBussCert,
+    MstCertType,
+    MstCert,
+    MstQualification,
+    MstServType,
+    MstServSubtype,
+    MstFsCatgToSstype,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
     JobDescriptionDtlSerializer,
     JobDescriptionHdrSerializer,
     MstCertInstituteSerializer,
+    MstCertTypeSerializer,
+    MstCertSerializer,
+    MstQualificationSerializer,
+    MstServTypeSerializer,
+    MstServSubtypeSerializer,
+    MstFsCatgToSstypeSerializer,
     MstCompetencySerializer,
     MstContinentSerializer,
     MstCountrySerializer,
@@ -465,6 +477,69 @@ class MstBussCertViewSet(BaseMasterViewSet):
     name_field = "buss_cert_name"
     active_field = "buss_cert_active"
     search_fields = ["buss_cert_name", "buss_cert_type__buss_cert_type"]
+
+
+class MstCertTypeViewSet(BaseMasterViewSet):
+    queryset = MstCertType.objects.all()
+    serializer_class = MstCertTypeSerializer
+    entity_key = "masters.cert_types"
+    name_field = "cert_type_name"
+    reference_checks = [("certs", "Certificates")]
+    search_fields = ["cert_type_name", "cert_type_abrv"]
+
+
+class MstCertViewSet(BaseMasterViewSet):
+    queryset = MstCert.objects.select_related("cert_type", "vessel_dept").all()
+    serializer_class = MstCertSerializer
+    entity_key = "masters.certs"
+    name_field = "cert_name"
+    search_fields = ["cert_name", "cert_type__cert_type_name"]
+
+
+class MstQualificationViewSet(BaseMasterViewSet):
+    queryset = MstQualification.objects.all()
+    serializer_class = MstQualificationSerializer
+    entity_key = "masters.qualifications"
+    name_field = "qualification_name"
+    search_fields = ["qualification_name", "qualification_abrv"]
+
+
+class MstServTypeViewSet(BaseMasterViewSet):
+    queryset = MstServType.objects.all()
+    serializer_class = MstServTypeSerializer
+    entity_key = "masters.serv_types"
+    name_field = "serv_type_name"
+    reference_checks = [("fs_catg_mappings", "FS Category To Service Subtype")]
+    search_fields = ["serv_type_name", "serv_type_abrv"]
+
+
+class MstServSubtypeViewSet(BaseMasterViewSet):
+    queryset = MstServSubtype.objects.all()
+    serializer_class = MstServSubtypeSerializer
+    entity_key = "masters.serv_subtypes"
+    name_field = "serv_subtype_name"
+    reference_checks = [("fs_catg_mappings", "FS Category To Service Subtype")]
+    search_fields = ["serv_subtype_name", "serv_subtype_abrv"]
+
+
+class MstFsCatgToSstypeViewSet(BaseMasterViewSet):
+    queryset = MstFsCatgToSstype.objects.select_related(
+        "fs_category", "emp_type", "serv_type", "serv_subtype"
+    ).all()
+    serializer_class = MstFsCatgToSstypeSerializer
+    entity_key = "masters.fs_catg_to_sstype"
+    search_fields = ["fs_category__fs_category_name", "serv_subtype__serv_subtype_name"]
+
+    def get_queryset(self):
+        return self.queryset.order_by(
+            "fs_category__fs_category_name", "emp_type__emp_type_name", "serv_subtype__serv_subtype_name"
+        )
+
+    def label_for(self, instance):
+        return (
+            f"{instance.fs_category.fs_category_name} — {instance.emp_type.emp_type_name} — "
+            f"{instance.serv_type.serv_type_name} — {instance.serv_subtype.serv_subtype_name}"
+        )
 
 
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
@@ -998,26 +1073,18 @@ class RankClassificationViewSet(BaseMasterViewSet):
 
 
 class MstEmpNatureViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Emp Type and via direct API access."""
-
     queryset = MstEmpNature.objects.all()
     serializer_class = MstEmpNatureSerializer
     entity_key = "masters.emp_natures"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "emp_nature_name"
     reference_checks = [("emp_types", "Emp Types")]
     search_fields = ["emp_nature_name"]
 
 
 class MstEmpTypeViewSet(BaseMasterViewSet):
-    """No dedicated nav page yet — reachable only as a dropdown source for
-    Nationality To Emp Type Mapping and via direct API access."""
-
     queryset = MstEmpType.objects.select_related("emp_nature", "currency").all()
     serializer_class = MstEmpTypeSerializer
     entity_key = "masters.emp_types"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "emp_type_name"
     reference_checks = [("nationality_mappings", "Nationality To Emp Type Mapping")]
     search_fields = ["emp_type_name"]
