@@ -1,5 +1,6 @@
 import csv
 import datetime
+from decimal import Decimal
 
 from django.db.models import DateTimeField, Prefetch, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
@@ -243,6 +244,12 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     # small fixed-choice fields, not FK ids (those already have their own
     # remote-search pickers on the frontend).
     filterable_fields = []
+    # Serializer fields to leave out of the CSV export only — e.g. a
+    # SerializerMethodField that exists purely to feed a frontend widget
+    # (Drilling Information's latitude_decimal/longitude_decimal, computed
+    # for the Leaflet map) and isn't itself real column data worth exporting
+    # alongside the actual latitude/longitude strings.
+    export_exclude_fields = []
 
     def _apply_active_filter(self, qs):
         """Shared by the default get_queryset below and by subclasses that
@@ -329,16 +336,25 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         rows = serializer.data
         filename = (self.entity_key or "export").split(".")[-1]
-        response = HttpResponse(content_type="text/csv")
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+        # Excel ignores the response's own charset and guesses the file's
+        # encoding from its bytes, defaulting to the OS codepage (Windows-
+        # 1252) rather than UTF-8 — any non-ASCII character (e.g. Drilling
+        # Information's ° in the coordinate columns) comes out as mojibake
+        # ("22¬∞47'...") without this BOM telling Excel it's really UTF-8.
+        # Every master's export shares this one method, so this fixes it
+        # everywhere at once, not just for this one field.
+        response.write("\ufeff")
         if not rows:
             self._audit_export(request, len(rows))
             return response
-        fieldnames = list(rows[0].keys())
+        exclude = set(self.export_exclude_fields)
+        fieldnames = [f for f in rows[0].keys() if f not in exclude]
         writer = csv.DictWriter(response, fieldnames=fieldnames)
         writer.writerow({f: f.replace("_", " ").title() for f in fieldnames})
         for row in rows:
-            writer.writerow(row)
+            writer.writerow({k: v for k, v in row.items() if k not in exclude})
         self._audit_export(request, len(rows))
         return response
 
@@ -375,6 +391,15 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             val = getattr(instance, f.attname)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
+            elif isinstance(val, Decimal):
+                # json.dumps() (PortableJSONField's own serialization,
+                # audit.py's _write -> SysAuditLog.changes) has no default
+                # encoding for Decimal and raises TypeError — silently
+                # caught by record_action's own try/except, so a model with
+                # any DecimalField (first hit: DrillingHdr's operating-hours
+                # columns) would just never get an audit entry at all, with
+                # no visible error anywhere.
+                val = str(val)
             snap[f.name] = val
         return snap
 

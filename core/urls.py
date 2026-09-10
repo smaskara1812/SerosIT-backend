@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import masters_views, reports_views, views
+from . import drilling_views, masters_views, reports_views, views
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -236,10 +236,12 @@ router.register(
 router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )
+router.register("drilling/drilling-information", drilling_views.DrillingHdrViewSet, basename="drilling-hdr")
 
 urlpatterns = [
     path("", include(router.urls)),
     path("health/", views.health, name="health"),
+    path("drilling/rig-options/", drilling_views.rig_options_api, name="drilling_rig_options"),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", views.me, name="me"),

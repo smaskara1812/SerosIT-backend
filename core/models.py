@@ -2052,6 +2052,71 @@ class ProjectContractDtl(models.Model):
         return f"{self.contract.prj_contract_no} — {self.rig.rig_name}"
 
 
+class DrillingHdr(models.Model):
+    """Straight copy of legacy eos_Drilling_Hdr — one drilling-well record
+    (where/when a rig moved on and started). Only the fields on the
+    "Drilling Information" form are actually editable there; the rest
+    (consumption/hours/completion totals) belong to a later-stage form that
+    doesn't exist yet, and default to 0 until it does.
+
+    Latitude/Longitude are kept as legacy's own packed DMS strings
+    (e.g. `08°36'00.00"`, `108°49'00.00"E`) rather than structured columns —
+    the frontend composes/parses degree/minute/second/hemisphere fields
+    into this same format. Legacy itself never actually wrote a hemisphere
+    suffix for Latitude on any of its 349 rows (a pre-existing gap, not
+    reproduced going forward — this app writes both suffixes correctly)."""
+
+    drilling_hdr_id = models.AutoField(primary_key=True)
+    contract = models.ForeignKey(
+        ProjectContract,
+        db_column="prj_contract_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="drilling_hdrs",
+    )
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="drilling_hdrs")
+    latitude = models.CharField(max_length=14)
+    longitude = models.CharField(max_length=14)
+    location = models.CharField(max_length=25)
+    total_water_depth = models.IntegerField(null=True, blank=True)
+    total_depth = models.IntegerField(null=True, blank=True)
+    first_anchor_down_dt = models.DateTimeField()
+    distance_covered_kms_knots = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    drilling_rate = models.ForeignKey(
+        MstDrillingRate,
+        db_column="drilling_rate_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="drilling_hdrs",
+    )
+    # Not on the Drilling Information form — filled in by a later-stage
+    # form (consumption/hours/completion close-out) that doesn't exist yet.
+    tot_consumption_diesel = models.IntegerField(default=0)
+    tot_consumption_water = models.IntegerField(default=0)
+    tot_received_diesel = models.IntegerField(default=0)
+    tot_received_water = models.IntegerField(default=0)
+    tot_generated_water = models.IntegerField(default=0)
+    tot_operating_hrs = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    tot_standby_hrs = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    tot_repair_service_hrs = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    tot_repair_rate_hrs = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    tot_zero_rate_hrs = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    total_days = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
+    drilling_completion_dt = models.DateTimeField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "drilling_hdr"
+
+    def __str__(self):
+        return f"{self.location} — {self.rig.rig_name}"
+
+
 class ProjectDrillingRate(models.Model):
     """One rate (by type) for one rig on one contract — a flat lookup
     unlike Project Contract, so it gets the generic masters page."""
