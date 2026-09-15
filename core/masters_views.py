@@ -107,6 +107,7 @@ from .models import (
     MstBusinessSystem,
     MailAlertDtl,
     MailAlertToUser,
+    MstApprovalCode,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -129,6 +130,7 @@ from .masters_serializers import (
     MstBusinessSystemSerializer,
     MailAlertDtlSerializer,
     MailAlertToUserSerializer,
+    MstApprovalCodeSerializer,
     MstCompetencySerializer,
     MstContinentSerializer,
     MstCountrySerializer,
@@ -676,6 +678,15 @@ class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
     serializer_class = MstEmailNotificationTypeSerializer
     entity_key = "masters.email_notification_types"
     name_field = "en_type_name"
+
+
+class MstApprovalCodeViewSet(BaseMasterViewSet):
+    queryset = MstApprovalCode.objects.all()
+    serializer_class = MstApprovalCodeSerializer
+    entity_key = "masters.approval_codes"
+    name_field = "approval_code"
+    active_field = "approval_active"
+    search_fields = ["approval_code", "approval_desc"]
     active_field = "en_type_active"
     search_fields = ["en_type_name"]
 

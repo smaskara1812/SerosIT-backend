@@ -3129,3 +3129,106 @@ class PermissionPreset(models.Model):
 
     def __str__(self):
         return self.name
+
+
+# ── Approval engine ──────────────────────────────────────────────────────
+# Generic multi-level creator/approver workflow, reused across every
+# approval-driven transaction form (Drilling Dtl is Approval_Code_Id 9, but
+# the legacy data has 10 other codes too — Material Requisition, GRN,
+# Invoice, Contract, Overtime, etc.). Built once here rather than baked into
+# Drilling Report specifically, so the next approval-driven form only has to
+# add its own Approval_Code row, not new machinery.
+
+
+class MstApprovalCode(models.Model):
+    """One row per approval-driven module (e.g. DRILLING_DTL, GRN,
+    OFFER_LETTER) — what Approver Mapping and Approver Mapping Dtl scope
+    their rows to."""
+
+    approval_code_id = models.AutoField(primary_key=True)
+    approval_code = models.CharField(max_length=20)
+    approval_desc = models.CharField(max_length=150)
+    approval_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_approval_code"
+        ordering = ["approval_code"]
+
+    def __str__(self):
+        return self.approval_code
+
+
+class ApproverMapping(models.Model):
+    """One user's role (at one approval level) for one Approval Code —
+    header row for the nested Rig/Dept scoping grid in ApproverMappingDtl."""
+
+    approver_mapping_id = models.AutoField(primary_key=True)
+    approval_code = models.ForeignKey(
+        MstApprovalCode,
+        db_column="approval_code_id",
+        on_delete=models.PROTECT,
+        related_name="approver_mappings",
+    )
+    approver_user = models.ForeignKey(
+        MstUser,
+        db_column="approver_user_id",
+        on_delete=models.PROTECT,
+        related_name="approver_mappings",
+    )
+    approver_level = models.IntegerField()
+    # Legacy convention (same as several other flags imported this project):
+    # blank/NULL means Inactive, only an explicit 'Y' means Active — never
+    # an explicit 'N' in the real data.
+    approver_active = models.CharField(max_length=1, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "approver_mapping"
+
+    def __str__(self):
+        return f"{self.approval_code.approval_code} — {self.approver_user.user_login_id} (L{self.approver_level})"
+
+
+class ApproverMappingDtl(models.Model):
+    """Rig/Dept scope + per-scope capability flags (Receive Mail / Approve /
+    Open For Revision / Create) for one ApproverMapping row. Owned by its
+    parent (CASCADE) — these rows have no meaning without the mapping they
+    scope, unlike every other FK convention in this app where the referenced
+    master is protected from deletion."""
+
+    approver_mapping_dtl_id = models.AutoField(primary_key=True)
+    approver_mapping = models.ForeignKey(
+        ApproverMapping,
+        db_column="approver_mapping_id",
+        on_delete=models.CASCADE,
+        related_name="details",
+    )
+    rig = models.ForeignKey(
+        MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="approver_mapping_dtls"
+    )
+    dept = models.ForeignKey(
+        MstDepartment,
+        db_column="dept_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="approver_mapping_dtls",
+    )
+    receive_mail = models.CharField(max_length=1, null=True, blank=True)
+    approve_yn = models.CharField(max_length=1, null=True, blank=True)
+    open_for_revision_yn = models.CharField(max_length=1, null=True, blank=True)
+    create_yn = models.CharField(max_length=1, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "approver_mapping_dtl"
