@@ -11,6 +11,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from . import audit as _audit
 from .auth_backend import _sha256
 from .models import (
+    EmailLog,
     SysAuditLog,
     SysMenu,
     MstUser,
@@ -424,6 +425,87 @@ def admin_audit_list_api(request):
         r["ts"] = (
             dj_timezone.localtime(r["ts"], ist).strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
         )
+    return Response(
+        {
+            "results": rows,
+            "total": total,
+            "page": page,
+            "page_size": size,
+            "pages": (total + size - 1) // size,
+        }
+    )
+
+
+# ── Email Log ─────────────────────────────────────────────────────────────
+# Every outgoing email this app attempts (core/mailer.py writes one row per
+# attempt, success or failure) — same read-only admin-list shape as Audit
+# Trail above, not a DRF router viewset, since nothing here is ever created
+# or edited through the API itself.
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_email_log_facets_api(request):
+    users = sorted(
+        {
+            u
+            for u in MstUser.objects.filter(user_id__in=EmailLog.objects.values_list("sent_by_user_id", flat=True))
+            .values_list("user_login_id", flat=True)
+            if u
+        }
+    )
+    triggers = sorted({t for t in EmailLog.objects.values_list("trigger", flat=True) if t})
+    return Response({"users": users, "triggers": triggers})
+
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_email_log_list_api(request):
+    qs = EmailLog.objects.all()
+    status_filter = request.GET.get("status", "").strip()
+    trigger = request.GET.get("trigger", "").strip()
+    q = request.GET.get("q", "").strip()
+    dfrom = request.GET.get("from", "").strip()
+    dto = request.GET.get("to", "").strip()
+    if status_filter == "success":
+        qs = qs.filter(success=True)
+    elif status_filter == "failed":
+        qs = qs.filter(success=False)
+    if trigger:
+        qs = qs.filter(trigger=trigger)
+    if q:
+        qs = qs.filter(Q(subject__icontains=q) | Q(recipients__icontains=q) | Q(trigger__icontains=q))
+    if dfrom:
+        qs = qs.filter(sent_dt__date__gte=dfrom)
+    if dto:
+        qs = qs.filter(sent_dt__date__lte=dto)
+
+    total = qs.count()
+    try:
+        page = max(1, int(request.GET.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    size = 30
+    rows = list(
+        qs.order_by("-sent_dt")[(page - 1) * size : page * size].values(
+            "email_log_id",
+            "subject",
+            "body",
+            "recipients",
+            "trigger",
+            "success",
+            "error",
+            "sent_by_user_id",
+            "sent_dt",
+        )
+    )
+    sender_ids = {r["sent_by_user_id"] for r in rows if r["sent_by_user_id"]}
+    sender_names = dict(MstUser.objects.filter(user_id__in=sender_ids).values_list("user_id", "user_login_id"))
+    ist = ZoneInfo("Asia/Kolkata")
+    for r in rows:
+        r["sent_dt"] = (
+            dj_timezone.localtime(r["sent_dt"], ist).strftime("%Y-%m-%d %H:%M:%S") if r["sent_dt"] else ""
+        )
+        r["sent_by"] = sender_names.get(r["sent_by_user_id"], "") or "System"
     return Response(
         {
             "results": rows,

@@ -1,3 +1,5 @@
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import ApproverMapping, ApproverMappingDtl
@@ -50,16 +52,29 @@ class ApproverMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    @transaction.atomic
     def create(self, validated_data):
         details_data = validated_data.pop("details", [])
+        # cr_user_id/cr_dt arrive merged into validated_data via the view's
+        # serializer.save(cr_user_id=..., cr_dt=...) call — DrillingDtlOps
+        # hit this exact gap first (NOT NULL cr_user_id/cr_dt on the child
+        # row, never stamped), and ApproverMappingDtl has the identical
+        # column shape, so it carries the identical latent bug: every path
+        # that only ever edited existing rows never triggered it.
+        cr_user_id = validated_data.get("cr_user_id")
+        cr_dt = validated_data.get("cr_dt", timezone.now())
         instance = ApproverMapping.objects.create(**validated_data)
         for row in details_data:
             row.pop("approver_mapping_dtl_id", None)
-            ApproverMappingDtl.objects.create(approver_mapping=instance, **row)
+            ApproverMappingDtl.objects.create(approver_mapping=instance, cr_user_id=cr_user_id, cr_dt=cr_dt, **row)
         return instance
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         details_data = validated_data.pop("details", None)
+        mod_user_id = validated_data.get("mod_user_id")
+        mod_dt = validated_data.get("mod_dt", timezone.now())
+        cr_user_id = mod_user_id if mod_user_id is not None else instance.cr_user_id
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -78,10 +93,14 @@ class ApproverMappingSerializer(serializers.ModelSerializer):
                     dtl = existing[row_id]
                     for attr, value in row.items():
                         setattr(dtl, attr, value)
+                    dtl.mod_user_id = mod_user_id
+                    dtl.mod_dt = mod_dt
                     dtl.save()
                     seen_ids.add(row_id)
                 else:
-                    ApproverMappingDtl.objects.create(approver_mapping=instance, **row)
+                    ApproverMappingDtl.objects.create(
+                        approver_mapping=instance, cr_user_id=cr_user_id, cr_dt=mod_dt, **row
+                    )
             for dtl_id, dtl in existing.items():
                 if dtl_id not in seen_ids:
                     dtl.delete()

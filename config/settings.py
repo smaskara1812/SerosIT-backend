@@ -235,3 +235,25 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# ── Email ─────────────────────────────────────────────────────────────────
+# EMAIL_USE_CONSOLE=True (dev default) prints every outgoing message to the
+# terminal running the backend instead of touching a real mail server —
+# Django's console backend does exactly this, so approval-notification code
+# elsewhere just calls send_mail()/EmailMessage and never has to branch on
+# console-vs-real itself. Flip EMAIL_USE_CONSOLE=False once real SMTP
+# credentials (previously tested against email.essar.com:25, no TLS/SSL) are
+# confirmed for whichever environment is running.
+EMAIL_USE_CONSOLE = os.getenv("EMAIL_USE_CONSOLE", "True") == "True"
+if EMAIL_USE_CONSOLE:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.getenv("EMAIL_HOST", "email.essar.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False") == "True"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@seros.in")

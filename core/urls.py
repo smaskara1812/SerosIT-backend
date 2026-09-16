@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import approvals_views, drilling_views, masters_views, reports_views, views
+from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -239,11 +239,14 @@ router.register(
 router.register("drilling/drilling-information", drilling_views.DrillingHdrViewSet, basename="drilling-hdr")
 router.register("masters/approval-codes", masters_views.MstApprovalCodeViewSet, basename="mst-approval-code")
 router.register("masters/approver-mappings", approvals_views.ApproverMappingViewSet, basename="approver-mapping")
+router.register("drilling/drilling-report", drilling_dtl_views.DrillingDtlViewSet, basename="drilling-dtl")
 
 urlpatterns = [
     path("", include(router.urls)),
     path("health/", views.health, name="health"),
     path("drilling/rig-options/", drilling_views.rig_options_api, name="drilling_rig_options"),
+    path("drilling/resolve-well/", drilling_dtl_views.resolve_well_api, name="drilling_resolve_well"),
+    path("drilling/my-rigs/", drilling_dtl_views.my_rigs_api, name="drilling_my_rigs"),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", views.me, name="me"),
@@ -269,6 +272,8 @@ urlpatterns = [
     # Audit Trail
     path("admin/audit/facets/", views.admin_audit_facets_api, name="admin_audit_facets"),
     path("admin/audit/", views.admin_audit_list_api, name="admin_audit_list"),
+    path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),
+    path("admin/email-log/", views.admin_email_log_list_api, name="admin_email_log_list"),
     # User Management
     path("admin/user-management/",views.admin_user_management_list_api,name="admin_user_management_list"),
     path("admin/user-management/<int:user_id>/",views.admin_user_management_get_api,name="admin_user_management_get"),

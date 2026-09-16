@@ -2216,6 +2216,149 @@ class MstDrillingWorkShift(models.Model):
         return f"{self.rig.rig_name} — {self.get_work_shift_display()}"
 
 
+class DrillingDtl(models.Model):
+    """Straight copy of legacy eos_Drilling_Dtl — one daily report for one
+    rig ("Drilling Report" / "Daily Report" in the legacy UI). drilling_hdr
+    is resolved automatically from (rig, drilling_dtl_dt) against whichever
+    DrillingHdr is active for that rig on that date — the legacy form has no
+    Project field of its own, only Rig + Date, exactly like this one.
+
+    operating_hrs..drilling_meterage are computed, not user-entered — see
+    core/drilling_report.py::recompute_dtl_totals, a Django port of the
+    legacy TRG_Drilling_Dtl_Ops_Insert_Delete trigger (kept as a visible,
+    testable function rather than reproduced as a DB trigger)."""
+
+    CR_STATUS_CHOICES = [("F", "Finalized"), ("N", "Reopened for revision")]
+    L1_STATUS_CHOICES = [("N", "Pending"), ("A", "Approved"), ("R", "Rejected")]
+
+    drilling_dtl_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="drilling_dtls")
+    drilling_hdr = models.ForeignKey(
+        DrillingHdr,
+        db_column="drilling_hdr_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="drilling_dtls",
+    )
+    drilling_dtl_dt = models.DateField()
+    pob_operator = models.IntegerField()
+    pob_essar = models.IntegerField()
+    pob_essar_serv = models.IntegerField(null=True, blank=True)
+    pob_others = models.IntegerField(null=True, blank=True)
+    wind_speed = models.IntegerField()
+    current_k = models.DecimalField(max_digits=2, decimal_places=1)
+    at_press_mbar = models.IntegerField()
+    vdl = models.IntegerField()
+    avdl = models.IntegerField()
+    tot_vdl = models.IntegerField()
+    kg = models.DecimalField(max_digits=4, decimal_places=2)
+    kg_margin = models.DecimalField(max_digits=3, decimal_places=2)
+    draft = models.DecimalField(max_digits=4, decimal_places=2)
+    consumption_diesel = models.IntegerField()
+    consumption_water = models.IntegerField()
+    received_diesel = models.IntegerField(null=True, blank=True)
+    received_water = models.IntegerField(null=True, blank=True)
+    generated_water = models.IntegerField(null=True, blank=True)
+    # Computed — see recompute_dtl_totals.
+    operating_hrs = models.DecimalField(max_digits=4, decimal_places=2, default=0)
+    standby_hrs = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    repair_service_hrs = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    repair_rate_hrs = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    zero_rate_hrs = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    rig_move_hrs = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    drilling_meterage = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    remark = models.CharField(max_length=500, null=True, blank=True)
+    # Auto-cleared to NULL by recompute_dtl_totals when the day has no R0/R3
+    # ops rows left — same as the legacy trigger.
+    downtime_reason = models.CharField(max_length=100, null=True, blank=True)
+    cr_status = models.CharField(max_length=1, null=True, blank=True, choices=CR_STATUS_CHOICES)
+    l1_approval_status = models.CharField(max_length=1, null=True, blank=True, choices=L1_STATUS_CHOICES)
+    l1_approval_dt = models.DateField(null=True, blank=True)
+    l1_user_id = models.IntegerField(null=True, blank=True)
+    opened_for_revision_by = models.IntegerField(null=True, blank=True)
+    opened_for_revision_dt = models.DateField(null=True, blank=True)
+    # Short note an approver can attach when sending a record back to its
+    # creator (Revise Previous Level) — cleared on the next finalize, same
+    # lifecycle as opened_for_revision_by/dt, since it only applies to the
+    # revision cycle it was written for.
+    revision_note = models.CharField(max_length=500, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "drilling_dtl"
+
+    def __str__(self):
+        return f"{self.rig.rig_name} — {self.drilling_dtl_dt}"
+
+
+class DrillingDtlOps(models.Model):
+    """One logged activity block within a DrillingDtl day — time range,
+    what was being done (Operation/Section), depth range, and the rate it's
+    billed against. Owned by its parent (CASCADE) — an ops row has no
+    meaning without the day it belongs to."""
+
+    drilling_dtl_ops_id = models.AutoField(primary_key=True)
+    drilling_dtl = models.ForeignKey(
+        DrillingDtl, db_column="drilling_dtl_id", on_delete=models.CASCADE, related_name="ops"
+    )
+    time_from = models.DateTimeField()
+    time_to = models.DateTimeField()
+    work_shift = models.CharField(max_length=1, choices=MstDrillingWorkShift.WORK_SHIFT_CHOICES)
+    duration = models.DecimalField(max_digits=4, decimal_places=2)
+    drilling_ops = models.ForeignKey(
+        MstDrillingOperation, db_column="drilling_ops_id", on_delete=models.PROTECT, related_name="dtl_ops"
+    )
+    drilling_section = models.ForeignKey(
+        MstDrillingSection, db_column="drilling_section_id", on_delete=models.PROTECT, related_name="dtl_ops"
+    )
+    depth_from = models.DecimalField(max_digits=6, decimal_places=2)
+    depth_to = models.DecimalField(max_digits=6, decimal_places=2)
+    rop_trip_mh = models.IntegerField()
+    operation_desc = models.CharField(max_length=200)
+    prj_drilling_rate = models.ForeignKey(
+        ProjectDrillingRate, db_column="prj_drilling_rate_id", on_delete=models.PROTECT, related_name="dtl_ops"
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "drilling_dtl_ops"
+
+
+class EmailLog(models.Model):
+    """Every outgoing email this app attempts, success or failure — a
+    dedicated log rather than folded into SysAuditLog, since it carries
+    fields (body, recipients, trigger context) the generic audit diff isn't
+    shaped for. Written by core/mailer.py on every send attempt."""
+
+    email_log_id = models.AutoField(primary_key=True)
+    subject = models.CharField(max_length=200)
+    body = models.TextField()
+    recipients = models.TextField()  # comma-separated addresses actually targeted
+    # Free-form label for what caused the send (e.g. "Drilling Report
+    # DRILLING_DTL#123 finalized") — not a FK, since this log outlives
+    # whatever triggered it and spans every kind of notification, not just
+    # Drilling Report's.
+    trigger = models.CharField(max_length=200, blank=True)
+    success = models.BooleanField()
+    error = models.TextField(blank=True)
+    sent_by_user_id = models.IntegerField(null=True, blank=True)
+    sent_dt = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "sys_email_log"
+        ordering = ["-sent_dt"]
+
+    def __str__(self):
+        return f"{self.subject} → {self.recipients}"
+
+
 # ── Incidents ─────────────────────────────────────────────────────────────
 
 

@@ -1586,6 +1586,13 @@ class ProjectDrillingRateViewSet(BaseMasterViewSet):
     entity_key = "masters.project_drilling_rates"
     search_fields = ["contract__prj_contract_no", "rig__rig_name", "drilling_rate__rate_code"]
 
+    # "Hardcoded IDS" per Drilling Report's own legacy note (same two SQL
+    # blocks the doc gave for Drilling Information's Rig Move Rate Type,
+    # reused here for the Ops grid's own Rate picker): ILM is a fixed id
+    # list, non-ILM is everything else that's still active.
+    _ILM_RATE_IDS = {6, 18, 7, 8, 2, 21}
+    _ILM_EXCLUDE_IDS = {6, 18, 7, 8}
+
     def get_queryset(self):
         qs = self.queryset
         contract_id = self.request.query_params.get("contract")
@@ -1594,6 +1601,11 @@ class ProjectDrillingRateViewSet(BaseMasterViewSet):
             qs = qs.filter(contract_id=contract_id)
         if rig_id:
             qs = qs.filter(rig_id=rig_id)
+        ilm = self.request.query_params.get("ilm")
+        if ilm == "1":
+            qs = qs.filter(drilling_rate_id__in=self._ILM_RATE_IDS)
+        elif ilm == "0":
+            qs = qs.exclude(drilling_rate_id__in=self._ILM_EXCLUDE_IDS).filter(drilling_rate__rate_active="Y")
         return qs.order_by("-contract__prj_start_dt", "drilling_rate__rate_code")
 
     def label_for(self, instance):
