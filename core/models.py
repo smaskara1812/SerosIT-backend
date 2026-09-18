@@ -2341,13 +2341,22 @@ class EmailLog(models.Model):
     subject = models.CharField(max_length=200)
     body = models.TextField()
     recipients = models.TextField()  # comma-separated addresses actually targeted
-    # Free-form label for what caused the send (e.g. "Drilling Report
-    # DRILLING_DTL#123 finalized") — not a FK, since this log outlives
-    # whatever triggered it and spans every kind of notification, not just
-    # Drilling Report's.
+    # Free-form, human-readable label for what caused THIS send, record id
+    # and all (e.g. "Drilling Report #123 Finalize") — good for the detail
+    # view, useless as a filter facet since it's different for every row.
     trigger = models.CharField(max_length=200, blank=True)
+    # Stable category for filtering/grouping, independent of which record
+    # triggered it — dotted-namespace, e.g. "drilling_report.finalize".
+    # Each feature picks its own prefix as it's built (auto-alerts, custom
+    # alerts, other approval codes later); nothing here enumerates the set
+    # up front.
+    trigger_code = models.CharField(max_length=100, blank=True, db_index=True)
     success = models.BooleanField()
     error = models.TextField(blank=True)
+    # True when the acting user's own credential failed/was unavailable and
+    # this send went out instead through the shared Oilfield Services
+    # fallback account (settings.EMAIL_HOST_USER/PASSWORD).
+    used_fallback = models.BooleanField(default=False)
     sent_by_user_id = models.IntegerField(null=True, blank=True)
     sent_dt = models.DateTimeField(auto_now_add=True)
 
@@ -2357,6 +2366,77 @@ class EmailLog(models.Model):
 
     def __str__(self):
         return f"{self.subject} → {self.recipients}"
+
+
+class UserMailCredential(models.Model):
+    """The plaintext password submitted at this user's most recent login,
+    cached so outgoing approval-notification mail can authenticate to the
+    SMTP relay AS that user (the relay only allows a From: address that
+    matches whoever it authenticated — confirmed against the real server).
+    Overwritten on every login (core.views.AuditedTokenObtainPairView),
+    cleared on logout (core.views.logout_api) — there is no independent
+    expiry beyond that. Deliberately unencrypted: this app has no existing
+    session/secret-store infra to build on, and matches how the legacy
+    system itself handled the same problem (a stored value refreshed at
+    login), per explicit direction to keep this simple rather than invent
+    new security infrastructure for it."""
+
+    user_id = models.IntegerField(primary_key=True)  # Mst_User.user_id
+    password = models.CharField(max_length=200)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sys_user_mail_credential"
+
+    def __str__(self):
+        return f"MailCredential(user_id={self.user_id})"
+
+
+class MailRecipientMapping(models.Model):
+    """Admin-configured EXTRA recipients for one (Approval Code, Event)
+    combination — on top of the fixed business-rule recipients (creator/
+    approver, resolved from ApproverMappingDtl at send time, not stored
+    here). Each row just attaches one existing "Alert To Users" entry to
+    one event; the entry's own addressee_type (To/Cc/Bcc) decides which
+    bucket it lands in. One MailAlertToUser entry can be attached to many
+    events/approval codes, and reused as-is — this table adds no new
+    recipient-directory concept of its own."""
+
+    EVENT_FINALIZE = "FINALIZE"
+    EVENT_APPROVE = "APPROVE"
+    EVENT_REJECT = "REJECT"
+    EVENT_REVISE_PREVIOUS = "REVISE_PREVIOUS"
+    EVENT_CHOICES = [
+        (EVENT_FINALIZE, "Finalize"),
+        (EVENT_APPROVE, "Approve"),
+        (EVENT_REJECT, "Reject"),
+        (EVENT_REVISE_PREVIOUS, "Revise Previous Level"),
+    ]
+
+    mail_recipient_mapping_id = models.AutoField(primary_key=True)
+    approval_code = models.ForeignKey(
+        "MstApprovalCode",
+        db_column="approval_code_id",
+        on_delete=models.PROTECT,
+        related_name="mail_recipient_mappings",
+    )
+    event_type = models.CharField(max_length=20, choices=EVENT_CHOICES)
+    mail_alert_to_user = models.ForeignKey(
+        MailAlertToUser,
+        db_column="mail_alert_to_user_id",
+        on_delete=models.PROTECT,
+        related_name="recipient_mappings",
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mail_recipient_mapping"
+
+    def __str__(self):
+        return f"{self.approval_code.approval_code} / {self.event_type} → {self.mail_alert_to_user.email_addr}"
 
 
 # ── Incidents ─────────────────────────────────────────────────────────────

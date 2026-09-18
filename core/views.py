@@ -16,6 +16,7 @@ from .models import (
     SysMenu,
     MstUser,
     MstUserPassword,
+    UserMailCredential,
     UserPermission,
     UserProfile,
     PermissionPreset,
@@ -36,6 +37,7 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
 
     def post(self, request, *args, **kwargs):
         username = (request.data.get("username") or "").strip()
+        password = request.data.get("password") or ""
         # Bad credentials raise AuthenticationFailed inside simplejwt's
         # serializer validation — that propagates straight past this method
         # (DRF's dispatch() catches it, not us), so the failure path has to
@@ -46,6 +48,17 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
             _audit.log_auth("login_failed", username, request)
             raise
         _audit.log_auth("login", username, request)
+        # Cache the password just used — this is the only place it's ever
+        # available server-side — so outgoing approval-notification mail
+        # can later authenticate to SMTP as this same user. Overwritten on
+        # every login; see UserMailCredential's own docstring for why this
+        # is deliberately unencrypted.
+        if password:
+            try:
+                uid = UserProfile.objects.get(user_login_id=username).user_id
+                UserMailCredential.objects.update_or_create(user_id=uid, defaults={"password": password})
+            except UserProfile.DoesNotExist:
+                pass
         return response
 
 
@@ -53,6 +66,11 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
 @permission_classes([IsAuthenticated])
 def logout_api(request):
     _audit.log_auth("logout", request.user.username, request)
+    try:
+        uid = UserProfile.objects.get(user_login_id=request.user.username).user_id
+        UserMailCredential.objects.filter(user_id=uid).delete()
+    except UserProfile.DoesNotExist:
+        pass
     return Response({"success": True})
 
 
@@ -442,6 +460,14 @@ def admin_audit_list_api(request):
 # Trail above, not a DRF router viewset, since nothing here is ever created
 # or edited through the API itself.
 
+def _prettify_trigger_code(code):
+    # "drilling_report.finalize" -> "Drilling Report — Finalize". Generic on
+    # purpose — works for whatever dotted-namespace code a future feature
+    # (another approval code, an auto-alert, a custom alert...) picks,
+    # without this needing to know about it up front.
+    return " — ".join(part.replace("_", " ").title() for part in code.split("."))
+
+
 @api_view(["GET"])
 @permission_classes([IsAppAdmin])
 def admin_email_log_facets_api(request):
@@ -453,7 +479,12 @@ def admin_email_log_facets_api(request):
             if u
         }
     )
-    triggers = sorted({t for t in EmailLog.objects.values_list("trigger", flat=True) if t})
+    # trigger_code is the stable filter facet (e.g. "drilling_report.finalize")
+    # — trigger itself is a per-record human label (e.g. "Drilling Report
+    # #7821 Finalize") and would give one facet entry per record, not per
+    # kind of event.
+    trigger_codes = sorted({t for t in EmailLog.objects.values_list("trigger_code", flat=True) if t})
+    triggers = [{"value": t, "label": _prettify_trigger_code(t)} for t in trigger_codes]
     return Response({"users": users, "triggers": triggers})
 
 
@@ -471,7 +502,7 @@ def admin_email_log_list_api(request):
     elif status_filter == "failed":
         qs = qs.filter(success=False)
     if trigger:
-        qs = qs.filter(trigger=trigger)
+        qs = qs.filter(trigger_code=trigger)
     if q:
         qs = qs.filter(Q(subject__icontains=q) | Q(recipients__icontains=q) | Q(trigger__icontains=q))
     if dfrom:
@@ -493,6 +524,7 @@ def admin_email_log_list_api(request):
             "recipients",
             "trigger",
             "success",
+            "used_fallback",
             "error",
             "sent_by_user_id",
             "sent_dt",

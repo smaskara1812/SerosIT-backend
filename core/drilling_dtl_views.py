@@ -1,6 +1,7 @@
 import csv
 import functools
 
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
@@ -8,11 +9,11 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from . import approvals
+from . import approvals, mail_recipients, mail_templates, mailer
 from .drilling_dtl_serializers import DrillingDtlSerializer
 from .drilling_report import recompute_dtl_totals, resolve_drilling_hdr
 from .masters_views import BaseMasterViewSet
-from .models import ApproverMappingDtl, DrillingDtl, MstUserRigMapping
+from .models import ApproverMappingDtl, DrillingDtl, MailRecipientMapping, MstUser, MstUserRigMapping, UserMailCredential
 
 APPROVAL_CODE = "DRILLING_DTL"
 
@@ -364,7 +365,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
             }
         )
 
-    def _do_transition(self, request, pk, gate, apply_fn, action_label):
+    def _do_transition(self, request, pk, gate, apply_fn, action_label, notify_event=None):
         instance = self.get_object()
         caps = self._role(instance)
         if not gate(instance, caps):
@@ -377,26 +378,74 @@ class DrillingDtlViewSet(BaseMasterViewSet):
 
         changes = self._diff(old_snapshot, self._snapshot(instance))
         _audit.record_action(request, action_label, self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        if notify_event:
+            transaction.on_commit(lambda: self._notify_mail(instance, uid, notify_event))
         return Response(self.get_serializer(instance).data)
+
+    def _notify_mail(self, instance, actor_user_id, event_type):
+        """Fires the approval-notification email for one transition — see
+        core/mail_recipients.py for who gets it, core/mailer.py for how it's
+        actually sent (queued on a background thread, never blocks this
+        request). A missing cached credential or a resolver returning no
+        recipients is a silent no-op here, not an error — mailer.py's own
+        fallback path and EmailLog cover visibility from here on."""
+        if actor_user_id is None:
+            return
+        recipients = mail_recipients.resolve_drilling_mail(event_type, instance.rig_id, instance.cr_user_id, actor_user_id)
+        if not (recipients["to"] or recipients["cc"] or recipients["bcc"]):
+            return
+
+        actor = MstUser.objects.select_related("emp").filter(user_id=actor_user_id).first()
+        cred = UserMailCredential.objects.filter(user_id=actor_user_id).first()
+        label = dict(MailRecipientMapping.EVENT_CHOICES).get(event_type, event_type)
+        subject, body = mail_templates.drilling_report_mail(instance, actor, event_type)
+        mailer.queue_notification_email(
+            subject=subject,
+            body=body,
+            is_html=True,
+            to=recipients["to"],
+            cc=recipients["cc"],
+            bcc=recipients["bcc"],
+            from_email=actor.user_email if actor else None,
+            auth_user=actor.user_login_id if actor else None,
+            auth_password=cred.password if cred else None,
+            trigger=f"Drilling Report #{instance.drilling_dtl_id} {label}",
+            trigger_code=f"drilling_report.{event_type.lower()}",
+            sent_by_user_id=actor_user_id,
+        )
 
     @action(detail=True, methods=["post"], url_path="finalize")
     def finalize(self, request, pk=None):
-        return self._do_transition(request, pk, approvals.can_finalize, approvals.finalize, "finalize")
+        return self._do_transition(
+            request, pk, approvals.can_finalize, approvals.finalize, "finalize",
+            notify_event=MailRecipientMapping.EVENT_FINALIZE,
+        )
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
-        return self._do_transition(request, pk, approvals.can_approve, approvals.approve, "approve")
+        return self._do_transition(
+            request, pk, approvals.can_approve, approvals.approve, "approve",
+            notify_event=MailRecipientMapping.EVENT_APPROVE,
+        )
 
     @action(detail=True, methods=["post"], url_path="reject")
     def reject(self, request, pk=None):
-        return self._do_transition(request, pk, approvals.can_reject, approvals.reject, "reject")
+        return self._do_transition(
+            request, pk, approvals.can_reject, approvals.reject, "reject",
+            notify_event=MailRecipientMapping.EVENT_REJECT,
+        )
 
     @action(detail=True, methods=["post"], url_path="revise-self")
     def revise_self(self, request, pk=None):
+        # No mail — the approver is just reopening the record for their own
+        # editing, it hasn't moved to anyone else.
         return self._do_transition(request, pk, approvals.can_revise_self, approvals.revise_self, "revise_self")
 
     @action(detail=True, methods=["post"], url_path="revise-previous")
     def revise_previous(self, request, pk=None):
         note = request.data.get("note")
         apply_fn = functools.partial(approvals.revise_previous, note=note)
-        return self._do_transition(request, pk, approvals.can_revise_previous, apply_fn, "revise_previous")
+        return self._do_transition(
+            request, pk, approvals.can_revise_previous, apply_fn, "revise_previous",
+            notify_event=MailRecipientMapping.EVENT_REVISE_PREVIOUS,
+        )

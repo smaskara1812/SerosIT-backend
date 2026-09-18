@@ -19,6 +19,7 @@ from .models import (
     MstBusinessSystem,
     MailAlertDtl,
     MailAlertToUser,
+    MailRecipientMapping,
     MstApprovalCode,
     MstCompetency,
     MstContactExposureType,
@@ -103,6 +104,7 @@ class MstDepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstDepartment
         fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
 class MstCostCentreTypeSerializer(serializers.ModelSerializer):
@@ -1044,9 +1046,25 @@ class MailAlertDtlSerializer(serializers.ModelSerializer):
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
+_ADDRESSEE_TYPE_LABELS = {"T": "To", "C": "Cc", "B": "Bcc"}
+
+
+def _mail_alert_to_user_label(entry):
+    """'AlertName — email@x.com (To)' — the same combined label everywhere
+    this table shows up (its own list, and anywhere else it's picked by
+    email alone, which is ambiguous since the same address can appear
+    under several different alerts/addressee types)."""
+    if entry is None:
+        return ""
+    alert_name = entry.alert.alert_name if entry.alert_id else ""
+    type_label = _ADDRESSEE_TYPE_LABELS.get(entry.addressee_type, entry.addressee_type or "")
+    return f"{alert_name} — {entry.email_addr} ({type_label})"
+
+
 class MailAlertToUserSerializer(serializers.ModelSerializer):
     alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
     emp_name = serializers.SerializerMethodField()
+    display_label = serializers.SerializerMethodField()
 
     class Meta:
         model = MailAlertToUser
@@ -1055,6 +1073,25 @@ class MailAlertToUserSerializer(serializers.ModelSerializer):
 
     def get_emp_name(self, obj):
         return str(obj.emp) if obj.emp_id else ""
+
+    def get_display_label(self, obj):
+        return _mail_alert_to_user_label(obj)
+
+
+class MailRecipientMappingSerializer(serializers.ModelSerializer):
+    approval_code_name = serializers.CharField(source="approval_code.approval_code", read_only=True, default="")
+    event_type_display = serializers.CharField(source="get_event_type_display", read_only=True, default="")
+    mail_alert_to_user_email = serializers.CharField(source="mail_alert_to_user.email_addr", read_only=True, default="")
+    mail_alert_to_user_type = serializers.CharField(source="mail_alert_to_user.addressee_type", read_only=True, default="")
+    mail_alert_to_user_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MailRecipientMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_mail_alert_to_user_label(self, obj):
+        return _mail_alert_to_user_label(obj.mail_alert_to_user)
 
 
 class ItAccessoryHolderSerializer(serializers.ModelSerializer):

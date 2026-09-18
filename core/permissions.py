@@ -76,6 +76,10 @@ _ACTION_PERM = {
     "destroy": "delete",
     "check_delete": "view",
     "export": "export",
+    # Drilling Report's per-record CSV (method name export_one, since the
+    # collection-level bulk /export/ already owns the plain "export" action
+    # name) — same Export permission flag as the bulk export, not "view".
+    "export_one": "export",
     "mark_scrap": "edit",
     "unscrap": "edit",
     "mark_lost": "edit",

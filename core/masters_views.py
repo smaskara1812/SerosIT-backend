@@ -107,6 +107,7 @@ from .models import (
     MstBusinessSystem,
     MailAlertDtl,
     MailAlertToUser,
+    MailRecipientMapping,
     MstApprovalCode,
 )
 from .masters_serializers import (
@@ -130,6 +131,7 @@ from .masters_serializers import (
     MstBusinessSystemSerializer,
     MailAlertDtlSerializer,
     MailAlertToUserSerializer,
+    MailRecipientMappingSerializer,
     MstApprovalCodeSerializer,
     MstCompetencySerializer,
     MstContinentSerializer,
@@ -673,11 +675,32 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     search_fields = ["email_addr", "alert__alert_name"]
 
 
+class MailRecipientMappingViewSet(BaseMasterViewSet):
+    queryset = MailRecipientMapping.objects.select_related("approval_code", "mail_alert_to_user", "mail_alert_to_user__alert").all()
+    serializer_class = MailRecipientMappingSerializer
+    entity_key = "masters.mail_recipient_mappings"
+    name_field = "mail_recipient_mapping_id"
+    filterable_fields = ["approval_code", "event_type"]
+    search_fields = ["approval_code__approval_code", "mail_alert_to_user__email_addr"]
+
+    def label_for(self, instance):
+        # No plain name_field — an FK-combo row (approval code + event +
+        # recipient), same reasoning as BaseMasterViewSet.label_for's own
+        # docstring. The bare PK int would otherwise reach audit.record_action
+        # as record_label and crash there (str-only slicing).
+        return (
+            f"{instance.approval_code.approval_code} / {instance.get_event_type_display()} "
+            f"→ {instance.mail_alert_to_user.email_addr}"
+        )
+
+
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):
     queryset = MstEmailNotificationType.objects.all()
     serializer_class = MstEmailNotificationTypeSerializer
     entity_key = "masters.email_notification_types"
     name_field = "en_type_name"
+    active_field = "en_type_active"
+    search_fields = ["en_type_name"]
 
 
 class MstApprovalCodeViewSet(BaseMasterViewSet):
@@ -686,9 +709,11 @@ class MstApprovalCodeViewSet(BaseMasterViewSet):
     entity_key = "masters.approval_codes"
     name_field = "approval_code"
     active_field = "approval_active"
+    reference_checks = [
+        ("mail_recipient_mappings", "Mail Recipient Mapping"),
+        ("approver_mappings", "Approver Mapping"),
+    ]
     search_fields = ["approval_code", "approval_desc"]
-    active_field = "en_type_active"
-    search_fields = ["en_type_name"]
 
 
 class MstOperatorViewSet(BaseMasterViewSet):
@@ -724,7 +749,19 @@ class MstRigViewSet(BaseMasterViewSet):
     entity_key = "masters.rigs"
     name_field = "rig_name"
     active_field = "rig_active"
-    reference_checks = [("cost_centres", "Cost Centres")]
+    reference_checks = [
+        ("cost_centres", "Cost Centres"),
+        ("mstuserrigmapping_set", "User Rig Mapping"),
+        ("site_mappings", "Rig Site Mapping"),
+        ("projectcontractdtl_set", "Project Contract Details"),
+        ("drilling_hdrs", "Drilling Information"),
+        ("projectdrillingrate_set", "Project Drilling Rates"),
+        ("mstdrillingworkshift_set", "Drilling Work Shift"),
+        ("drilling_dtls", "Drilling Report"),
+        ("incidents", "Incidents"),
+        ("hazard_cards", "Hazard Cards"),
+        ("approver_mapping_dtls", "Approver Mapping Details"),
+    ]
     search_fields = ["rig_name", "rig_short_name"]
 
 
@@ -742,6 +779,7 @@ class MstCompetencyViewSet(BaseMasterViewSet):
     serializer_class = MstCompetencySerializer
     entity_key = "masters.competency"
     name_field = "competency_name"
+    active_field = "active"
     search_fields = ["competency_name"]
 
 
@@ -760,6 +798,7 @@ class MstDepartmentViewSet(BaseMasterViewSet):
     entity_key = "masters.departments"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "dept_name"
+    active_field = "dept_active"
     reference_checks = [
         ("competencies", "Competency"),
         ("users", "Users"),
@@ -776,7 +815,9 @@ class MstDepartmentViewSet(BaseMasterViewSet):
     # combobox can tell from `count` whether it's safe to preload in full.
 
     def get_queryset(self):
-        qs = self.queryset.order_by(self.name_field)
+        # super() applies active_field/search/ordering the normal way — this
+        # only adds the ?ids= narrowing on top, same as before.
+        qs = super().get_queryset()
         ids = self.request.query_params.get("ids")
         if ids:
             qs = qs.filter(dept_id__in=[i for i in ids.split(",") if i.isdigit()])
@@ -788,7 +829,19 @@ class MstFsCategoryViewSet(BaseMasterViewSet):
     serializer_class = MstFsCategorySerializer
     entity_key = "masters.fs_categories"
     name_field = "fs_category_name"
-    reference_checks = [("ranks", "Ranks")]
+    reference_checks = [
+        ("ranks", "Ranks"),
+        ("jobdescriptionhdr_set", "Job Descriptions"),
+        ("traveleligibility_set", "Travel Eligibility"),
+        ("reportingstructure_set", "Reporting Structure"),
+        ("mstuserfscatgmapping_set", "User FS Category Mapping"),
+        ("rig_type_mappings", "FS Category To Rig Type Mapping"),
+        ("serv_subtype_mappings", "FS Category To Service Subtype Mapping"),
+        ("nat_emp_type_mappings", "Nationality To Employee Type Mapping"),
+        ("reliever_mappings", "Crew Change Reliever Mapping"),
+        ("crew_exceptions", "Rig Crew Exception"),
+        ("schedule_exceptions", "Crew Schedule Exception"),
+    ]
     search_fields = ["fs_category_name"]
 
 
@@ -797,6 +850,21 @@ class MstRankViewSet(BaseMasterViewSet):
     serializer_class = MstRankSerializer
     entity_key = "masters.ranks"
     name_field = "rank_name"
+    # ReportingStructure.rank/reporting_rank are declared related_name="+"
+    # (no reverse accessor at all), so they can't be checked here — a
+    # delete blocked only by ReportingStructure still falls back to the
+    # generic ProtectedError message rather than naming it specifically.
+    reference_checks = [
+        ("jd_headers", "Job Descriptions"),
+        ("traveleligibility_set", "Travel Eligibility"),
+        ("reliever_mappings_as_rank", "Crew Change Reliever Mapping (Rank)"),
+        ("reliever_mappings_as_reliever", "Crew Change Reliever Mapping (Reliever Rank)"),
+        ("crew_exceptions", "Rig Crew Exception"),
+        ("schedule_exceptions", "Crew Schedule Exception"),
+        ("incidents", "Incidents"),
+        ("incidents_as_reporter", "Incidents (Reported By Rank)"),
+        ("hazard_cards", "Hazard Cards"),
+    ]
     search_fields = ["rank_name", "rank_abrv"]
 
     def get_queryset(self):
@@ -1033,6 +1101,7 @@ class MstHazardTypeViewSet(BaseMasterViewSet):
     serializer_class = MstHazardTypeSerializer
     entity_key = "masters.hazard_types"
     name_field = "haz_type_name"
+    active_field = "haz_type_active"
     search_fields = ["haz_type_name"]
 
 
@@ -1124,10 +1193,14 @@ class MstInterviewerViewSet(BaseMasterViewSet):
     queryset = MstInterviewer.objects.select_related("user", "department").all()
     serializer_class = MstInterviewerSerializer
     entity_key = "masters.interviewer_mapping"
+    active_field = "active"
     search_fields = ["user__user_name", "user__user_login_id", "department__dept_dispname"]
 
     def get_queryset(self):
-        return self.queryset.order_by("department__dept_dispname")
+        # Own ordering (no plain name_field on this FK-combo row) — but
+        # still needs active_field applied, same as super().get_queryset()
+        # would do for a master that could use its own ordering logic.
+        return self._apply_active_filter(self.queryset).order_by("department__dept_dispname")
 
     def label_for(self, instance):
         return f"{instance.department.dept_dispname} — {instance.user.user_name}"
@@ -1234,10 +1307,11 @@ class NationalityToEmpTypeMappingViewSet(BaseMasterViewSet):
     queryset = NationalityToEmpTypeMapping.objects.select_related("fs_category", "emp_type").all()
     serializer_class = NationalityToEmpTypeMappingSerializer
     entity_key = "masters.nationality_to_emp_type_mapping"
+    active_field = "active"
     search_fields = ["fs_category__fs_category_name", "emp_type__emp_type_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("fs_category__fs_category_name", "nationality")
+        return self._apply_active_filter(self.queryset).order_by("fs_category__fs_category_name", "nationality")
 
     def label_for(self, instance):
         return f"{instance.fs_category.fs_category_name} — {instance.nationality} — {instance.emp_type.emp_type_name}"
@@ -1247,10 +1321,11 @@ class CrewChangeRelieverMappingViewSet(BaseMasterViewSet):
     queryset = CrewChangeRelieverMapping.objects.select_related("fs_category", "rank", "reliever_rank").all()
     serializer_class = CrewChangeRelieverMappingSerializer
     entity_key = "masters.crew_change_reliever_mapping"
+    active_field = "active"
     search_fields = ["rank__rank_name", "reliever_rank__rank_name"]
 
     def get_queryset(self):
-        return self.queryset.order_by("rank__rank_name")
+        return self._apply_active_filter(self.queryset).order_by("rank__rank_name")
 
     def label_for(self, instance):
         return f"{instance.rank.rank_name} — {instance.reliever_rank.rank_name}"
@@ -1338,7 +1413,15 @@ class MstCompanyViewSet(BaseMasterViewSet):
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_name"
     active_field = "company_active"
-    reference_checks = [("cost_centre_mappings", "Cost Centre To Company Mapping"), ("subsidiaries", "Companies")]
+    reference_checks = [
+        ("cost_centre_mappings", "Cost Centre To Company Mapping"),
+        ("subsidiaries", "Companies"),
+        ("location_mappings", "Company To Location Mapping"),
+        ("rig_site_mappings", "Rig Site Mapping"),
+        ("owned_it_assets", "IT Assets (Owned)"),
+        ("held_it_assets", "IT Assets (Current Holder)"),
+        ("it_asset_holdings", "IT Asset Holders"),
+    ]
     search_fields = ["company_name", "company_abrv", "company_code"]
 
 
@@ -1511,6 +1594,7 @@ class MstDrillingRateViewSet(BaseMasterViewSet):
     serializer_class = MstDrillingRateSerializer
     entity_key = "masters.drilling_rates"
     name_field = "rate_code"
+    active_field = "rate_active"
     reference_checks = [("rate_usages", "Project Drilling Rates")]
     search_fields = ["rate_code", "rate_description"]
 
@@ -1713,6 +1797,7 @@ class MstItAssetMfgViewSet(BaseMasterViewSet):
     entity_key = "masters.it_asset_mfgs"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_mfg_name"
+    active_field = "it_asset_mfg_active"
     reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
     search_fields = ["it_asset_mfg_name"]
 
@@ -1731,6 +1816,7 @@ class MstItAssetModelViewSet(BaseMasterViewSet):
     entity_key = "masters.it_asset_models"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_model_name"
+    active_field = "it_asset_model_active"
     reference_checks = [("assets", "IT Assets")]
     search_fields = ["it_asset_model_name"]
 
@@ -1757,6 +1843,7 @@ class MstxVendorViewSet(BaseMasterViewSet):
     entity_key = "masters.vendors"
     permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vendor_name"
+    active_field = "vendor_active"
     reference_checks = [("it_assets", "IT Assets")]
     search_fields = ["vendor_name"]
 

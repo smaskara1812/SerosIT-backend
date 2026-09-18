@@ -252,8 +252,15 @@ else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "email.essar.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "25"))
+# The shared "Oilfield Services" fallback account (Mst_Business_System,
+# Business_System_id=6) — core/mailer.py only reaches for this when a
+# per-user send (auth'd as whoever performed the action) is unavailable or
+# fails; it is never the primary path.
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False") == "True"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@seros.in")
+# From: address used only on the fallback path above — the relay enforces
+# that From must match whoever authenticated, so this must be the fallback
+# account's own address, confirmed against the real relay.
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "eosil.autoalerts@essar.com")
