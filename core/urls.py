@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
+from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -250,6 +251,12 @@ urlpatterns = [
     path("drilling/rig-options/", drilling_views.rig_options_api, name="drilling_rig_options"),
     path("drilling/resolve-well/", drilling_dtl_views.resolve_well_api, name="drilling_resolve_well"),
     path("drilling/my-rigs/", drilling_dtl_views.my_rigs_api, name="drilling_my_rigs"),
+    path("drilling/performance-dashboard/", PerformanceDashboardView.as_view(), name="drilling_performance_dashboard"),
+    path(
+        "drilling/performance-dashboard/export/",
+        PerformanceDashboardExportView.as_view(),
+        name="drilling_performance_dashboard_export",
+    ),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", views.me, name="me"),

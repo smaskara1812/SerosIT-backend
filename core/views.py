@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from . import audit as _audit
-from .auth_backend import _sha256
+from .auth_backend import _fetch_mst_user, _sha256
 from .models import (
     EmailLog,
     SysAuditLog,
@@ -78,10 +78,13 @@ def logout_api(request):
 @permission_classes([IsAuthenticated])
 def me(request):
     access = get_user_access(request)
+    mst_user = _fetch_mst_user(request.user.username)
+    display_name = (mst_user.user_name or "").strip() if mst_user else ""
     return Response(
         {
             "id": request.user.id,
             "username": request.user.username,
+            "display_name": display_name or request.user.username,
             "is_app_admin": access["is_admin"],
             "perms": access["perms"],
         }
