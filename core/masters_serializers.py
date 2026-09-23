@@ -97,6 +97,8 @@ from .models import (
     MstBussCertIssueAuthority,
     MstBussCertType,
     MstBussCert,
+    RigCert,
+    RigCertSchedule,
 )
 
 
@@ -1216,3 +1218,47 @@ class MstApprovalCodeSerializer(serializers.ModelSerializer):
         model = MstApprovalCode
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class RigCertSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    buss_cert_name = serializers.CharField(source="buss_cert.buss_cert_name", read_only=True, default="")
+    buss_cert_issue_authority_name = serializers.CharField(
+        source="buss_cert_issue_authority.buss_cert_issue_authority", read_only=True, default=""
+    )
+    # The legacy form's read-only "Validity" box — always just the linked
+    # certificate's own text, read live off that FK rather than stored here.
+    validity = serializers.CharField(source="buss_cert.buss_cert_validity", read_only=True, default="")
+    certificate_url = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RigCert
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_certificate_url(self, obj):
+        if not obj.certificate_path:
+            return None
+        from django.conf import settings
+
+        request = self.context.get("request")
+        url = settings.MEDIA_URL + obj.certificate_path
+        return request.build_absolute_uri("/" + url) if request else url
+
+    def get_display_name(self, obj):
+        return f"{obj.rig.rig_name} — {obj.buss_cert.buss_cert_name} ({obj.certificate_no})"
+
+
+class RigCertScheduleSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig_cert.rig.rig_name", read_only=True, default="")
+    rig_cert_display = serializers.SerializerMethodField()
+    schedule_type_display = serializers.CharField(source="get_schedule_type_display", read_only=True)
+
+    class Meta:
+        model = RigCertSchedule
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_rig_cert_display(self, obj):
+        return str(obj.rig_cert)

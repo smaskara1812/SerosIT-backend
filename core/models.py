@@ -3455,3 +3455,73 @@ class ApproverMappingDtl(models.Model):
 
     class Meta:
         db_table = "approver_mapping_dtl"
+
+
+# ── QHSE ──────────────────────────────────────────────────────────────────
+
+
+class RigCert(models.Model):
+    """QHSE → Rig Certificates. Rebuild of legacy eos_Buss_Cert_Dtl — a
+    certificate (Mst_Buss_Cert) issued to a rig by an authority
+    (Mst_Buss_Cert_Issue_Authority), with its own certificate number, issue
+    date, optional expiry, remark, and uploaded certificate file.
+
+    The legacy form's read-only "Validity" field isn't stored here — it's
+    always just the linked certificate's own Buss_Cert_Validity text, so
+    it's read live off that FK (RigCertSerializer.validity) rather than
+    duplicated onto every certificate row."""
+
+    rig_cert_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="rig_certs")
+    buss_cert = models.ForeignKey(
+        MstBussCert, db_column="buss_cert_id", on_delete=models.PROTECT, related_name="rig_certs"
+    )
+    buss_cert_issue_authority = models.ForeignKey(
+        MstBussCertIssueAuthority,
+        db_column="buss_cert_issue_auth_id",
+        on_delete=models.PROTECT,
+        related_name="rig_certs",
+    )
+    certificate_no = models.CharField(max_length=30)
+    cert_date = models.DateField()
+    valid_till = models.DateField(null=True, blank=True)
+    remark = models.CharField(max_length=75, null=True, blank=True)
+    certificate_path = models.CharField(max_length=150, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_cert"
+
+    def __str__(self):
+        return f"{self.rig.rig_name} — {self.buss_cert.buss_cert_name} ({self.certificate_no})"
+
+
+class RigCertSchedule(models.Model):
+    """QHSE → Rig Certificate Schedule. Rebuild of legacy
+    eos_Buss_Cert_Schedule_Dtl — a survey scheduled against a Rig
+    Certificate (Annual or Intermediate), with an optional completion date
+    once it's done."""
+
+    SCHEDULE_TYPE_CHOICES = [("A", "Annual Survey"), ("I", "Intermediate Survey")]
+
+    rig_cert_schedule_id = models.AutoField(primary_key=True)
+    rig_cert = models.ForeignKey(
+        RigCert, db_column="rig_cert_id", on_delete=models.PROTECT, related_name="schedules"
+    )
+    scheduled_dt = models.DateField()
+    schedule_type = models.CharField(max_length=1, choices=SCHEDULE_TYPE_CHOICES)
+    remark = models.CharField(max_length=75, null=True, blank=True)
+    completion_dt = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_cert_schedule"
+
+    def __str__(self):
+        return f"{self.rig_cert} — {self.get_schedule_type_display()} ({self.scheduled_dt})"

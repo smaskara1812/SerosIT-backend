@@ -1,16 +1,15 @@
 import calendar
-import csv
 from datetime import date
 from decimal import Decimal
 
 from django.db.models import Q, Sum
 from django.db.models.functions import TruncMonth
-from django.http import HttpResponse
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import DrillingDtl, MstFinancialYear
 from .permissions import HasMenuPermission
+from .xlsx_export import build_xlsx_response
 
 NUMERIC_FIELDS = [
     "received_diesel",
@@ -26,7 +25,7 @@ NUMERIC_FIELDS = [
     "drilling_meterage",
 ]
 
-CSV_HEADER = [
+EXPORT_COLUMNS = [
     "Rig", "Well", "Period",
     "Received Diesel", "Consumed Diesel", "Received Water", "Generated Water", "Consumed Water",
     "Operating Hrs", "Standby Hrs", "Service Hrs", "Repair Rate Hrs", "Zero Rate Hrs",
@@ -183,24 +182,37 @@ def _paged_response(request):
     offset = (page - 1) * page_size
 
     if record_status == "monthly":
-        grouped = _monthly_grouped(qs)
-        count = grouped.count()
-        rows = [_monthly_row(r) for r in grouped[offset : offset + page_size]]
+        rows = [_monthly_row(r) for r in _monthly_grouped(qs)[offset : offset + page_size]]
+        has_more = _monthly_grouped(qs)[offset + page_size : offset + page_size + 1].exists()
     else:
         daily_qs = qs.select_related("drilling_hdr", "rig").order_by("rig__rig_name", "drilling_hdr__location", "-drilling_dtl_dt")
-        count = qs.count()
         rows = [_daily_row(d) for d in daily_qs[offset : offset + page_size]]
+        has_more = daily_qs[offset + page_size : offset + page_size + 1].exists()
 
-    totals = _numeric_totals(qs)
-    totals["efficiency"] = _avg_efficiency(record_status, qs)
+    # count/totals are full-range aggregates (a full COUNT, and — for
+    # totals["efficiency"] — pulling every matching row into Python to
+    # average) that cost the same whether the filtered result is 50 rows or
+    # 50,000. Redoing that work on every scroll-triggered page fetch would
+    # mean paying it again on every page, so it only runs once, on the
+    # first page; has_more above (a cheap "does one more row exist" check)
+    # is what drives every later page instead. The frontend keeps the
+    # page-1 totals/count across subsequent page merges.
+    if page == 1:
+        count = _monthly_grouped(qs).count() if record_status == "monthly" else qs.count()
+        totals = _numeric_totals(qs) if count else None
+        if totals is not None:
+            totals["efficiency"] = _avg_efficiency(record_status, qs)
+    else:
+        count = None
+        totals = None
 
     return {
         "rows": rows,
-        "totals": totals if count else None,
+        "totals": totals,
         "count": count,
         "page": page,
         "page_size": page_size,
-        "has_more": offset + len(rows) < count,
+        "has_more": has_more,
     }
 
 
@@ -227,9 +239,9 @@ class PerformanceDashboardView(APIView):
 
 
 class PerformanceDashboardExportView(APIView):
-    """Full (unpaginated) CSV of the same filtered result — this is a file
-    download, not something rendered as DOM rows, so the row-count safety
-    concern that caps the JSON endpoint doesn't apply here."""
+    """Full (unpaginated) export of the same filtered result — this is a
+    file download, not something rendered as DOM rows, so the row-count
+    safety concern that caps the JSON endpoint doesn't apply here."""
 
     entity_key = "drilling.performance_dashboard"
     permission_classes = [HasMenuPermission]
@@ -242,40 +254,31 @@ class PerformanceDashboardExportView(APIView):
     def get(self, request):
         record_status = request.query_params.get("record_status", "daily")
         qs = _filtered_queryset(request)
-
-        response = HttpResponse(content_type="text/csv")
-        # The frontend's <a download> attribute wins over this in normal use,
-        # but this still matters if the endpoint is ever hit directly (a new
-        # tab, curl, an API client) — keep the two names in sync.
-        response["Content-Disposition"] = f'attachment; filename="performance-dashboard-{date.today().isoformat()}.csv"'
-        writer = csv.writer(response)
-        writer.writerow(CSV_HEADER)
+        filename = f"performance-dashboard-{date.today().isoformat()}.xlsx"
 
         if qs is None:
-            return response
+            return build_xlsx_response(filename, "Performance Dashboard", [], EXPORT_COLUMNS, [])
 
         if record_status == "monthly":
-            rows = (_monthly_row(r) for r in _monthly_grouped(qs))
+            data_rows = [_monthly_row(r) for r in _monthly_grouped(qs)]
         else:
             daily_qs = qs.select_related("drilling_hdr", "rig").order_by("rig__rig_name", "drilling_hdr__location", "-drilling_dtl_dt")
-            rows = (_daily_row(d) for d in daily_qs)
+            data_rows = [_daily_row(d) for d in daily_qs]
 
-        row_count = 0
-        for r in rows:
-            row_count += 1
-            writer.writerow(
-                [
-                    r["rig"], r["well"], r["period"],
-                    r["received_diesel"], r["consumption_diesel"], r["received_water"], r["generated_water"], r["consumption_water"],
-                    r["operating_hrs"], r["standby_hrs"], r["repair_service_hrs"], r["repair_rate_hrs"], r["zero_rate_hrs"],
-                    r["drilling_meterage"], r["efficiency"],
-                ]
-            )
+        rows = [
+            [
+                r["rig"], r["well"], r["period"],
+                r["received_diesel"], r["consumption_diesel"], r["received_water"], r["generated_water"], r["consumption_water"],
+                r["operating_hrs"], r["standby_hrs"], r["repair_service_hrs"], r["repair_rate_hrs"], r["zero_rate_hrs"],
+                r["drilling_meterage"], r["efficiency"],
+            ]
+            for r in data_rows
+        ]
 
-        if row_count:
+        if rows:
             totals = _numeric_totals(qs)
             totals["efficiency"] = _avg_efficiency(record_status, qs)
-            writer.writerow(
+            rows.append(
                 [
                     "Total", "", "",
                     totals["received_diesel"], totals["consumption_diesel"], totals["received_water"], totals["generated_water"], totals["consumption_water"],
@@ -283,4 +286,4 @@ class PerformanceDashboardExportView(APIView):
                     totals["drilling_meterage"], totals["efficiency"],
                 ]
             )
-        return response
+        return build_xlsx_response(filename, "Performance Dashboard", [], EXPORT_COLUMNS, rows, bold_last_row=bool(rows))

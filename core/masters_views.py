@@ -109,6 +109,8 @@ from .models import (
     MailAlertToUser,
     MailRecipientMapping,
     MstApprovalCode,
+    RigCert,
+    RigCertSchedule,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -207,6 +209,8 @@ from .masters_serializers import (
     MstBussCertIssueAuthoritySerializer,
     MstBussCertTypeSerializer,
     MstBussCertSerializer,
+    RigCertSerializer,
+    RigCertScheduleSerializer,
 )
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
@@ -2354,3 +2358,76 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         else:
             who = instance.emp or instance.holder_name or "Common"
         return f"{instance.it_asset.it_asset_sr_no} — {who}"
+
+
+class RigCertViewSet(BaseMasterViewSet):
+    queryset = RigCert.objects.select_related("rig", "buss_cert", "buss_cert_issue_authority").all()
+    serializer_class = RigCertSerializer
+    entity_key = "qhse.rig_certificates"
+    search_fields = ["rig__rig_name", "buss_cert__buss_cert_name", "certificate_no"]
+    reference_checks = [("schedules", "Rig Certificate Schedule")]
+
+    def get_queryset(self):
+        return self.queryset.order_by("rig__rig_name", "-cert_date")
+
+    def label_for(self, instance):
+        return str(instance)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
+
+    @action(detail=False, methods=["post"], url_path="upload-certificate")
+    def upload_certificate(self, request):
+        """Save an uploaded certificate file under MEDIA_ROOT, named by the
+        already-picked Rig's id plus a short random suffix. Legacy names
+        this file after the detail row's own id (Buss_Cert_Dtl_Id), but
+        that id doesn't exist yet for a record still being created — same
+        reasoning as MstInterviewerViewSet.upload_sign, which faces the
+        same problem and keys off the already-picked FK instead."""
+        import os
+        import uuid
+
+        from django.conf import settings
+
+        rig_id = request.data.get("rig_id")
+        f = request.FILES.get("file")
+        if not rig_id or not f:
+            return Response({"error": "rig_id and file are required"}, status=400)
+
+        ext = os.path.splitext(f.name)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".pdf"):
+            return Response({"error": "Only JPG, PNG, or PDF files are allowed"}, status=400)
+        if f.size > 10 * 1024 * 1024:
+            return Response({"error": "File exceeds 10 MB limit"}, status=400)
+
+        rel_dir = "rig_certificates"
+        abs_dir = os.path.join(settings.MEDIA_ROOT, rel_dir)
+        os.makedirs(abs_dir, exist_ok=True)
+        filename = f"{rig_id}_{uuid.uuid4().hex[:8]}{ext}"
+        abs_path = os.path.join(abs_dir, filename)
+        with open(abs_path, "wb") as out:
+            for chunk in f.chunks():
+                out.write(chunk)
+        rel_path = f"{rel_dir}/{filename}"
+        url = request.build_absolute_uri(settings.MEDIA_URL + rel_path)
+        return Response({"path": rel_path, "url": url})
+
+
+class RigCertScheduleViewSet(BaseMasterViewSet):
+    queryset = RigCertSchedule.objects.select_related("rig_cert", "rig_cert__rig").all()
+    serializer_class = RigCertScheduleSerializer
+    entity_key = "qhse.rig_certificate_schedule"
+    search_fields = ["rig_cert__rig__rig_name", "rig_cert__certificate_no"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("-scheduled_dt")
+
+    def label_for(self, instance):
+        return str(instance)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx

@@ -4,6 +4,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
+from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
+from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
+from .drilling_daily_data import DrillingDailyDataExportView, DrillingDailyDataView
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -210,6 +213,10 @@ router.register(
     "masters/buss-cert-types", masters_views.MstBussCertTypeViewSet, basename="mst-buss-cert-type"
 )
 router.register("masters/buss-certs", masters_views.MstBussCertViewSet, basename="mst-buss-cert")
+router.register("qhse/rig-certificates", masters_views.RigCertViewSet, basename="rig-cert")
+router.register(
+    "qhse/rig-certificate-schedule", masters_views.RigCertScheduleViewSet, basename="rig-cert-schedule"
+)
 router.register("masters/cert-types", masters_views.MstCertTypeViewSet, basename="mst-cert-type")
 router.register("masters/certs", masters_views.MstCertViewSet, basename="mst-cert")
 router.register("masters/qualifications", masters_views.MstQualificationViewSet, basename="mst-qualification")
@@ -256,6 +263,28 @@ urlpatterns = [
         "drilling/performance-dashboard/export/",
         PerformanceDashboardExportView.as_view(),
         name="drilling_performance_dashboard_export",
+    ),
+    path("drilling/operations-analytics/", OperationsAnalyticsView.as_view(), name="drilling_operations_analytics"),
+    path(
+        "drilling/operations-analytics/export/",
+        OperationsAnalyticsExportView.as_view(),
+        name="drilling_operations_analytics_export",
+    ),
+    path(
+        "drilling/drilling-tripping-analysis/",
+        DrillingTrippingAnalysisView.as_view(),
+        name="drilling_tripping_analysis",
+    ),
+    path(
+        "drilling/drilling-tripping-analysis/export/",
+        DrillingTrippingAnalysisExportView.as_view(),
+        name="drilling_tripping_analysis_export",
+    ),
+    path("drilling/drilling-daily-data/", DrillingDailyDataView.as_view(), name="drilling_daily_data"),
+    path(
+        "drilling/drilling-daily-data/export/",
+        DrillingDailyDataExportView.as_view(),
+        name="drilling_daily_data_export",
     ),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
