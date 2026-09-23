@@ -217,6 +217,7 @@ router.register("qhse/rig-certificates", masters_views.RigCertViewSet, basename=
 router.register(
     "qhse/rig-certificate-schedule", masters_views.RigCertScheduleViewSet, basename="rig-cert-schedule"
 )
+router.register("qhse/activities", masters_views.MstActivityViewSet, basename="mst-activity")
 router.register("masters/cert-types", masters_views.MstCertTypeViewSet, basename="mst-cert-type")
 router.register("masters/certs", masters_views.MstCertViewSet, basename="mst-cert")
 router.register("masters/qualifications", masters_views.MstQualificationViewSet, basename="mst-qualification")

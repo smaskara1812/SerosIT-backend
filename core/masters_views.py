@@ -111,6 +111,7 @@ from .models import (
     MstApprovalCode,
     RigCert,
     RigCertSchedule,
+    MstActivity,
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
@@ -211,6 +212,7 @@ from .masters_serializers import (
     MstBussCertSerializer,
     RigCertSerializer,
     RigCertScheduleSerializer,
+    MstActivitySerializer,
 )
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
@@ -2368,6 +2370,13 @@ class RigCertViewSet(BaseMasterViewSet):
     reference_checks = [("schedules", "Rig Certificate Schedule")]
 
     def get_queryset(self):
+        # No plain name_field on this FK-combo row (same as MstInterviewer)
+        # — rig__rig_name stands in for "Name" sort, since that's the
+        # leading component of display_name, the thing the frontend's
+        # A–Z/Z–A toggle sends ?ordering=name/-name for.
+        ordering = self.request.query_params.get("ordering")
+        if ordering == "-name":
+            return self.queryset.order_by("-rig__rig_name", "-cert_date")
         return self.queryset.order_by("rig__rig_name", "-cert_date")
 
     def label_for(self, instance):
@@ -2422,7 +2431,15 @@ class RigCertScheduleViewSet(BaseMasterViewSet):
     search_fields = ["rig_cert__rig__rig_name", "rig_cert__certificate_no"]
 
     def get_queryset(self):
-        return self.queryset.order_by("-scheduled_dt")
+        # Same reasoning as RigCertViewSet.get_queryset — rig_cert__rig__rig_name
+        # stands in for "Name" sort here too. The frontend's sort toggle
+        # defaults to 'name' and omits ?ordering= entirely in that state
+        # (see MasterCrudPage.buildFilterParams), so the no-param case has
+        # to mean ascending too, matching the button's own default label.
+        ordering = self.request.query_params.get("ordering")
+        if ordering == "-name":
+            return self.queryset.order_by("-rig_cert__rig__rig_name", "-scheduled_dt")
+        return self.queryset.order_by("rig_cert__rig__rig_name", "-scheduled_dt")
 
     def label_for(self, instance):
         return str(instance)
@@ -2431,3 +2448,12 @@ class RigCertScheduleViewSet(BaseMasterViewSet):
         ctx = super().get_serializer_context()
         ctx["request"] = self.request
         return ctx
+
+
+class MstActivityViewSet(BaseMasterViewSet):
+    queryset = MstActivity.objects.all()
+    serializer_class = MstActivitySerializer
+    entity_key = "qhse.activities"
+    name_field = "activity_name"
+    active_field = "activity_active"
+    search_fields = ["activity_name"]

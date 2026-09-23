@@ -3525,3 +3525,37 @@ class RigCertSchedule(models.Model):
 
     def __str__(self):
         return f"{self.rig_cert} — {self.get_schedule_type_display()} ({self.scheduled_dt})"
+
+
+class MstActivity(models.Model):
+    """QHSE → Activity master. Scoped rebuild of legacy Mst_Activity — this
+    app only concerns itself with Oilfield Services rigs, so only the
+    legacy activities extended to Business_System_Id_6 (Oilfield Services)
+    are in scope here (see import_mst_activity.sql). The legacy "Extended
+    to" business-system checkboxes themselves aren't part of this app at
+    all — nothing here needs to pick which business systems an activity
+    applies to, since every row already only applies to this one."""
+
+    ACTIVITY_TYPE_CHOICES = [("I", "Inspection"), ("A", "Activity")]
+    ACTIVITY_NATURE_CHOICES = [("M", "Mandatory"), ("N", "Non Mandatory")]
+    ACTIVITY_LOCATION_CHOICES = [("V", "Vessel"), ("O", "Office"), ("P", "Port"), ("R", "Rig")]
+    YES_NO_CHOICES = [("Y", "Yes"), ("N", "No")]
+
+    activity_id = models.AutoField(primary_key=True)
+    activity_name = models.CharField(max_length=80)
+    activity_type = models.CharField(max_length=1, choices=ACTIVITY_TYPE_CHOICES)
+    activity_nature = models.CharField(max_length=1, choices=ACTIVITY_NATURE_CHOICES)
+    activity_location = models.CharField(max_length=1, choices=ACTIVITY_LOCATION_CHOICES)
+    intimate_vessel = models.CharField(max_length=1, choices=YES_NO_CHOICES)
+    activity_validity_days = models.SmallIntegerField()
+    activity_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_activity"
+
+    def __str__(self):
+        return self.activity_name

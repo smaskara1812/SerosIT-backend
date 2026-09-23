@@ -15,6 +15,7 @@ import os
 from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
@@ -43,10 +44,18 @@ def _cell_value(value):
     # shown matches what the app displays (already localized on read).
     if isinstance(value, datetime.datetime) and value.tzinfo is not None:
         return value.replace(tzinfo=None)
-    # Everything else openpyxl writes natively (date/int/float/str/bool/
-    # None) passes through; anything unexpected (Decimal, etc.) is
-    # stringified so the write never raises on an unrecognized type.
-    if value is None or isinstance(value, (str, int, float, bool, datetime.date, datetime.datetime)):
+    # A free-text field can carry raw control characters (e.g. pasted from
+    # a legacy system, or literal \x0b/\x0c in someone's typed remarks) that
+    # are illegal in XML 1.0 — openpyxl's own writer rejects them outright
+    # (IllegalCharacterError) instead of dropping them, so they're stripped
+    # here before the value ever reaches openpyxl. Tab/newline/CR (\t \n
+    # \r) are valid XML and left alone.
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    # Everything else openpyxl writes natively (date/int/float/bool/None)
+    # passes through; anything unexpected (Decimal, etc.) is stringified so
+    # the write never raises on an unrecognized type.
+    if value is None or isinstance(value, (int, float, bool, datetime.date, datetime.datetime)):
         return value
     if isinstance(value, (dict, list)):
         # A JSON-backed field (e.g. SysAuditLog.changes, a PortableJSONField

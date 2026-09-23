@@ -99,6 +99,7 @@ from .models import (
     MstBussCert,
     RigCert,
     RigCertSchedule,
+    MstActivity,
 )
 
 
@@ -1262,3 +1263,14 @@ class RigCertScheduleSerializer(serializers.ModelSerializer):
 
     def get_rig_cert_display(self, obj):
         return str(obj.rig_cert)
+
+
+class MstActivitySerializer(serializers.ModelSerializer):
+    activity_type_display = serializers.CharField(source="get_activity_type_display", read_only=True)
+    activity_nature_display = serializers.CharField(source="get_activity_nature_display", read_only=True)
+    activity_location_display = serializers.CharField(source="get_activity_location_display", read_only=True)
+
+    class Meta:
+        model = MstActivity
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
