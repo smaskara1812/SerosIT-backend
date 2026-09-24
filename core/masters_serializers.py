@@ -20,6 +20,7 @@ from .models import (
     MailAlertDtl,
     MailAlertToUser,
     MailRecipientMapping,
+    NotificationTrigger,
     MstApprovalCode,
     MstCompetency,
     MstContactExposureType,
@@ -1095,6 +1096,15 @@ class MailRecipientMappingSerializer(serializers.ModelSerializer):
 
     def get_mail_alert_to_user_label(self, obj):
         return _mail_alert_to_user_label(obj.mail_alert_to_user)
+
+
+class NotificationTriggerSerializer(serializers.ModelSerializer):
+    alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
+
+    class Meta:
+        model = NotificationTrigger
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
 class ItAccessoryHolderSerializer(serializers.ModelSerializer):

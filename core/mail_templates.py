@@ -68,3 +68,40 @@ def drilling_report_mail(instance, actor, event_type):
   </p>
 </div>"""
     return subject, body
+
+
+def incident_created_mail(instance):
+    """Returns (subject, html_body) for the QHSE Incident Details 'notify
+    on create' mail (NotificationTrigger entity_key
+    'qhse.incident_details' / action 'create', pointed at Mail_Alert_Dtl's
+    Alert_Id 240 — 'Incident Report Added'). Same bordered-table shape as
+    drilling_report_mail, matching the legacy sample mail's own "A New
+    Incident has been Recorded" layout rather than a pixel replica."""
+    rig_name = instance.rig.rig_name if instance.rig_id else (instance.unit_name or "")
+    subject = "Incident Report Added"
+
+    rows = [
+        ("Rig Incident No.", instance.rig_incident_no or ""),
+        ("Incident Date/Time", instance.incident_date.strftime("%d/%m/%Y %H:%M")),
+        ("Nature of Incident", instance.incident_type.incident_type),
+        ("Rig", rig_name),
+        ("Well No.", instance.well_no or ""),
+        ("Reported By", instance.reported_by or ""),
+    ]
+    rows_html = "".join(
+        "<tr>"
+        f'<td style="padding:6px 12px;border:1px solid #ccc;font-weight:bold;background:#f5f5f5;white-space:nowrap;">{escape(str(label))}</td>'
+        f'<td style="padding:6px 12px;border:1px solid #ccc;">{escape(str(value))}</td>'
+        "</tr>"
+        for label, value in rows
+    )
+
+    body = f"""<div style="font-family:Georgia,'Times New Roman',serif;color:#222;">
+  <p style="text-align:center;font-weight:bold;font-size:16px;margin:16px 0 4px;">A New Incident has been Recorded</p>
+  <table style="border-collapse:collapse;margin:0 auto;">{rows_html}</table>
+  <p style="text-align:center;color:#666;font-size:12px;margin-top:24px;">
+    * <strong>This is an automated mail. Please do not reply.</strong><br>
+    This message was sent automatically by SerosIT.
+  </p>
+</div>"""
+    return subject, body

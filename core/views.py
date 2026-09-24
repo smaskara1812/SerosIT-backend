@@ -529,6 +529,7 @@ def admin_email_log_list_api(request):
             "success",
             "used_fallback",
             "error",
+            "attachment_names",
             "sent_by_user_id",
             "sent_dt",
         )

@@ -108,6 +108,7 @@ from .models import (
     MailAlertDtl,
     MailAlertToUser,
     MailRecipientMapping,
+    NotificationTrigger,
     MstApprovalCode,
     RigCert,
     RigCertSchedule,
@@ -135,6 +136,7 @@ from .masters_serializers import (
     MailAlertDtlSerializer,
     MailAlertToUserSerializer,
     MailRecipientMappingSerializer,
+    NotificationTriggerSerializer,
     MstApprovalCodeSerializer,
     MstCompetencySerializer,
     MstContinentSerializer,
@@ -699,6 +701,21 @@ class MailRecipientMappingViewSet(BaseMasterViewSet):
             f"{instance.approval_code.approval_code} / {instance.get_event_type_display()} "
             f"→ {instance.mail_alert_to_user.email_addr}"
         )
+
+
+class NotificationTriggerViewSet(BaseMasterViewSet):
+    queryset = NotificationTrigger.objects.select_related("alert").all()
+    serializer_class = NotificationTriggerSerializer
+    entity_key = "masters.notification_triggers"
+    name_field = "notification_trigger_id"
+    active_field = "notification_trigger_active"
+    filterable_fields = ["entity_key", "action"]
+    search_fields = ["entity_key", "action", "alert__alert_name"]
+
+    def label_for(self, instance):
+        # No plain name_field — an (entity_key, action) pair, same reasoning
+        # as MailRecipientMappingViewSet.label_for above.
+        return f"{instance.entity_key}.{instance.action} → {instance.alert.alert_name}"
 
 
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):

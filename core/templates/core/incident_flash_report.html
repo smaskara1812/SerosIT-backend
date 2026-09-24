@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 13mm 14mm 13mm 14mm;
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9ca3af; font-family: Arial, Helvetica, sans-serif; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 8.6pt; color: #1f2937; margin: 0; }
+
+  /* ---- Header ---- */
+  .header {
+    display: flex;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1.5px solid #1a3f7a;
+    margin-bottom: 6px;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; width: 100%; }
+  .logo-box img { max-height: 52px; width: auto; display: block; }
+  .company-name { font-size: 15pt; font-weight: 700; color: #1a3f7a; line-height: 1.15; letter-spacing: 0.01em; white-space: nowrap; }
+  .report-title { font-size: 8pt; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.09em; margin-top: 3px; }
+
+  /* ---- Meta strip (Incident No / Rig / Report date) ---- */
+  .meta-strip {
+    display: flex; justify-content: flex-end; gap: 22px;
+    padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #e5e7eb;
+  }
+  .meta-item { text-align: right; }
+  .meta-item .label { display: block; margin-bottom: 1px; }
+  .meta-item .value { font-size: 8.6pt; font-weight: 600; color: #374151; margin-top: 0; }
+  .meta-item.emphasis .value { color: #1a3f7a; font-weight: 700; }
+
+  /* ---- Section cards ---- */
+  .section { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 14px; margin-bottom: 6px; page-break-inside: avoid; }
+  .section-title {
+    font-size: 7.6pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: #1a3f7a; margin-bottom: 5px; padding-left: 8px; border-left: 3px solid #2563eb;
+  }
+  .label { font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; }
+  .value { font-size: 8.8pt; color: #111827; margin-top: 1px; line-height: 1.32; }
+  .value.empty { color: #c1c7d0; }
+
+  .grid { display: grid; gap: 6px 18px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+
+  /* ---- Severity chips ---- */
+  .chip {
+    display: inline-block; padding: 2px 10px; border-radius: 4px;
+    font-weight: 700; font-size: 8.3pt; border: 1px solid;
+  }
+  .severity-row { display: flex; gap: 28px; align-items: center; }
+  .severity-item .label { margin-bottom: 3px; }
+
+  /* ---- Injury panel ---- */
+  .injury-panel { background: #fffbeb; border: 1px solid #fde68a; }
+  .injury-panel .section-title { color: #b45309; border-left-color: #d97706; }
+  .no-injury-line { font-size: 9pt; color: #6b7280; }
+  .no-injury-line b { color: #111827; }
+
+  /* ---- Numbered causes ---- */
+  .cause-item { display: flex; gap: 7px; margin-bottom: 3px; align-items: flex-start; }
+  .cause-num {
+    flex: none; width: 14px; height: 14px; border-radius: 3px; background: #1a3f7a; color: #fff;
+    font-size: 7pt; font-weight: 700; text-align: center; line-height: 14px;
+  }
+  .cause-text { font-size: 8.8pt; color: #111827; line-height: 1.3; }
+
+  /* ---- Metric cards ---- */
+  .metric-card { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 5px; padding: 6px; text-align: center; }
+  .metric-value { font-size: 13pt; font-weight: 700; color: #1a3f7a; }
+  .metric-label { font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; margin-top: 1px; }
+
+  /* ---- Reported-by footer strip ---- */
+  .reported-by { display: flex; justify-content: space-between; align-items: center; padding-top: 4px; }
+
+  /* ---- Photos page ---- */
+  .photos-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 14px; }
+  .photo-card { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; page-break-inside: avoid; }
+  .photo-card img { width: 100%; height: auto; display: block; }
+  .photo-caption { padding: 6px 10px; font-size: 7.5pt; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo-box">
+      {% if logo_path %}<img src="file://{{ logo_path }}">{% endif %}
+    </div>
+    <div>
+      <div class="company-name">{{ company_name }}</div>
+      <div class="report-title">Incident Flash Report</div>
+    </div>
+  </div>
+</div>
+
+<div class="meta-strip">
+  <div class="meta-item emphasis"><span class="label">Incident No.</span><span class="value">{{ incident.rig_incident_no|default:incident.incident_no }}</span></div>
+  <div class="meta-item"><span class="label">Rig / Unit</span><span class="value">{{ rig_name }}</span></div>
+  <div class="meta-item"><span class="label">Report Date</span><span class="value">{{ report_date_time }}</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Incident Overview</div>
+  <div class="grid grid-3">
+    <div><div class="label">Incident Dt/Time</div><div class="value">{{ incident_date_time }}</div></div>
+    <div><div class="label">Reported Dt/Time</div><div class="value">{{ reported_date_time }}</div></div>
+    <div><div class="label">Well No.</div><div class="value{% if not incident.well_no %} empty{% endif %}">{{ incident.well_no|default:"—" }}</div></div>
+    <div><div class="label">Country</div><div class="value{% if not incident.country %} empty{% endif %}">{{ incident.country.country_name|default:"—" }}</div></div>
+    <div><div class="label">Operator</div><div class="value{% if not incident.operator %} empty{% endif %}">{{ incident.operator.operator_name|default:"—" }}</div></div>
+    <div><div class="label">Nature of Incident</div><div class="value{% if not incident.incident_type %} empty{% endif %}">{{ incident.incident_type.incident_type|default:"—" }}</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Severity</div>
+  <div class="severity-row">
+    <div class="severity-item">
+      <div class="label">Actual</div>
+      <span class="chip" style="color:{{ severity_colors.fg }};background:{{ severity_colors.bg }};border-color:{{ severity_colors.border }}">{{ severity_label|default:"—" }}</span>
+    </div>
+    <div class="severity-item">
+      <div class="label">Potential</div>
+      <span class="chip" style="color:{{ severity_potential_colors.fg }};background:{{ severity_potential_colors.bg }};border-color:{{ severity_potential_colors.border }}">{{ severity_potential_label|default:"—" }}</span>
+    </div>
+  </div>
+</div>
+
+{% if person_injured %}
+<div class="section injury-panel">
+  <div class="section-title">Injury Details</div>
+  <div class="grid grid-3">
+    <div><div class="label">Name</div><div class="value">{{ incident.emp_name|default:"—" }}</div></div>
+    <div><div class="label">Designation</div><div class="value">{{ designation_display|default:"—" }}</div></div>
+    <div><div class="label">Total Experience (Mths)</div><div class="value">{{ incident.total_rig_exp_months|default:"—" }}</div></div>
+    <div><div class="label">Belongs To</div><div class="value">{{ belongs_to_display|default:"—" }}</div></div>
+    <div style="grid-column: span 2"><div class="label">Part(s) of Body Injured</div><div class="value">{{ part_of_body_display|default:"—" }}</div></div>
+  </div>
+</div>
+{% else %}
+<div class="section">
+  <div class="section-title">Injury Details</div>
+  <div class="no-injury-line">No person injured in this incident. Belongs To: <b>{{ belongs_to_display|default:"—" }}</b></div>
+</div>
+{% endif %}
+
+<div class="section">
+  <div class="section-title">Description of Incident</div>
+  <div class="value">{{ incident.incident_descr }}</div>
+</div>
+
+<div class="section">
+  <div class="section-title">Probable Causes of Occurrence</div>
+  {% for cause in probable_causes %}
+  <div class="cause-item">
+    <div class="cause-num">{{ forloop.counter }}</div>
+    <div class="cause-text">{{ cause }}</div>
+  </div>
+  {% empty %}
+  <div class="value empty">—</div>
+  {% endfor %}
+  {% if incident.immediate_cause_descr %}
+  <div style="margin-top:8px">
+    <div class="label">Cause Description</div>
+    <div class="value">{{ incident.immediate_cause_descr }}</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-title">Incident Context</div>
+  <div class="grid grid-3">
+    <div><div class="label">Operation at Time of Incident</div><div class="value{% if not incident.rig_operation %} empty{% endif %}">{{ incident.rig_operation.rig_operation_name|default:"—" }}</div></div>
+    <div><div class="label">Location of Incident</div><div class="value{% if not incident.work_location %} empty{% endif %}">{{ incident.work_location.work_location|default:"—" }}</div></div>
+    <div><div class="label">Type of Contact/Exposure</div><div class="value{% if not incident.contact_expo_type %} empty{% endif %}">{{ incident.contact_expo_type.contact_expo_type_name|default:"—" }}</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Corrective &amp; Preventive Action</div>
+  <div class="grid grid-2">
+    <div><div class="label">Immediate Corrective Action</div><div class="value{% if not incident.corrective_action %} empty{% endif %}">{{ incident.corrective_action|default:"—" }}</div></div>
+    <div><div class="label">Action Suggested to Prevent Recurrence</div><div class="value{% if not incident.preventive_action %} empty{% endif %}">{{ incident.preventive_action|default:"—" }}</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Impact</div>
+  <div class="grid grid-3">
+    <div class="metric-card"><div class="metric-value">{{ incident.npt_hrs_loss|default:"0.00" }}</div><div class="metric-label">NPT Hours</div></div>
+    <div class="metric-card"><div class="metric-value">{{ incident.manhours_loss|default:"0.00" }}</div><div class="metric-label">Manhours</div></div>
+    <div class="metric-card"><div class="metric-value">${{ incident.financial_loss_amt|default:"0" }}</div><div class="metric-label">Property Loss</div></div>
+  </div>
+</div>
+
+{% if incident.comments %}
+<div class="section">
+  <div class="section-title">Comments</div>
+  <div class="value">{{ incident.comments }}</div>
+</div>
+{% endif %}
+
+<div class="section">
+  <div class="reported-by">
+    <div><div class="label">Reported By</div><div class="value">{{ incident.reported_by|default:"—" }}</div></div>
+    <div style="text-align:right"><div class="label">Designation</div><div class="value">{{ incident.rptd_by_rank.rank_name|default:"—" }}</div></div>
+  </div>
+</div>
+
+{% if photos %}
+<div style="page-break-before: always;">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo-box">
+        {% if logo_path %}<img src="file://{{ logo_path }}">{% endif %}
+      </div>
+      <div>
+        <div class="company-name">{{ company_name }}</div>
+        <div class="report-title">Incident Photos</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="meta-strip">
+    <div class="meta-item emphasis"><span class="label">Incident No.</span><span class="value">{{ incident.rig_incident_no|default:incident.incident_no }}</span></div>
+    <div class="meta-item"><span class="label">Rig / Unit</span><span class="value">{{ rig_name }}</span></div>
+    <div class="meta-item"><span class="label">Report Date</span><span class="value">{{ report_date_time }}</span></div>
+  </div>
+
+  <div class="photos-grid">
+    {% for photo_path in photos %}
+    <div class="photo-card">
+      <img src="file://{{ photo_path }}">
+      <div class="photo-caption">Photo {{ forloop.counter }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+</body>
+</html>

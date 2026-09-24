@@ -1703,6 +1703,42 @@ class CostCentreToCompanyMapping(models.Model):
         return f"{self.company.company_name} — {self.cost_centre.cost_centre_name}"
 
 
+class CompanyNameChange(models.Model):
+    """Straight copy of legacy eos_Company_Name_Change — tracks a company's
+    name/short-name/logo assets over time, scoped by From_Date/To_Date (a
+    NULL To_Date means "current"). This is the backing data for the
+    still-unbuilt "which company name + logo applies to this record"
+    resolver mentioned for the QHSE Incident Flash Report — see the
+    project memory qhse_incident_report_dynamic_branding for that plan;
+    don't build the resolver itself until that spec is confirmed, this
+    model just makes the data available.
+
+    Legacy's own PK (Company_Name_Change_Id) is preserved since it's a
+    small, stable reference table (only 6 rows in Seros_Data)."""
+
+    company_name_change_id = models.AutoField(primary_key=True)
+    company = models.ForeignKey(
+        MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="name_changes"
+    )
+    company_name = models.CharField(max_length=75)
+    company_short_name = models.CharField(max_length=75, null=True, blank=True)
+    image_path_header = models.CharField(max_length=75, null=True, blank=True)
+    image_path_footer = models.CharField(max_length=75, null=True, blank=True)
+    image_path_stamp = models.CharField(max_length=75, null=True, blank=True)
+    from_date = models.DateField()
+    to_date = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "company_name_change"
+
+    def __str__(self):
+        return self.company_name
+
+
 class CompanyToLocationMapping(models.Model):
     """New table — no Seros_Data counterpart to copy; built fresh from the
     mentor-supplied DDL for dbo.Mst_Company_To_Location_Mapping. Its own
@@ -2357,6 +2393,11 @@ class EmailLog(models.Model):
     # this send went out instead through the shared Oilfield Services
     # fallback account (settings.EMAIL_HOST_USER/PASSWORD).
     used_fallback = models.BooleanField(default=False)
+    # Comma-separated filenames only, same shape as `recipients` — the
+    # actual attachment content isn't kept here (it's regenerable on
+    # demand, e.g. the Flash Report's own Print button), so this is purely
+    # "was something attached, and what was it called."
+    attachment_names = models.CharField(max_length=300, blank=True)
     sent_by_user_id = models.IntegerField(null=True, blank=True)
     sent_dt = models.DateTimeField(auto_now_add=True)
 
@@ -2437,6 +2478,43 @@ class MailRecipientMapping(models.Model):
 
     def __str__(self):
         return f"{self.approval_code.approval_code} / {self.event_type} → {self.mail_alert_to_user.email_addr}"
+
+
+class NotificationTrigger(models.Model):
+    """Generic (entity_key, action) -> MailAlertDtl mapping, new in this
+    app — legacy hardcoded every one of these at its own call site (a raw
+    Alert_Id literal baked into each screen's code, confirmed across 40+
+    'U'-type rows in Mail_Alert_Dtl, e.g. Alert_Id 240 for Incident create).
+    This table exists so a new "notify on X" feature is one config row
+    plus one call to notification_triggers.trigger(), not a new hardcoded
+    id. Deliberately separate from MailRecipientMapping, which is scoped
+    to the Drilling Report approval workflow's own fixed EVENT_CHOICES —
+    this is for anything else, keyed by entity_key/action instead.
+
+    Recipients aren't stored here — they're MailAlertToUser rows already
+    scoped by alert_id (see notification_triggers.resolve_alert_recipients),
+    same table MailRecipientMapping also points into."""
+
+    notification_trigger_id = models.AutoField(primary_key=True)
+    entity_key = models.CharField(max_length=60)
+    action = models.CharField(max_length=20)
+    alert = models.ForeignKey(
+        MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="notification_triggers"
+    )
+    notification_trigger_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "notification_trigger"
+        constraints = [
+            models.UniqueConstraint(fields=["entity_key", "action"], name="uniq_notification_trigger_entity_action")
+        ]
+
+    def __str__(self):
+        return f"{self.entity_key}.{self.action} -> {self.alert.alert_name}"
 
 
 # ── Incidents ─────────────────────────────────────────────────────────────

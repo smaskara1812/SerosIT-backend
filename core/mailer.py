@@ -26,7 +26,7 @@ from django.core.mail import EmailMessage, get_connection
 logger = logging.getLogger(__name__)
 
 
-def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html):
+def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html, attachments):
     connection = get_connection(username=auth_user, password=auth_password, fail_silently=False)
     message = EmailMessage(
         subject=subject,
@@ -39,6 +39,8 @@ def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, 
     )
     if is_html:
         message.content_subtype = "html"
+    for filename, content, mimetype in attachments or []:
+        message.attach(filename, content, mimetype)
     if settings.EMAIL_USE_CONSOLE:
         # Bcc is deliberately never a header on the real message (that's
         # correct SMTP behaviour, not a bug) — the console backend's own dump
@@ -46,6 +48,8 @@ def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, 
         # among a long header block. Print the actual envelope explicitly so
         # console-mode testing shows the full picture.
         print(f"--- Envelope: To={to or []} Cc={cc or []} Bcc={bcc or []} ---")
+        if attachments:
+            print(f"--- Attachments: {[a[0] for a in attachments]} ---")
     message.send()
 
 
@@ -62,10 +66,16 @@ def send_notification_email(
     trigger_code="",
     sent_by_user_id=None,
     is_html=False,
+    attachments=None,
 ):
     """Best-effort: a failed send is logged, never raised — a notification
     that doesn't go out shouldn't break the action (finalize/approve/etc.)
     that triggered it.
+
+    attachments, if given, is a list of (filename, content_bytes,
+    mimetype) tuples — plain values, same as everything else this function
+    takes, so a caller building one (e.g. a rendered PDF) must do so before
+    handing off to queue_notification_email's background thread.
 
     Tries (auth_user, auth_password, from_email) first — normally the
     acting user's own cached AD credential and address. If that's missing
@@ -95,7 +105,7 @@ def send_notification_email(
     else:
         if auth_user and auth_password:
             try:
-                _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html)
+                _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html, attachments)
                 success = True
             except Exception as exc:
                 logger.warning("send_notification_email primary send failed, retrying via fallback SMTP: %s", exc)
@@ -115,6 +125,7 @@ def send_notification_email(
                     settings.EMAIL_HOST_USER or None,
                     settings.EMAIL_HOST_PASSWORD or None,
                     is_html,
+                    attachments,
                 )
                 success = True
                 used_fallback = True
@@ -133,6 +144,7 @@ def send_notification_email(
             success=success,
             error=error,
             used_fallback=used_fallback,
+            attachment_names=", ".join(a[0] for a in (attachments or [])),
             sent_by_user_id=sent_by_user_id,
         )
     except Exception:

@@ -20,14 +20,19 @@ legacy frmIncident_Details.aspx(.cs) rather than guessed:
 
 import os
 
+from django.db import transaction
 from django.db.models import Max
 from django.db.models.functions import ExtractYear
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from . import audit as _audit
+from . import mail_templates
+from . import notification_triggers
+from .incident_flash_report import render_flash_report_pdf
 from .incident_serializers import IncidentDetailSerializer
 from .masters_views import BaseMasterViewSet
 from .media_uploads import media_url, save_media_file
@@ -122,6 +127,15 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         ctx["request"] = self.request
         return ctx
 
+    @action(detail=True, methods=["get"], url_path="flash-report")
+    def flash_report(self, request, pk=None):
+        instance = self.get_object()
+        pdf_bytes = render_flash_report_pdf(instance)
+        filename = f"Incident Flash Report - {instance.rig_incident_no or instance.incident_no}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        return response
+
     @action(detail=False, methods=["get"], url_path="meta")
     def meta(self, request):
         years = list(
@@ -148,6 +162,28 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         )
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
         _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        transaction.on_commit(lambda: self._notify_create(instance, uid))
+
+    def _notify_create(self, instance, actor_user_id):
+        """Fires only if a NotificationTrigger row exists for
+        (entity_key, 'create') — see notification_triggers.py. No rule
+        configured is a silent no-op, same as a missing recipient list.
+
+        The Flash Report PDF is rendered here (main thread, on_commit,
+        still has DB access) rather than inside the mail's own background
+        thread — attachments crossing that boundary must already be plain
+        bytes, per queue_notification_email's own contract."""
+        subject, body = mail_templates.incident_created_mail(instance)
+        pdf_bytes = render_flash_report_pdf(instance)
+        filename = f"Incident Flash Report - {instance.rig_incident_no or instance.incident_no}.pdf"
+        notification_triggers.trigger(
+            self.entity_key,
+            "create",
+            subject,
+            body,
+            sent_by_user_id=actor_user_id,
+            attachments=[(filename, pdf_bytes, "application/pdf")],
+        )
 
     def perform_update(self, serializer):
         data = serializer.validated_data

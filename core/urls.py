@@ -257,6 +257,9 @@ router.register(
     "masters/mail-recipient-mappings", masters_views.MailRecipientMappingViewSet, basename="mail-recipient-mapping"
 )
 router.register(
+    "masters/notification-triggers", masters_views.NotificationTriggerViewSet, basename="notification-trigger"
+)
+router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )
 router.register("drilling/drilling-information", drilling_views.DrillingHdrViewSet, basename="drilling-hdr")
