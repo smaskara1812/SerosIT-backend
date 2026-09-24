@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
+from .incident_views import IncidentDetailViewSet
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
@@ -19,6 +20,7 @@ from .activity_monitor import (
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
+router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")

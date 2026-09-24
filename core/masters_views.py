@@ -214,6 +214,7 @@ from .masters_serializers import (
     RigCertScheduleSerializer,
     MstActivitySerializer,
 )
+from .media_uploads import media_url, save_media_file
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
 
@@ -1222,33 +1223,15 @@ class MstInterviewerViewSet(BaseMasterViewSet):
         user's id — mirrors the legacy convention of an id-based filename
         (its data has e.g. /Images/Crew_Interviewer/470.zip) rather than the
         random-uuid naming an interim rewrite used before this app existed."""
-        import os
-
-        from django.conf import settings
-
         user_id = request.data.get("user_id")
         f = request.FILES.get("file")
         if not user_id or not f:
             return Response({"error": "user_id and file are required"}, status=400)
 
-        ext = os.path.splitext(f.name)[1].lower()
-        if ext not in (".jpg", ".jpeg", ".png", ".pdf"):
-            return Response({"error": "Only JPG, PNG, or PDF files are allowed"}, status=400)
-        if f.size > 5 * 1024 * 1024:
-            return Response({"error": "File exceeds 5 MB limit"}, status=400)
-
-        rel_dir = "interviewer_signatures"
-        abs_dir = os.path.join(settings.MEDIA_ROOT, rel_dir)
-        os.makedirs(abs_dir, exist_ok=True)
-        filename = f"{user_id}{ext}"
-        abs_path = os.path.join(abs_dir, filename)
-        with open(abs_path, "wb") as out:
-            for chunk in f.chunks():
-                out.write(chunk)
-
-        rel_path = f"{rel_dir}/{filename}"
-        url = request.build_absolute_uri(settings.MEDIA_URL + rel_path)
-        return Response({"path": rel_path, "url": url})
+        rel_path, error = save_media_file(f, "interviewer_signatures", str(user_id), max_size_mb=5)
+        if error:
+            return Response({"error": error}, status=400)
+        return Response({"path": rel_path, "url": media_url(request, rel_path)})
 
 
 class FsCatgToRigTypeMappingViewSet(BaseMasterViewSet):
@@ -2395,33 +2378,17 @@ class RigCertViewSet(BaseMasterViewSet):
         that id doesn't exist yet for a record still being created — same
         reasoning as MstInterviewerViewSet.upload_sign, which faces the
         same problem and keys off the already-picked FK instead."""
-        import os
         import uuid
-
-        from django.conf import settings
 
         rig_id = request.data.get("rig_id")
         f = request.FILES.get("file")
         if not rig_id or not f:
             return Response({"error": "rig_id and file are required"}, status=400)
 
-        ext = os.path.splitext(f.name)[1].lower()
-        if ext not in (".jpg", ".jpeg", ".png", ".pdf"):
-            return Response({"error": "Only JPG, PNG, or PDF files are allowed"}, status=400)
-        if f.size > 10 * 1024 * 1024:
-            return Response({"error": "File exceeds 10 MB limit"}, status=400)
-
-        rel_dir = "rig_certificates"
-        abs_dir = os.path.join(settings.MEDIA_ROOT, rel_dir)
-        os.makedirs(abs_dir, exist_ok=True)
-        filename = f"{rig_id}_{uuid.uuid4().hex[:8]}{ext}"
-        abs_path = os.path.join(abs_dir, filename)
-        with open(abs_path, "wb") as out:
-            for chunk in f.chunks():
-                out.write(chunk)
-        rel_path = f"{rel_dir}/{filename}"
-        url = request.build_absolute_uri(settings.MEDIA_URL + rel_path)
-        return Response({"path": rel_path, "url": url})
+        rel_path, error = save_media_file(f, "rig_certificates", f"{rig_id}_{uuid.uuid4().hex[:8]}")
+        if error:
+            return Response({"error": error}, status=400)
+        return Response({"path": rel_path, "url": media_url(request, rel_path)})
 
 
 class RigCertScheduleViewSet(BaseMasterViewSet):
