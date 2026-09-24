@@ -3559,3 +3559,47 @@ class MstActivity(models.Model):
 
     def __str__(self):
         return self.activity_name
+
+
+class ActivityMonitor(models.Model):
+    """QHSE → Activity Monitor. Rebuild of legacy eos_Activity_Monitor —
+    schedules a recurring Activity (survey/inspection/etc.) against an
+    optional Rig (required only when the Activity's own Location is Vessel
+    or Rig; null for Office/Port activities), tracks when it's due and
+    when it closed.
+
+    original_scheduled_dt is set exactly once — the first time this row's
+    scheduled_dt is ever edited after creation — and never touched again,
+    matching legacy's Original_Monitor_Dt. Completion_Gap isn't stored
+    (legacy computes it client-side and persists it) — it's derived live
+    from scheduled_dt/completion_dt instead, same as every other derived
+    value elsewhere in this app (see activity_monitor.py).
+
+    Completing this row (setting completion_dt) can spawn a fresh sibling
+    row for the next occurrence — see activity_monitor.py's update logic,
+    which is where that one-time side effect actually happens; this model
+    itself has no special behavior beyond the plain columns."""
+
+    activity_monitor_id = models.AutoField(primary_key=True)
+    activity = models.ForeignKey(
+        MstActivity, db_column="activity_id", on_delete=models.PROTECT, related_name="monitors"
+    )
+    rig = models.ForeignKey(
+        MstRig, db_column="rig_id", on_delete=models.PROTECT, null=True, blank=True, related_name="activity_monitors"
+    )
+    scheduled_dt = models.DateField()
+    original_scheduled_dt = models.DateField(null=True, blank=True)
+    planning_remark = models.CharField(max_length=50, null=True, blank=True)
+    completion_dt = models.DateField(null=True, blank=True)
+    completion_remark = models.CharField(max_length=100, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "activity_monitor"
+
+    def __str__(self):
+        rig_label = self.rig.rig_name if self.rig_id else "Office/Port"
+        return f"{self.activity.activity_name} — {rig_label} ({self.scheduled_dt})"

@@ -7,6 +7,15 @@ from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashb
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
 from .drilling_daily_data import DrillingDailyDataExportView, DrillingDailyDataView
+from .activity_monitor import (
+    ActivityClosureAnalysisExportView,
+    ActivityClosureAnalysisView,
+    ActivityClosureDrilldownView,
+    ActivityMonitorDetailView,
+    ActivityMonitorExportView,
+    ActivityMonitorSuggestView,
+    ActivityMonitorView,
+)
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -286,6 +295,25 @@ urlpatterns = [
         "drilling/drilling-daily-data/export/",
         DrillingDailyDataExportView.as_view(),
         name="drilling_daily_data_export",
+    ),
+    path("qhse/activity-monitor/", ActivityMonitorView.as_view(), name="qhse_activity_monitor"),
+    path("qhse/activity-monitor/suggest/", ActivityMonitorSuggestView.as_view(), name="qhse_activity_monitor_suggest"),
+    path("qhse/activity-monitor/export/", ActivityMonitorExportView.as_view(), name="qhse_activity_monitor_export"),
+    path("qhse/activity-monitor/<int:pk>/", ActivityMonitorDetailView.as_view(), name="qhse_activity_monitor_detail"),
+    path(
+        "qhse/activity-closure-analysis/",
+        ActivityClosureAnalysisView.as_view(),
+        name="qhse_activity_closure_analysis",
+    ),
+    path(
+        "qhse/activity-closure-analysis/drilldown/",
+        ActivityClosureDrilldownView.as_view(),
+        name="qhse_activity_closure_analysis_drilldown",
+    ),
+    path(
+        "qhse/activity-closure-analysis/export/",
+        ActivityClosureAnalysisExportView.as_view(),
+        name="qhse_activity_closure_analysis_export",
     ),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
