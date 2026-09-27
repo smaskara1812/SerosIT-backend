@@ -129,7 +129,7 @@ class IncidentViewSet(viewsets.ReadOnlyModelViewSet):
         writer = csv.writer(response)
         writer.writerow(
             [
-                "Incident No", "Date", "Rig", "Severity", "Type", "Injured",
+                "Rig Incident No", "Date", "Rig", "Severity", "Type", "Injured",
                 "NPT Hrs", "Manhours Loss", "Financial Loss", "Summary",
                 "Immediate Cause", "Corrective Action", "Preventive Action",
                 "Comments", "Employee", "Rank", "Work Location",
@@ -141,7 +141,7 @@ class IncidentViewSet(viewsets.ReadOnlyModelViewSet):
             row_count += 1
             writer.writerow(
                 [
-                    i.incident_no,
+                    i.rig_incident_no or "",
                     i.incident_date.date().isoformat(),
                     i.rig.rig_name if i.rig_id else "Unknown",
                     SEVERITY_LABELS.get(i.incident_severity, "Unknown"),

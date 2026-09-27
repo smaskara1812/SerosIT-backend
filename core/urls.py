@@ -3,8 +3,13 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
-from .incident_views import IncidentDetailViewSet
+from .incident_views import IncidentActionViewSet, IncidentDetailViewSet, IncidentRootCauseViewSet
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
+from .rig_utilisation_dashboard import RigUtilisationDashboardView
+from .drilling_performance_dashboard import DrillingPerformanceDashboardView
+from .fleet_operating_dashboard import FleetOperatingDashboardView
+from .contract_exposure_dashboard import ContractExposureDashboardView
+from .user_shortcuts import UserShortcutsView
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
 from .drilling_daily_data import DrillingDailyDataExportView, DrillingDailyDataView
@@ -21,6 +26,8 @@ from .activity_monitor import (
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
 router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident")
+router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename="qhse-incident-root-cause")
+router.register("qhse/incident-actions", IncidentActionViewSet, basename="qhse-incident-action")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")
@@ -279,6 +286,26 @@ urlpatterns = [
         PerformanceDashboardExportView.as_view(),
         name="drilling_performance_dashboard_export",
     ),
+    path(
+        "dashboards/rig-utilisation/",
+        RigUtilisationDashboardView.as_view(),
+        name="dashboards_rig_utilisation",
+    ),
+    path(
+        "dashboards/drilling-performance/",
+        DrillingPerformanceDashboardView.as_view(),
+        name="dashboards_drilling_performance",
+    ),
+    path(
+        "dashboards/fleet-operating-picture/",
+        FleetOperatingDashboardView.as_view(),
+        name="dashboards_fleet_operating_picture",
+    ),
+    path(
+        "dashboards/contract-exposure/",
+        ContractExposureDashboardView.as_view(),
+        name="dashboards_contract_exposure",
+    ),
     path("drilling/operations-analytics/", OperationsAnalyticsView.as_view(), name="drilling_operations_analytics"),
     path(
         "drilling/operations-analytics/export/",
@@ -325,6 +352,7 @@ urlpatterns = [
     path("auth/me/", views.me, name="me"),
     path("auth/logout/", views.logout_api, name="logout"),
     path("dashboard/", views.dashboard_api, name="dashboard"),
+    path("user-shortcuts/", UserShortcutsView.as_view(), name="user_shortcuts"),
     # User Rights
     path("admin/users/", views.admin_users_api, name="admin_users"),
     path("admin/users/<int:user_id>/perms/", views.admin_user_perms_api, name="admin_user_perms"),

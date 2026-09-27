@@ -1,0 +1,367 @@
+import {
+    Callout,
+    Divider,
+    Grid,
+    H1,
+    H2,
+    H3,
+    Pill,
+    Row,
+    Stack,
+    Stat,
+    Table,
+    Text,
+    useCanvasState,
+    useHostTheme,
+  } from "cursor/canvas";
+  
+  type Audience = "all" | "ops" | "qhse" | "commercial" | "it";
+  
+  type Board = {
+    id: string;
+    name: string;
+    audience: Exclude<Audience, "all">;
+    audienceLabel: string;
+    question: string;
+    today: string;
+    sources: string;
+  };
+  
+  const BOARDS: Board[] = [
+    {
+      id: "fleet",
+      name: "Fleet operating picture",
+      audience: "ops",
+      audienceLabel: "Operations",
+      question: "Which rigs are working, on which contract and well, and which have gone quiet?",
+      today: "New. Drilling Map shows wells; nothing rolls the fleet up.",
+      sources: "Rig, contract lines, well header, daily report date",
+    },
+    {
+      id: "performance",
+      name: "Fleet performance",
+      audience: "ops",
+      audienceLabel: "Operations",
+      question: "Where did the hours, meterage, and fuel go this month and this financial year?",
+      today: "Extend. Four drilling pages already compute this, one rig at a time.",
+      sources: "Daily report totals and operation blocks",
+    },
+    {
+      id: "commercial",
+      name: "Contract exposure",
+      audience: "commercial",
+      audienceLabel: "Commercial",
+      question: "How many hours sat on each billing rate, and which contracts are about to end?",
+      today: "New. Rates are stored; nothing multiplies hours by rate.",
+      sources: "Operation duration, project drilling rate, contract dates",
+    },
+    {
+      id: "qhse",
+      name: "QHSE scoreboard",
+      audience: "qhse",
+      audienceLabel: "QHSE",
+      question: "What hurt people, stopped the rig, and cost money — and is it getting better?",
+      today: "New rollup. Incidents and hazard cards are searchable lists only.",
+      sources: "Incident, root cause, actions, hazard card",
+    },
+    {
+      id: "compliance",
+      name: "Compliance calendar",
+      audience: "qhse",
+      audienceLabel: "QHSE",
+      question: "Which certificates, surveys, and mandatory activities are late?",
+      today: "Partly there. Activity Closure Analysis exists; certs have no board.",
+      sources: "Rig certificate, survey schedule, activity monitor",
+    },
+    {
+      id: "discipline",
+      name: "Reporting discipline",
+      audience: "ops",
+      audienceLabel: "Operations",
+      question: "Which daily reports are missing, pending approval, or sent back?",
+      today: "New. Approval status is on each daily report, not summarised.",
+      sources: "Daily report approval fields, open well dates",
+    },
+    {
+      id: "it",
+      name: "IT estate",
+      audience: "it",
+      audienceLabel: "Corporate IT",
+      question: "What is allocated, unassigned, under warranty, scrapped, or lost?",
+      today: "Extend. Asset Report is a filtered list, not a company view.",
+      sources: "IT asset, current holder, company, location",
+    },
+  ];
+  
+  const KPIS: Record<string, string[][]> = {
+    fleet: [
+      ["Active rigs", "Count where rig is active and rig-to date is open", "Rig master"],
+      ["On contract vs idle", "Rig has an open contract line (active-to blank or in the future)", "Contract detail"],
+      ["Open wells", "Well header with no completion date", "Drilling information"],
+      ["Current location", "Well name, water depth, lat/long, first anchor down", "Drilling information"],
+      ["Contracts ending", "Contract end date inside 30 / 60 / 90 days", "Project contract"],
+      ["Silent rigs", "Open well whose latest daily report is older than yesterday", "Daily report date"],
+      ["People on board", "Latest day: company, operator, service, others", "Daily report POB"],
+    ],
+    performance: [
+      ["Efficiency %", "100 minus downtime hours over 24. Same formula as Performance Dashboard", "Repair, zero-rate, service hours"],
+      ["Hour split", "Operating, standby, repair service, repair rate, zero rate, rig move", "Daily report"],
+      ["Meterage", "Sum of drilling meterage by rig, well, month, financial year", "Daily report"],
+      ["Fuel and water", "Diesel and water received, consumed, and water generated", "Daily report"],
+      ["Time by operation", "Hours in each drilling operation code, fleet-wide", "Operation blocks"],
+      ["Rate of penetration", "Average ROP by hole section and well. Already on Drilling & Tripping", "Drill-actual ops"],
+      ["Trip speed", "Average trip m/hr by section and well", "Tripping ops"],
+      ["Downtime reason", "Count and hours where a downtime reason was written", "Daily report"],
+    ],
+    commercial: [
+      ["Hours by rate code", "Operation duration grouped by R1, standby, zero, mob, and the other rate codes", "Ops joined to project rate"],
+      ["Estimated day value", "Hours times the contract rate and currency, only where a rate amount is filled in", "Project drilling rate"],
+      ["Rig on contract", "Which rigs are assigned, from when, until when, for which operator and location", "Contract header and lines"],
+      ["Coverage gaps", "Active rig with no open contract line", "Rig + contract detail"],
+      ["Well duration", "Days from first anchor down to completion, or to today if still open", "Well header"],
+    ],
+    qhse: [
+      ["Incidents by severity", "High / medium / low, this financial year against the previous one", "Incident"],
+      ["Injuries", "Count where a person was injured, plus body part", "Incident"],
+      ["NPT and manhours", "Sum of NPT hours and manhours lost, by rig and month", "Incident"],
+      ["Financial loss", "Sum of base-currency loss. Do not add mixed currencies raw", "Incident"],
+      ["Type and cause", "Incident type, immediate cause, root cause and subcause", "Incident + root cause"],
+      ["Open actions", "Actions still open, and those past target date", "Incident action"],
+      ["Open hazard cards", "Not closed, age in days, timeout-for-safety flag", "Hazard card"],
+      ["Hazard load", "Open cards by rig, type, work location, and responsible department", "Hazard card"],
+    ],
+    compliance: [
+      ["Certificates expiring", "Valid-till inside 30 / 60 / 90 days, or already past", "Rig certificate"],
+      ["Missing expiry", "Certificates with no valid-till date", "Rig certificate"],
+      ["Overdue surveys", "Annual or intermediate survey with no completion date and schedule date in the past", "Certificate schedule"],
+      ["Overdue activities", "Monitor row with no completion date and schedule date before today", "Activity monitor"],
+      ["Mandatory late", "Same, limited to activities marked mandatory", "Activity master"],
+      ["On-time rate", "Completed early vs late, in the buckets Activity Closure Analysis already uses", "Activity monitor"],
+    ],
+    discipline: [
+      ["Pending approval", "Daily reports finalized but L1 still pending", "Daily report"],
+      ["Rejected / revised", "L1 rejected, or reopened for revision, with the revision note", "Daily report"],
+      ["Approval age", "Days since the report date while still pending", "Daily report"],
+      ["Missing days", "Calendar gaps between first anchor down and completion where no daily report exists", "Well header + daily report"],
+      ["Who is late", "Grouped by rig and by the user who created the report", "Daily report"],
+    ],
+    it: [
+      ["Fleet size", "Active assets vs scrapped vs lost. Legacy import was about 10,800 rows", "IT asset"],
+      ["Unassigned", "Active, not allocated, no open holder", "Asset + holder"],
+      ["By company and site", "Owning company, current company, location, department", "IT asset"],
+      ["Warranty and AMC", "Warranty-until or AMC date inside 90 days", "IT asset"],
+      ["By type", "Laptops, and the other type / subtype / manufacturer splits", "IT asset"],
+      ["Holder history", "Who holds it now, and how often it has moved", "Asset holder"],
+    ],
+  };
+  
+  const FILTERS: { id: Audience; label: string }[] = [
+    { id: "all", label: "All boards" },
+    { id: "ops", label: "Operations" },
+    { id: "qhse", label: "QHSE" },
+    { id: "commercial", label: "Commercial" },
+    { id: "it", label: "Corporate IT" },
+  ];
+  
+  export default function CorporateAnalyticsBrief() {
+    const theme = useHostTheme();
+    const [audience, setAudience] = useCanvasState<Audience>("audience", "all");
+    const [boardId, setBoardId] = useCanvasState<string>("board", "fleet");
+  
+    const visible = BOARDS.filter((b) => audience === "all" || b.audience === audience);
+    const selected = BOARDS.find((b) => b.id === boardId) ?? visible[0] ?? BOARDS[0];
+    const kpis = KPIS[selected.id] ?? [];
+  
+    return (
+      <Stack gap={24}>
+        <Stack gap={8}>
+          <H1>Corporate analytics from current SerosIT data</H1>
+          <Text tone="secondary">
+            What senior staff can see without collecting anything new. SerosIT is an
+            oilfield-services system: rigs, contracts, daily drilling, QHSE, and IT
+            assets. The home dashboard only returns server time and last login.
+            Management numbers have to be rolled up from the operational tables.
+          </Text>
+        </Stack>
+  
+        <Grid columns={4} gap={16}>
+          <Stat value="7" label="Boards the current tables can support" />
+          <Stat value="4" label="Drilling analytics already built, one rig at a time" />
+          <Stat value="2" label="QHSE reports that are lists, not scoreboards" />
+          <Stat value="3" label="Topics the data cannot answer yet" tone="warning" />
+        </Grid>
+  
+        <Callout tone="info" title="The gap is the fleet view">
+          Performance Dashboard, Operations Analytics, Drilling and Tripping, and
+          Drilling Daily Data already calculate hours, meterage, fuel, and rate of
+          penetration. Each one asks the user to pick a rig and a date range.
+          Corporate staff need the same measures across every active rig, for a
+          financial year, with the exceptions on top: silent rigs, overdue
+          certificates, open incidents, reports still waiting for approval.
+        </Callout>
+  
+        <Stack gap={10}>
+          <H2>Boards to build</H2>
+          <Row gap={8} wrap>
+            {FILTERS.map((f) => (
+              <Pill key={f.id} active={audience === f.id} onClick={() => setAudience(f.id)}>
+                {f.label}
+              </Pill>
+            ))}
+          </Row>
+          <Table
+            headers={["Board", "Question it answers", "Today", "Source"]}
+            columnAlign={["left", "left", "left", "left"]}
+            rows={visible.map((b) => [b.name, b.question, b.today, b.sources])}
+            rowTone={visible.map((b) => (b.id === selected.id ? "info" : undefined))}
+            striped
+          />
+          <Text size="small" tone="tertiary">
+            Source: SerosIT models and existing report pages. Click a board below to
+            see the measures. Filter above limits the table; it does not drop the
+            detail if you already picked a board outside the filter.
+          </Text>
+        </Stack>
+  
+        <Stack gap={10}>
+          <H2>Measures on the selected board</H2>
+          <Row gap={8} wrap>
+            {BOARDS.map((b) => (
+              <Pill key={b.id} active={selected.id === b.id} onClick={() => setBoardId(b.id)}>
+                {b.name}
+              </Pill>
+            ))}
+          </Row>
+          <Text>
+            <Text as="span" weight="semibold">
+              {selected.name}
+            </Text>
+            <Text as="span" tone="secondary">
+              {" "}
+              — {selected.audienceLabel}. {selected.question}
+            </Text>
+          </Text>
+          <Table
+            headers={["Measure", "How it is calculated", "Table"]}
+            rows={kpis}
+            striped
+            stickyHeader
+          />
+        </Stack>
+  
+        <Divider />
+  
+        <Stack gap={8}>
+          <H2>How every board should slice</H2>
+          <Text tone="secondary">
+            These filters already exist as foreign keys, so one corporate page can
+            share them. Financial year is the period the rest of the system already
+            uses for incidents and activity closure.
+          </Text>
+          <Table
+            headers={["Slice", "Comes from"]}
+            rows={[
+              ["Financial year, or a from/to date", "Financial year master, already used by Performance Dashboard"],
+              ["Rig, rig type, rig subtype", "Rig master"],
+              ["Operator and location", "Project contract"],
+              ["Well", "Drilling information (location + first anchor down)"],
+              ["Company", "Rig site mapping and IT asset owning / current company"],
+              ["Country", "Incident country, company country"],
+            ]}
+          />
+        </Stack>
+  
+        <Stack gap={8}>
+          <H2>Already in the product</H2>
+          <Text tone="secondary">
+            These pages stay as the drill-down. The corporate boards should link
+            into them rather than replace them.
+          </Text>
+          <Table
+            headers={["Page", "What a manager can already do", "What it does not do"]}
+            rows={[
+              [
+                "Performance Dashboard",
+                "Daily or monthly fuel, water, hours, meterage, efficiency %",
+                "One or more chosen rigs. No fleet ranking.",
+              ],
+              [
+                "Operations Analytics",
+                "Hours by operation, and meterage, across days, months, or wells",
+                "Single rig.",
+              ],
+              [
+                "Drilling and Tripping Analysis",
+                "Average ROP and trip speed by hole section and well",
+                "Single rig. Only operation codes 2 and 6.",
+              ],
+              [
+                "Drilling Daily Data",
+                "One rig's day log: weather is not here, but fuel, hours, depth, rate code, remarks are",
+                "Export-style grid, not a summary.",
+              ],
+              [
+                "Activity Closure Analysis",
+                "Completed activities by rig, bucketed early or late",
+                "Completed rows only. Open and overdue items are on Activity Monitor.",
+              ],
+              [
+                "Incidents / Hazard Cards",
+                "Filter, sort, export the raw rows",
+                "No trend, no severity mix, no open-action ageing.",
+              ],
+              [
+                "Asset Report",
+                "Filter assets by company, location, type, purchase date",
+                "No warranty calendar or unassigned count.",
+              ],
+            ]}
+            striped
+          />
+        </Stack>
+  
+        <Stack gap={8}>
+          <H2>Do not promise these yet</H2>
+          <Callout tone="warning" title="Masters without facts">
+            Indicator types (leading and lagging), HSE activities, and HSE
+            consumables are lookup lists. There is no table of monthly indicator
+            readings, so a classic HSE KPI scorecard cannot be calculated from
+            SerosIT alone.
+          </Callout>
+          <Table
+            headers={["Question management will ask", "Why the current data cannot answer it"]}
+            rowTone={["warning", "warning", "warning"]}
+            rows={[
+              [
+                "TRIR or LTIFR",
+                "Incidents record injuries and manhours lost. They do not record hours worked. POB on the daily report can only approximate exposure if you assume a shift length, and that assumption should be labelled as such.",
+              ],
+              [
+                "Crew, payroll, leave, competency",
+                "The employee table is a name lookup (about 27,000 imported names). Certificates, ranks, and travel eligibility are masters. There is no person-on-hitch roster. POB counts on the daily report are the only headcount.",
+              ],
+              [
+                "Profit, cost, invoices",
+                "Contract rate amount and currency can estimate drilling revenue from logged hours. Diesel cost, payroll, and invoices are not stored. Well-header consumption totals are still zero until a close-out form exists; use the daily report sums.",
+              ],
+            ]}
+          />
+          <H3>Two calculation rules</H3>
+          <Text tone="secondary">
+            Efficiency should stay the formula already in Performance Dashboard:
+            downtime is repair-service plus repair-rate plus zero-rate hours,
+            taken as a share of 24 hours, subtracted from 100. Incident money
+            should be summed on the base-currency amount, not the original
+            currency amount.
+          </Text>
+          <Text size="small" tone="tertiary" style={{ color: theme.text.tertiary }}>
+            Scale notes in the models, from the legacy import: about 349 well
+            headers, about 318 companies (SAP company code empty on all of them),
+            about 10,800 IT assets. Those are import sizes, not live dashboard
+            figures.
+          </Text>
+        </Stack>
+      </Stack>
+    );
+  }
+  

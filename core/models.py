@@ -1133,6 +1133,36 @@ class UserPermission(models.Model):
         return f"{self.user_id}:{self.menu_key}"
 
 
+class UserShortcut(models.Model):
+    """One pinned page on a user's Home screen "Shortcuts" tray. Keyed by
+    the Django login username (user_login_id), not an MstUser/UserProfile
+    id — unlike most of this app's per-user tables, a shortcut is a pure
+    personal UI preference with no business meaning, and needs to work even
+    for a login (e.g. the Django superuser account) that has no matching
+    MstUser/UserProfile row.
+
+    `path` is a frontend route (e.g. "/drilling/drilling-report/new") from
+    the nav config — this table only remembers *which* pages are pinned,
+    not their label/icon/permission, so renaming or re-permissioning a page
+    in nav.js is never out of sync with what's stored here. Whether a
+    stored path is still valid or accessible is checked client-side against
+    the live nav tree at render time, same as any other nav link."""
+
+    user_shortcut_id = models.AutoField(primary_key=True)
+    user_login_id = models.CharField(max_length=20, db_index=True)
+    path = models.CharField(max_length=200)
+    sort_order = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "sys_user_shortcut"
+        unique_together = [("user_login_id", "path")]
+        ordering = ["sort_order", "user_shortcut_id"]
+
+    def __str__(self):
+        return f"{self.user_login_id}:{self.path}"
+
+
 class SysMenu(models.Model):
     """Same shape as legacy cb_menu — drives both the sidebar nav and the
     User Rights permission grid. Renamed off cb_ to sys_."""

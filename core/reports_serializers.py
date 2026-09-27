@@ -27,6 +27,7 @@ class IncidentSerializer(serializers.ModelSerializer):
         fields = [
             "incident_id",
             "incident_no",
+            "rig_incident_no",
             "incident_date",
             "year",
             "rig",

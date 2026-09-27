@@ -616,6 +616,19 @@ class MstIncidentCauseViewSet(BaseMasterViewSet):
     reference_checks = [("subcauses", "Incident Subcause")]
     search_fields = ["incident_cause_desc"]
 
+    def get_queryset(self):
+        qs = self._apply_active_filter(self.queryset)
+        # incident_cause_category: 'I' Immediate / 'R' Root / 'B' Both — the
+        # same lookup backs both Incident.immediate_incident_cause (I/B) and
+        # IncidentRootCause.root_cause (R/B), so each picker scopes itself
+        # with ?scope=immediate or ?scope=root rather than showing every row.
+        scope = self.request.query_params.get("scope")
+        if scope == "immediate":
+            qs = qs.filter(incident_cause_category__in=["I", "B"])
+        elif scope == "root":
+            qs = qs.filter(incident_cause_category__in=["R", "B"])
+        return qs.order_by(self.name_field)
+
 
 class MstIncidentSubcauseViewSet(BaseMasterViewSet):
     queryset = MstIncidentSubcause.objects.select_related("incident_cause").all()
@@ -682,6 +695,9 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     entity_key = "masters.mail_alert_to_users"
     name_field = "email_addr"
     search_fields = ["email_addr", "alert__alert_name"]
+    # Powers the Alert Details page's "View recipients" deep link
+    # (?alert=<alert_id>) — filters this list down to just that alert's rows.
+    filterable_fields = ["alert"]
 
 
 class MailRecipientMappingViewSet(BaseMasterViewSet):

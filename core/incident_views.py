@@ -33,10 +33,10 @@ from . import audit as _audit
 from . import mail_templates
 from . import notification_triggers
 from .incident_flash_report import render_flash_report_pdf
-from .incident_serializers import IncidentDetailSerializer
+from .incident_serializers import IncidentActionSerializer, IncidentDetailSerializer, IncidentRootCauseSerializer
 from .masters_views import BaseMasterViewSet
 from .media_uploads import media_url, save_media_file
-from .models import Incident, IncidentPhoto, MstFinancialYear
+from .models import Incident, IncidentAction, IncidentPhoto, IncidentRootCause, MstFinancialYear
 
 CONTRACTOR_REQUIRED_THIRD_PARTY = {"0", "1"}
 PHOTO_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".png")
@@ -263,4 +263,112 @@ class IncidentDetailViewSet(BaseMasterViewSet):
             request, "update", self.entity_key, instance.pk, self.label_for(instance),
             {"photo_removed": {"old": rel_path, "new": None}},
         )
+        return Response(status=204)
+
+
+class IncidentRootCauseViewSet(BaseMasterViewSet):
+    """QHSE → Incident Root Cause — legacy frmIncident_Root_Cause.aspx(.cs).
+    One or more root-cause/subcause rows recorded against an Incident,
+    always scoped to a single Incident at a time in the UI (the ?incident=
+    filter below), matching the legacy form's own single-incident-at-a-time
+    grid. See IncidentRootCauseSerializer's own docstring for the one
+    simplified rule (Root Subcause Others is optional here, not
+    conditionally required — the legacy "Others" subcause id list isn't
+    fully present in our imported data)."""
+
+    queryset = IncidentRootCause.objects.select_related(
+        "incident", "incident__rig", "root_cause", "root_subcause"
+    ).exclude(marked_as_deleted="Y")
+    serializer_class = IncidentRootCauseSerializer
+    entity_key = "qhse.incident_root_cause"
+
+    def get_queryset(self):
+        qs = self.queryset
+        incident_id = self.request.query_params.get("incident")
+        if incident_id:
+            qs = qs.filter(incident_id=incident_id)
+        return qs.order_by("-cr_dt")
+
+    def label_for(self, instance):
+        return f"{instance.incident} — {instance.root_cause}"
+
+    def perform_create(self, serializer):
+        uid = self._current_user_id(self.request)
+        instance = serializer.save(cr_user_id=uid or 1, cr_dt=timezone.now())
+        changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
+        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def perform_update(self, serializer):
+        old_snapshot = self._snapshot(serializer.instance)
+        uid = self._current_user_id(self.request)
+        instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
+        changes = self._diff(old_snapshot, self._snapshot(instance))
+        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def destroy(self, request, *args, **kwargs):
+        """Legacy soft-deletes (marked_as_deleted='Y') rather than a real
+        DELETE — same reasoning as IncidentDetailViewSet.destroy above."""
+        instance = self.get_object()
+        uid = self._current_user_id(request)
+        instance.marked_as_deleted = "Y"
+        instance.deleted_remarks = request.data.get("deleted_remarks") or None
+        instance.mod_user_id = uid
+        instance.mod_dt = timezone.now()
+        instance.save()
+        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
+        return Response(status=204)
+
+
+class IncidentActionViewSet(BaseMasterViewSet):
+    """QHSE → Incident Actions — legacy frmIncident_Actions.aspx(.cs).
+    Scoped to one Incident at a time via ?incident=, same shape as
+    IncidentRootCauseViewSet. See IncidentActionSerializer's own docstring
+    for the two real business rules (Completion Dt forces status to 'CL';
+    Target/Completion Dt must be >= the incident's own date)."""
+
+    queryset = IncidentAction.objects.select_related(
+        "incident", "incident__rig", "incident__incident_type"
+    ).exclude(marked_as_deleted="Y")
+    serializer_class = IncidentActionSerializer
+    entity_key = "qhse.incident_actions"
+
+    def get_queryset(self):
+        qs = self.queryset
+        incident_id = self.request.query_params.get("incident")
+        if incident_id:
+            qs = qs.filter(incident_id=incident_id)
+        return qs.order_by("-cr_dt")
+
+    def label_for(self, instance):
+        return f"{instance.incident} — {instance.action_recommended[:40]}"
+
+    def perform_create(self, serializer):
+        uid = self._current_user_id(self.request)
+        instance = serializer.save(action_status="OP", cr_user_id=uid or 1, cr_dt=timezone.now())
+        changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
+        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def perform_update(self, serializer):
+        old_snapshot = self._snapshot(serializer.instance)
+        uid = self._current_user_id(self.request)
+        # Filling Completion Dt always closes the action, overriding
+        # whatever the status field itself was set to — matches legacy's
+        # own InsertUpdateData, which does this unconditionally on Update.
+        completion_dt = serializer.validated_data.get("completion_dt")
+        status_override = {"action_status": "CL"} if completion_dt else {}
+        instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now(), **status_override)
+        changes = self._diff(old_snapshot, self._snapshot(instance))
+        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def destroy(self, request, *args, **kwargs):
+        """Legacy soft-deletes (marked_as_deleted='Y') rather than a real
+        DELETE — same reasoning as IncidentDetailViewSet.destroy above."""
+        instance = self.get_object()
+        uid = self._current_user_id(request)
+        instance.marked_as_deleted = "Y"
+        instance.deleted_remarks = request.data.get("deleted_remarks") or None
+        instance.mod_user_id = uid
+        instance.mod_dt = timezone.now()
+        instance.save()
+        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
         return Response(status=204)
