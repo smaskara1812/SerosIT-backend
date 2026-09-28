@@ -21,7 +21,7 @@ Flat time    = "Drill actual" ops rows with rop_trip_mh <= 0 (hours spent
 from datetime import date
 
 from django.db.models import Count, Sum
-from django.db.models.functions import Abs
+from django.db.models.functions import Abs, TruncMonth
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -118,6 +118,32 @@ class DrillingPerformanceDashboardView(APIView):
             for row in section_rows
         ]
 
+        # Same ROP measure, but broken down by rig + well for each
+        # section — the drill-down showing which rigs actually drilled a
+        # section, and where. drilling_hdr can be null on a handful of
+        # rows (see DrillingDtl's own docstring); those show as "Unknown"
+        # rather than being silently dropped.
+        section_detail_rows = (
+            drill_ops_qs.annotate(abs_rop=Abs("rop_trip_mh"))
+            .values(
+                "drilling_section__drilling_section_name",
+                "drilling_dtl__rig_id",
+                "drilling_dtl__drilling_hdr__location",
+            )
+            .annotate(avg_rop=Sum("abs_rop"), n=Count("abs_rop"))
+            .order_by("drilling_section__drilling_section_name", "drilling_dtl__rig_id")
+        )
+        rop_by_section_detail = [
+            {
+                "section": row["drilling_section__drilling_section_name"],
+                "rig_id": row["drilling_dtl__rig_id"],
+                "rig_name": rig_names.get(row["drilling_dtl__rig_id"], ""),
+                "well_location": row["drilling_dtl__drilling_hdr__location"] or "Unknown",
+                "avg_rop": round(float(row["avg_rop"]) / row["n"], 2) if row["n"] else None,
+            }
+            for row in section_detail_rows
+        ]
+
         # Ops breakdown by type — fleet total hours, top 10 by hours.
         ops_rows = (
             DrillingDtlOps.objects.filter(
@@ -174,6 +200,41 @@ class DrillingPerformanceDashboardView(APIView):
             key=lambda r: -r["flat_hours"],
         )
 
+        # Same two metrics, month-by-month per rig — drill-down data for
+        # "Metres Drilled by Rig" and "Flat Time by Rig" respectively.
+        metres_by_rig_month_rows = (
+            dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
+            .values("rig_id", "month")
+            .annotate(total=Sum("drilling_meterage"))
+            .order_by("rig_id", "month")
+        )
+        metres_by_rig_month = [
+            {
+                "rig_id": row["rig_id"],
+                "rig_name": rig_names.get(row["rig_id"], ""),
+                "month": row["month"].strftime("%Y-%m"),
+                "metres": float(row["total"] or 0),
+            }
+            for row in metres_by_rig_month_rows
+        ]
+
+        flat_by_rig_month_rows = (
+            drill_ops_qs.filter(rop_trip_mh__lte=0)
+            .annotate(month=TruncMonth("drilling_dtl__drilling_dtl_dt"))
+            .values("drilling_dtl__rig_id", "month")
+            .annotate(total=Sum("duration"))
+            .order_by("drilling_dtl__rig_id", "month")
+        )
+        flat_by_rig_month = [
+            {
+                "rig_id": row["drilling_dtl__rig_id"],
+                "rig_name": rig_names.get(row["drilling_dtl__rig_id"], ""),
+                "month": row["month"].strftime("%Y-%m"),
+                "flat_hours": float(row["total"] or 0),
+            }
+            for row in flat_by_rig_month_rows
+        ]
+
         return Response(
             {
                 "years": available_years,
@@ -181,8 +242,11 @@ class DrillingPerformanceDashboardView(APIView):
                 "rigs": accessible_rigs,
                 "summary": summary,
                 "rop_by_section": rop_by_section,
+                "rop_by_section_detail": rop_by_section_detail,
                 "ops_breakdown": ops_breakdown,
                 "metres_by_rig": metres_by_rig,
+                "metres_by_rig_month": metres_by_rig_month,
                 "flat_by_rig": flat_by_rig,
+                "flat_by_rig_month": flat_by_rig_month,
             }
         )

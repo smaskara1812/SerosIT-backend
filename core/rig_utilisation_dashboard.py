@@ -120,6 +120,20 @@ class RigUtilisationDashboardView(APIView):
             for row in monthly_rows
         ]
 
+        # Same rows, but carrying the actual hour categories instead of the
+        # derived percentage — powers the "Hours by Category" chart's
+        # drill-down into a single month's per-rig breakdown, reusing this
+        # query rather than a second aggregation.
+        hours_by_rig_month = [
+            {
+                "month": row["month"].strftime("%Y-%m"),
+                "rig_id": row["rig_id"],
+                "rig_name": rig_names.get(row["rig_id"], ""),
+                **{f: float(row.get(f) or 0) for f in HOUR_FIELDS},
+            }
+            for row in monthly_rows
+        ]
+
         # Fleet-wide hours breakdown by category, by month — stacked bar.
         fleet_monthly_rows = (
             dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
@@ -159,6 +173,7 @@ class RigUtilisationDashboardView(APIView):
                 "summary": summary,
                 "utilisation_by_rig_month": utilisation_by_rig_month,
                 "hours_by_month": hours_by_month,
+                "hours_by_rig_month": hours_by_rig_month,
                 "utilisation_by_rig": utilisation_by_rig,
             }
         )
