@@ -1960,9 +1960,14 @@ class MstItAssetViewSet(BaseMasterViewSet):
     """Listed as a reports-style table (not the generic masters drawer —
     too many fields for that) with its own list page driving ?search=,
     ?active=, ?holder_type=, ?allocated=(Y|N|S|L — S is Scrap, L is Lost),
-    ?own_company=, ?it_asset_type=, ?it_asset_subtype=, ?it_asset_mfg= and
-    ?ordering= (one of sr_no/model/asset_tag/mfg/own_company/cur_company/
-    pur_dt, prefix '-' to reverse)."""
+    ?own_company=, ?it_asset_type=, ?it_asset_subtype=, ?it_asset_mfg=,
+    ?warranty_status=(expired|expiring_soon|valid|no_data — expiring_soon is
+    <=90 days out, matching the IT Asset Overview dashboard's own bucket),
+    ?pur_year= (exact it_asset_pur_dt year) and ?ordering= (one of
+    sr_no/model/asset_tag/mfg/own_company/cur_company/pur_dt, prefix '-' to
+    reverse). warranty_status/pur_year exist mainly so the dashboard's charts
+    and quick-action buttons can deep-link here with the matching slice
+    already applied."""
 
     queryset = MstItAsset.objects.select_related(
         "it_asset_model", "it_asset_type", "it_asset_subtype", "it_asset_mfg",
@@ -2014,6 +2019,25 @@ class MstItAssetViewSet(BaseMasterViewSet):
         it_asset_mfg = params.get("it_asset_mfg")
         if it_asset_mfg:
             qs = qs.filter(it_asset_mfg_id=it_asset_mfg)
+
+        warranty_status = params.get("warranty_status")
+        if warranty_status:
+            from django.utils import timezone
+
+            today = timezone.localdate()
+            soon = today + timezone.timedelta(days=90)
+            if warranty_status == "expired":
+                qs = qs.filter(it_asset_warranty_upto__lt=today)
+            elif warranty_status == "expiring_soon":
+                qs = qs.filter(it_asset_warranty_upto__gte=today, it_asset_warranty_upto__lte=soon)
+            elif warranty_status == "valid":
+                qs = qs.filter(it_asset_warranty_upto__gt=soon)
+            elif warranty_status == "no_data":
+                qs = qs.filter(it_asset_warranty_upto=None)
+
+        pur_year = params.get("pur_year")
+        if pur_year and pur_year.isdigit():
+            qs = qs.filter(it_asset_pur_dt__year=int(pur_year))
 
         ordering = params.get("ordering", "-cr_dt")
         reverse = ordering.startswith("-")

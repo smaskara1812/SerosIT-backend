@@ -9,6 +9,9 @@ from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
 from .fleet_operating_dashboard import FleetOperatingDashboardView
 from .contract_exposure_dashboard import ContractExposureDashboardView
+from .rig_health_dashboard import RigHealthDashboardView
+from .it_asset_dashboard import ItAssetDashboardView
+from .npt_dashboard import NptDashboardView
 from .user_shortcuts import UserShortcutsView
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
@@ -305,6 +308,21 @@ urlpatterns = [
         "dashboards/contract-exposure/",
         ContractExposureDashboardView.as_view(),
         name="dashboards_contract_exposure",
+    ),
+    path(
+        "dashboards/rig-health/",
+        RigHealthDashboardView.as_view(),
+        name="dashboards_rig_health",
+    ),
+    path(
+        "dashboards/it-asset-overview/",
+        ItAssetDashboardView.as_view(),
+        name="dashboards_it_asset_overview",
+    ),
+    path(
+        "dashboards/npt-analysis/",
+        NptDashboardView.as_view(),
+        name="dashboards_npt_analysis",
     ),
     path("drilling/operations-analytics/", OperationsAnalyticsView.as_view(), name="drilling_operations_analytics"),
     path(
