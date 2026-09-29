@@ -2892,6 +2892,39 @@ class IncidentRootCause(models.Model):
         return f"{self.incident} — {self.root_cause}"
 
 
+class OtherQhseAction(models.Model):
+    """Straight copy of legacy eos_Other_QHSE_Actions. Despite the legacy
+    Incident Dashboard labeling this pivot "ICR Actions", the table has
+    nothing to do with Incident Root Cause — it's a standalone QHSE action
+    log (safety meetings, audits, drills, etc, categorized via
+    MstQhseCategory) that happens to also carry an "ICR No." the way an
+    incident's corrective action would. Not linked to Incident at all."""
+
+    other_qhse_action_id = models.AutoField(primary_key=True)
+    qhse_category = models.ForeignKey(
+        MstQhseCategory, db_column="qhse_category_id", on_delete=models.PROTECT, related_name="other_qhse_actions"
+    )
+    icr_no = models.CharField(max_length=15)
+    other_qhse_action_dt = models.DateField()
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="other_qhse_actions")
+    action_recommended = models.CharField(max_length=500)
+    action_taken = models.CharField(max_length=250, null=True, blank=True)
+    action_party = models.CharField(max_length=100)
+    target_date = models.DateField(null=True, blank=True)
+    completion_dt = models.DateField(null=True, blank=True)
+    action_status = models.CharField(max_length=2)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "other_qhse_action"
+
+    def __str__(self):
+        return f"{self.icr_no} — {self.rig.rig_name}"
+
+
 # ── Hazard Cards ──────────────────────────────────────────────────────────
 
 

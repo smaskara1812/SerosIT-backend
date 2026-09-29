@@ -25,6 +25,7 @@ from django.db.models import Max
 from django.db.models.functions import ExtractYear
 from django.http import HttpResponse
 from django.utils import timezone
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -33,10 +34,28 @@ from . import audit as _audit
 from . import mail_templates
 from . import notification_triggers
 from .incident_flash_report import render_flash_report_pdf
-from .incident_serializers import IncidentActionSerializer, IncidentDetailSerializer, IncidentRootCauseSerializer
+from .incident_register_report import render_incident_register_pdf
+from .incident_serializers import (
+    IncidentActionSerializer,
+    IncidentDetailSerializer,
+    IncidentRegisterSerializer,
+    IncidentRootCauseSerializer,
+)
 from .masters_views import BaseMasterViewSet
 from .media_uploads import media_url, save_media_file
-from .models import Incident, IncidentAction, IncidentPhoto, IncidentRootCause, MstFinancialYear
+from .models import (
+    FsCatgToRigTypeMapping,
+    Incident,
+    IncidentAction,
+    IncidentPhoto,
+    IncidentRootCause,
+    MstFinancialYear,
+    MstFsCategory,
+    MstIncidentType,
+    MstRig,
+)
+from .permissions import HasMenuPermission
+from .xlsx_export import build_xlsx_response
 
 CONTRACTOR_REQUIRED_THIRD_PARTY = {"0", "1"}
 PHOTO_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".png")
@@ -372,3 +391,180 @@ class IncidentActionViewSet(BaseMasterViewSet):
         instance.save()
         _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
         return Response(status=204)
+
+
+def _category_rig_type_ids(category_id):
+    """Rig types an Fs Category actually applies to, per
+    FsCatgToRigTypeMapping.mapping_active='Y' — e.g. "Onshore Rig
+    Personnel" -> {Onshore Rig, Repair Yard}. Returns None (no restriction)
+    if the category has no active mapping at all, rather than an empty set
+    that would silently zero out every rig."""
+    rig_type_ids = list(
+        FsCatgToRigTypeMapping.objects.filter(
+            fs_category_id=category_id, mapping_active="Y"
+        ).values_list("rig_type_id", flat=True)
+    )
+    return rig_type_ids or None
+
+
+class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
+    """QHSE → Incident Register — read-only, ports rfrmIncident_Register.aspx's
+    filter-driven grid (Category, Rig(s), Incident Type(s), date range)
+    rather than duplicating the fuller Incidents report (reports.incidents):
+    this one is deliberately narrow — five columns, multi-select rig/type,
+    an explicit From/To range — matching the legacy page's own shape.
+
+    GET supports ?category=&rigs=&incident_types=&date_from=&date_to=
+    &search=&ordering= (one of date/rig/type, prefix '-' to reverse;
+    defaults to '-date'). rigs/incident_types are comma-joined id lists.
+    category (an Fs_Category id) narrows the *rig* filter to whichever rig
+    types that category maps to (see _category_rig_type_ids) — it doesn't
+    filter incidents directly, matching how the legacy Category dropdown
+    only ever scoped the Rig picker, never the incident rows themselves."""
+
+    queryset = Incident.objects.select_related("rig", "incident_type").exclude(marked_as_deleted="Y")
+    serializer_class = IncidentRegisterSerializer
+    entity_key = "qhse.incident_register"
+    permission_classes = [HasMenuPermission]
+    search_fields = ["incident_descr"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        params = self.request.query_params
+
+        category_id = params.get("category")
+        if category_id and category_id.isdigit():
+            rig_type_ids = _category_rig_type_ids(category_id)
+            if rig_type_ids is not None:
+                qs = qs.filter(rig__rig_type_id__in=rig_type_ids)
+
+        rigs = params.get("rigs")
+        if rigs:
+            rig_ids = [x for x in rigs.split(",") if x.strip().isdigit()]
+            if rig_ids:
+                qs = qs.filter(rig_id__in=rig_ids)
+
+        incident_types = params.get("incident_types")
+        if incident_types:
+            type_ids = [x for x in incident_types.split(",") if x.strip().isdigit()]
+            if type_ids:
+                qs = qs.filter(incident_type_id__in=type_ids)
+
+        date_from = params.get("date_from")
+        if date_from:
+            qs = qs.filter(incident_date__date__gte=date_from)
+        date_to = params.get("date_to")
+        if date_to:
+            qs = qs.filter(incident_date__date__lte=date_to)
+
+        ordering = params.get("ordering", "-date")
+        reverse = ordering.startswith("-")
+        field = {"date": "incident_date", "rig": "rig__rig_name", "type": "incident_type__incident_type"}.get(
+            ordering.lstrip("-")
+        )
+        if field:
+            qs = qs.order_by(f"-{field}" if reverse else field)
+        else:
+            qs = qs.order_by("-incident_date")
+        return qs
+
+    def _filter_summary(self, request):
+        """Human-readable caption for the print/PDF header — mirrors the
+        legacy report's "For the Period X to Y" caption, extended with
+        whichever Category/date range is actually active."""
+        params = request.query_params
+        parts = []
+        category_id = params.get("category")
+        if category_id and category_id.isdigit():
+            category = MstFsCategory.objects.filter(pk=category_id).first()
+            if category:
+                parts.append(category.fs_category_name)
+        date_from = params.get("date_from")
+        date_to = params.get("date_to")
+        if date_from or date_to:
+            parts.append(f"Period: {date_from or '…'} to {date_to or '…'}")
+        return " · ".join(parts) if parts else "All incidents"
+
+    @action(detail=False, methods=["get"], url_path="meta")
+    def meta(self, request):
+        """Filter-bar options. `?category=` narrows the rig list the same
+        way get_queryset's own category filter does, so picking a category
+        in the UI also trims which rigs the Rig picker offers — matching
+        the legacy page's Category-scopes-the-Rig-search-window behavior."""
+        categories = list(
+            MstFsCategory.objects.filter(rig_type_mappings__mapping_active="Y")
+            .distinct()
+            .order_by("fs_category_name")
+            .values("fs_category_id", "fs_category_name")
+        )
+
+        rig_qs = MstRig.objects.all()
+        category_id = request.query_params.get("category")
+        if category_id and category_id.isdigit():
+            rig_type_ids = _category_rig_type_ids(category_id)
+            if rig_type_ids is not None:
+                rig_qs = rig_qs.filter(rig_type_id__in=rig_type_ids)
+        rigs = list(rig_qs.order_by("rig_name").values("rig_id", "rig_name"))
+
+        incident_types = list(
+            MstIncidentType.objects.order_by("incident_type").values("incident_type_id", "incident_type")
+        )
+
+        return Response(
+            {
+                "categories": [
+                    {"id": c["fs_category_id"], "name": c["fs_category_name"]} for c in categories
+                ],
+                "rigs": [{"id": r["rig_id"], "name": r["rig_name"]} for r in rigs],
+                "incident_types": [
+                    {"id": t["incident_type_id"], "name": t["incident_type"]} for t in incident_types
+                ],
+            }
+        )
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request):
+        """.xlsx, not .csv — matches every other export in this app (see
+        xlsx_export.py's own docstring: CSV can't carry the bold/grey/
+        bordered header row the rest of the app's exports all have)."""
+        qs = self.get_queryset()
+        rows = [
+            [
+                i.rig.rig_name if i.rig_id else "Unknown",
+                i.rig_incident_no or "",
+                i.incident_date.strftime("%d/%m/%Y %H:%M") if i.incident_date else "",
+                i.incident_type.incident_abrv if i.incident_type_id else "",
+                i.incident_descr,
+            ]
+            for i in qs.iterator()
+        ]
+        filename = f"incident-register-{timezone.now().date().isoformat()}.xlsx"
+        response = build_xlsx_response(
+            filename,
+            "Incident Register",
+            ["Incident Register", self._filter_summary(request)],
+            ["Rig", "Incident No.", "Date & Time of Incident", "Incident Type", "Brief Description"],
+            rows,
+            wide_columns=(4,),
+        )
+        _audit.record_action(
+            request, "export", self.entity_key, record_label="Incident Register Excel export",
+            changes={"rows_exported": {"old": None, "new": len(rows)}},
+        )
+        return response
+
+    @action(detail=False, methods=["get"], url_path="print")
+    def print_pdf(self, request):
+        """PDF version of the current filtered list — same WeasyPrint
+        pipeline as the per-incident Flash Report (incident_flash_report.py),
+        landscape and row-based rather than a single-incident letterhead
+        (see incident_register_report.py)."""
+        qs = self.get_queryset()
+        pdf_bytes = render_incident_register_pdf(qs, self._filter_summary(request))
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = 'inline; filename="Incident Register.pdf"'
+        _audit.record_action(
+            request, "export", self.entity_key, record_label="Incident Register PDF print",
+            changes={"rows_printed": {"old": None, "new": qs.count()}},
+        )
+        return response

@@ -3,7 +3,12 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
-from .incident_views import IncidentActionViewSet, IncidentDetailViewSet, IncidentRootCauseViewSet
+from .incident_views import (
+    IncidentActionViewSet,
+    IncidentDetailViewSet,
+    IncidentRegisterViewSet,
+    IncidentRootCauseViewSet,
+)
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
@@ -12,6 +17,13 @@ from .contract_exposure_dashboard import ContractExposureDashboardView
 from .rig_health_dashboard import RigHealthDashboardView
 from .it_asset_dashboard import ItAssetDashboardView
 from .npt_dashboard import NptDashboardView
+from .incident_dashboard import (
+    IncidentDashboardDrilldownPrintView,
+    IncidentDashboardDrilldownView,
+    IncidentDashboardExportView,
+    IncidentDashboardMetaView,
+    IncidentDashboardView,
+)
 from .user_shortcuts import UserShortcutsView
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
@@ -31,6 +43,7 @@ router.register("reports/incidents", reports_views.IncidentViewSet, basename="re
 router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident")
 router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename="qhse-incident-root-cause")
 router.register("qhse/incident-actions", IncidentActionViewSet, basename="qhse-incident-action")
+router.register("qhse/incident-register", IncidentRegisterViewSet, basename="qhse-incident-register")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")
@@ -323,6 +336,31 @@ urlpatterns = [
         "dashboards/npt-analysis/",
         NptDashboardView.as_view(),
         name="dashboards_npt_analysis",
+    ),
+    path(
+        "dashboards/incident-dashboard/",
+        IncidentDashboardView.as_view(),
+        name="dashboards_incident_dashboard",
+    ),
+    path(
+        "dashboards/incident-dashboard/meta/",
+        IncidentDashboardMetaView.as_view(),
+        name="dashboards_incident_dashboard_meta",
+    ),
+    path(
+        "dashboards/incident-dashboard/export/",
+        IncidentDashboardExportView.as_view(),
+        name="dashboards_incident_dashboard_export",
+    ),
+    path(
+        "dashboards/incident-dashboard/drilldown/",
+        IncidentDashboardDrilldownView.as_view(),
+        name="dashboards_incident_dashboard_drilldown",
+    ),
+    path(
+        "dashboards/incident-dashboard/drilldown/print/",
+        IncidentDashboardDrilldownPrintView.as_view(),
+        name="dashboards_incident_dashboard_drilldown_print",
     ),
     path("drilling/operations-analytics/", OperationsAnalyticsView.as_view(), name="drilling_operations_analytics"),
     path(

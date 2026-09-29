@@ -15,6 +15,32 @@ from .models import (
 )
 
 
+class IncidentRegisterSerializer(serializers.ModelSerializer):
+    """Lightweight list shape for the Incident Register report — the legacy
+    rfrmIncident_Register.aspx grid's exact five columns (Rig, Incident No.,
+    Date & Time, Type abbreviation, Brief Description), not the fuller
+    detail set IncidentDetailSerializer carries for the Incident Details
+    Add/Update workflow."""
+
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="Unknown")
+    incident_type_abrv = serializers.CharField(source="incident_type.incident_abrv", read_only=True, default="")
+    incident_type_name = serializers.CharField(source="incident_type.incident_type", read_only=True, default="")
+
+    class Meta:
+        model = Incident
+        fields = [
+            "incident_id",
+            "rig",
+            "rig_name",
+            "rig_incident_no",
+            "incident_date",
+            "incident_type",
+            "incident_type_abrv",
+            "incident_type_name",
+            "incident_descr",
+        ]
+
+
 class IncidentPhotoSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()
 

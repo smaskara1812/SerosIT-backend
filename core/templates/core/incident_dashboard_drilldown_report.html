@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 12mm 12mm 13mm 12mm;
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9ca3af; font-family: Arial, Helvetica, sans-serif; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 8.4pt; color: #1f2937; margin: 0; }
+
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid #1a3f7a;
+    margin-bottom: 8px;
+  }
+  .title { font-size: 15pt; font-weight: 700; color: #1a3f7a; }
+  .subtitle { font-size: 8pt; color: #6b7280; margin-top: 2px; }
+
+  /* Every active filter, stated explicitly — this is what's actually being
+     printed, not just a bare table with no context. */
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px;
+  }
+  .filter-chip {
+    font-size: 7.8pt; color: #374151; background: #eef2ff; border: 1px solid #c7d2fe;
+    border-radius: 4px; padding: 2px 8px;
+  }
+  .filter-chip b { color: #1a3f7a; }
+
+  .meta { text-align: right; font-size: 7.6pt; color: #6b7280; white-space: nowrap; }
+  .meta .value { font-weight: 600; color: #374151; }
+
+  .truncated-note {
+    background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+    border-radius: 4px; padding: 5px 10px; font-size: 7.8pt; margin-bottom: 8px;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th {
+    background: #1a3f7a; color: #fff; text-align: left; font-size: 7.4pt;
+    text-transform: uppercase; letter-spacing: 0.04em; padding: 5px 6px;
+  }
+  td { padding: 5px 6px; border-bottom: 0.75px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8fafc; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="title">{{ title }}</div>
+      <div class="subtitle">Incident Dashboard — drill-down record list</div>
+      <div class="filters">
+        {% for line in summary_lines %}
+        <span class="filter-chip">{{ line }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="meta">
+      <div>Generated <span class="value">{{ generated_at }}</span></div>
+      <div>Total <span class="value">{{ total }}</span> record{{ total|pluralize }}</div>
+    </div>
+  </div>
+
+  {% if truncated %}
+  <div class="truncated-note">
+    Showing the first {{ shown }} of {{ total }} matching records.
+  </div>
+  {% endif %}
+
+  <table>
+    <thead>
+      <tr>
+        {% for col in columns %}
+        <th>{{ col }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        {% for cell in row %}
+        <td>{{ cell }}</td>
+        {% endfor %}
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="{{ columns|length }}" style="text-align:center; color:#9ca3af; padding: 20px;">No records.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
