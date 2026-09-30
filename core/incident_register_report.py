@@ -9,16 +9,11 @@ matches, landscape, one row per incident — so it carries no dynamic
 company branding of its own.
 """
 
-from zoneinfo import ZoneInfo
-
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-# Same reasoning as incident_flash_report.py: storage is UTC, but every
-# rig/incident in this data is India-based, so the printed report always
-# shows IST regardless of the server's own configured timezone.
-IST = ZoneInfo("Asia/Kolkata")
+from .company_branding import seros_logo_path
 
 # A PDF this deep would be slow to render and unwieldy to print — the
 # on-screen list already paginates, so Print is meant for "this filtered
@@ -31,8 +26,6 @@ PRINT_ROW_LIMIT = 2000
 def _fmt_dt(dt):
     if not dt:
         return ""
-    if timezone.is_aware(dt):
-        dt = dt.astimezone(IST)
     return dt.strftime("%d/%m/%Y %H:%M")
 
 
@@ -43,6 +36,7 @@ def render_incident_register_pdf(queryset, filter_summary):
     incidents = list(queryset[:PRINT_ROW_LIMIT])
 
     context = {
+        "logo_path": seros_logo_path(),
         "rows": [
             {
                 "sr_no": i + 1,

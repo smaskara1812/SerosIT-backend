@@ -80,6 +80,11 @@ _ACTION_PERM = {
     # collection-level bulk /export/ already owns the plain "export" action
     # name) — same Export permission flag as the bulk export, not "view".
     "export_one": "export",
+    # Hazard ID Card's Print Report PDF (method name `report`, since
+    # "export" already means the plain listing's own bulk export/print
+    # pattern elsewhere) — a printed report is an export of the underlying
+    # records, not a "view", so it's gated the same way.
+    "report": "export",
     "mark_scrap": "edit",
     "unscrap": "edit",
     "mark_lost": "edit",

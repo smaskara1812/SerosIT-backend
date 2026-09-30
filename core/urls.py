@@ -9,6 +9,7 @@ from .incident_views import (
     IncidentRegisterViewSet,
     IncidentRootCauseViewSet,
 )
+from .hazard_card_views import HazardCardViewSet as HazardIdCardViewSet
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
@@ -44,6 +45,7 @@ router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident
 router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename="qhse-incident-root-cause")
 router.register("qhse/incident-actions", IncidentActionViewSet, basename="qhse-incident-action")
 router.register("qhse/incident-register", IncidentRegisterViewSet, basename="qhse-incident-register")
+router.register("qhse/hazard-id-card", HazardIdCardViewSet, basename="qhse-hazard-id-card")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")

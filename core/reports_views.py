@@ -180,7 +180,7 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = HazardCardSerializer
     entity_key = "reports.hazard_cards"
     permission_classes = [HasMenuPermission]
-    search_fields = ["hazard_desc", "action_taken", "reported_by_name"]
+    search_fields = ["haz_id_card_no", "hazard_desc", "action_taken", "reported_by_name"]
 
     def get_queryset(self):
         qs = self.queryset
@@ -201,8 +201,14 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
         elif status == "closed":
             qs = qs.filter(haz_id_card_status="C")
         tfs = params.get("tfs")
-        if tfs in ("Y", "N"):
-            qs = qs.filter(timeout_for_safety=tfs)
+        if tfs == "Y":
+            qs = qs.filter(timeout_for_safety="Y")
+        elif tfs == "N":
+            # Legacy data never has a literal 'N' here — every non-Y row
+            # is '' (confirmed: 28,494 '' rows vs 2,939 'Y', zero 'N').
+            # Same "anything but Y is No" reasoning as
+            # BaseMasterViewSet._apply_active_filter's own '' vs 'N' note.
+            qs = qs.exclude(timeout_for_safety="Y")
         work_location = params.get("work_location")
         if work_location:
             qs = qs.filter(work_location_id=work_location)

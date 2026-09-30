@@ -141,7 +141,7 @@ def finalize(record, user_id):
 
 def approve(record, user_id):
     record.l1_approval_status = "A"
-    record.l1_approval_dt = timezone.localdate()
+    record.l1_approval_dt = timezone.now().date()
     record.l1_user_id = user_id
     record.mod_user_id = user_id
     record.mod_dt = timezone.now()
@@ -151,7 +151,7 @@ def reject(record, user_id):
     """Terminal — once l1_approval_status is 'R', can_approve/can_reject/
     can_revise_self/can_revise_previous all become false for this record."""
     record.l1_approval_status = "R"
-    record.l1_approval_dt = timezone.localdate()
+    record.l1_approval_dt = timezone.now().date()
     record.l1_user_id = user_id
     record.mod_user_id = user_id
     record.mod_dt = timezone.now()
@@ -165,7 +165,7 @@ def revise_self(record, user_id):
     record.l1_approval_dt = None
     record.l1_user_id = None
     record.opened_for_revision_by = user_id
-    record.opened_for_revision_dt = timezone.localdate()
+    record.opened_for_revision_dt = timezone.now().date()
     record.mod_user_id = user_id
     record.mod_dt = timezone.now()
 
@@ -181,7 +181,7 @@ def revise_previous(record, user_id, note=None):
     finalize alongside opened_for_revision_by/dt."""
     record.cr_status = "N"
     record.opened_for_revision_by = user_id
-    record.opened_for_revision_dt = timezone.localdate()
+    record.opened_for_revision_dt = timezone.now().date()
     record.revision_note = (note or "").strip()[:500] or None
     record.mod_user_id = user_id
     record.mod_dt = timezone.now()

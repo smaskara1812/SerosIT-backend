@@ -79,6 +79,19 @@ class DrillingPerformanceDashboardView(APIView):
             drilling_dtl__drilling_dtl_dt__year=year,
         )
 
+        consumables = dtl_qs.aggregate(
+            diesel_consumed=Sum("consumption_diesel"),
+            diesel_received=Sum("received_diesel"),
+            water_consumed=Sum("consumption_water"),
+            water_received=Sum("received_water"),
+            water_generated=Sum("generated_water"),
+            operating_hrs=Sum("operating_hrs"),
+            standby_hrs=Sum("standby_hrs"),
+            repair_service_hrs=Sum("repair_service_hrs"),
+            repair_rate_hrs=Sum("repair_rate_hrs"),
+            zero_rate_hrs=Sum("zero_rate_hrs"),
+        )
+
         total_metres = dtl_qs.aggregate(total=Sum("drilling_meterage"))["total"] or 0
         # Avg() over Abs() needs the annotate-then-aggregate form, not a
         # bare expression inside aggregate().
@@ -99,7 +112,27 @@ class DrillingPerformanceDashboardView(APIView):
             "drill_hours": float(drill_hours),
             "drill_ops_count": drill_ops_count,
             "flat_hours": float(flat_hours),
+            "diesel_consumed": float(consumables["diesel_consumed"] or 0),
+            "diesel_received": float(consumables["diesel_received"] or 0),
+            "water_consumed": float(consumables["water_consumed"] or 0),
+            "water_received": float(consumables["water_received"] or 0),
+            "water_generated": float(consumables["water_generated"] or 0),
         }
+
+        # Rig-time accounting — same daily hour buckets the Performance
+        # Dashboard table (drilling.performance_dashboard) shows per row,
+        # rolled up fleet-wide. Repair Service + Repair Rate are combined
+        # into one "Repair" bucket since the table itself groups them under
+        # one "Repair Rate" heading pair — no new distinction invented here.
+        hours_breakdown = [
+            {"category": "Operating", "hours": float(consumables["operating_hrs"] or 0)},
+            {"category": "Standby", "hours": float(consumables["standby_hrs"] or 0)},
+            {
+                "category": "Repair",
+                "hours": float(consumables["repair_service_hrs"] or 0) + float(consumables["repair_rate_hrs"] or 0),
+            },
+            {"category": "Zero Rate", "hours": float(consumables["zero_rate_hrs"] or 0)},
+        ]
 
         # ROP by hole section — same "average of |rop_trip_mh|" as Drilling
         # & Tripping Analysis, just rolled up across every accessible rig
@@ -181,6 +214,26 @@ class DrillingPerformanceDashboardView(APIView):
             key=lambda r: r["rig_name"],
         )
 
+        # Diesel/water consumption by rig — same shape as metres_by_rig, for
+        # the "Diesel Consumption by Rig" / "Water Consumption by Rig"
+        # charts.
+        diesel_rows = dtl_qs.values("rig_id").annotate(total=Sum("consumption_diesel"))
+        diesel_by_rig = sorted(
+            (
+                {"rig_id": row["rig_id"], "rig_name": rig_names.get(row["rig_id"], ""), "litres": float(row["total"] or 0)}
+                for row in diesel_rows
+            ),
+            key=lambda r: r["rig_name"],
+        )
+        water_rows = dtl_qs.values("rig_id").annotate(total=Sum("consumption_water"))
+        water_by_rig = sorted(
+            (
+                {"rig_id": row["rig_id"], "rig_name": rig_names.get(row["rig_id"], ""), "litres": float(row["total"] or 0)}
+                for row in water_rows
+            ),
+            key=lambda r: r["rig_name"],
+        )
+
         # Flat time by rig — which rigs are logging Drill Actual hours with
         # zero/negative depth progress, and how many hours that is.
         flat_rows = (
@@ -218,6 +271,38 @@ class DrillingPerformanceDashboardView(APIView):
             for row in metres_by_rig_month_rows
         ]
 
+        diesel_by_rig_month_rows = (
+            dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
+            .values("rig_id", "month")
+            .annotate(total=Sum("consumption_diesel"))
+            .order_by("rig_id", "month")
+        )
+        diesel_by_rig_month = [
+            {
+                "rig_id": row["rig_id"],
+                "rig_name": rig_names.get(row["rig_id"], ""),
+                "month": row["month"].strftime("%Y-%m"),
+                "litres": float(row["total"] or 0),
+            }
+            for row in diesel_by_rig_month_rows
+        ]
+
+        water_by_rig_month_rows = (
+            dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
+            .values("rig_id", "month")
+            .annotate(total=Sum("consumption_water"))
+            .order_by("rig_id", "month")
+        )
+        water_by_rig_month = [
+            {
+                "rig_id": row["rig_id"],
+                "rig_name": rig_names.get(row["rig_id"], ""),
+                "month": row["month"].strftime("%Y-%m"),
+                "litres": float(row["total"] or 0),
+            }
+            for row in water_by_rig_month_rows
+        ]
+
         flat_by_rig_month_rows = (
             drill_ops_qs.filter(rop_trip_mh__lte=0)
             .annotate(month=TruncMonth("drilling_dtl__drilling_dtl_dt"))
@@ -244,8 +329,13 @@ class DrillingPerformanceDashboardView(APIView):
                 "rop_by_section": rop_by_section,
                 "rop_by_section_detail": rop_by_section_detail,
                 "ops_breakdown": ops_breakdown,
+                "hours_breakdown": hours_breakdown,
                 "metres_by_rig": metres_by_rig,
                 "metres_by_rig_month": metres_by_rig_month,
+                "diesel_by_rig": diesel_by_rig,
+                "diesel_by_rig_month": diesel_by_rig_month,
+                "water_by_rig": water_by_rig,
+                "water_by_rig_month": water_by_rig_month,
                 "flat_by_rig": flat_by_rig,
                 "flat_by_rig_month": flat_by_rig_month,
             }

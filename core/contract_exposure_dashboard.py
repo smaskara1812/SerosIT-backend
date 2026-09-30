@@ -31,7 +31,7 @@ class ContractExposureDashboardView(APIView):
     entity_key = "dashboards.contract_exposure"
 
     def get(self, request):
-        today = timezone.localdate()
+        today = timezone.now().date()
         accessible = get_accessible_rig_ids(request)  # None = every rig
 
         rig_qs = dashboard_rig_queryset()

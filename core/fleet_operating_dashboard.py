@@ -27,7 +27,7 @@ class FleetOperatingDashboardView(APIView):
     entity_key = "dashboards.fleet_operating_picture"
 
     def get(self, request):
-        today = timezone.localdate()
+        today = timezone.now().date()
         accessible = get_accessible_rig_ids(request)  # None = every rig
 
         rig_qs = dashboard_rig_queryset()

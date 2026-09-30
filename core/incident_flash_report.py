@@ -20,18 +20,12 @@ for why that logic lives separately from this report.
 """
 
 import os
-from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from .company_branding import resolve_rig_company_branding
-
-# The app's TIME_ZONE setting is UTC (for storage consistency), but every
-# rig/incident in this data is India-based, so the printed report always
-# converts to IST regardless of the server's own configured timezone.
-IST = ZoneInfo("Asia/Kolkata")
 
 SEVERITY_LABELS = {"H": "High", "M": "Medium", "L": "Low"}
 # Same palette as SEVERITY_BADGE in IncidentDetailsListPage.jsx, so the
@@ -64,14 +58,8 @@ def _fmt_date(dt):
 
 
 def _fmt_datetime(dt):
-    # incident_date/incident_reported_dt are stored timezone-aware (UTC) —
-    # convert to IST before formatting so the report doesn't print UTC
-    # times (see IST comment above; Django's own TIME_ZONE is UTC, so
-    # timezone.localtime() alone would be a no-op here).
     if not dt:
         return ""
-    if timezone.is_aware(dt):
-        dt = dt.astimezone(IST)
     return dt.strftime("%d/%m/%Y %H:%M")
 
 

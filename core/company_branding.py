@@ -98,3 +98,15 @@ def resolve_rig_company_branding(rig_id, effective_date):
             result[key] = f"{LETTERHEAD_DIR}/{short_name}/{filename}"
 
     return result
+
+
+def seros_logo_path():
+    """Absolute path to the plain SEROS logo (media/Letterhead Logo/
+    Big_Company_Logo.jpg — the root file, not one of the per-company
+    subfolders resolve_rig_company_branding reads from). For reports that
+    span multiple rigs/companies at once and so have no single company's
+    letterhead to show (Hazard ID Card Report, Incident Register) — see
+    incident_register_report.py's own docstring on why those carry no
+    dynamic branding of their own. Returns None if the file is missing."""
+    path = os.path.join(settings.MEDIA_ROOT, LETTERHEAD_DIR, IMAGE_FILES["big_logo_path"])
+    return path if os.path.isfile(path) else None

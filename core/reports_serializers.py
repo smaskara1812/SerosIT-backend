@@ -72,7 +72,7 @@ class HazardCardSerializer(serializers.ModelSerializer):
     rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="Unknown")
     haz_type_name = serializers.CharField(source="haz_type.haz_type_name", read_only=True, default="")
     work_location_name = serializers.CharField(source="work_location.work_location", read_only=True, default="")
-    resp_dept_name = serializers.CharField(source="resp_dept.dept_dispname", read_only=True, default="")
+    resp_dept_name = serializers.CharField(source="resp_dept.vessel_dept_name", read_only=True, default="")
     resp_rank_name = serializers.CharField(source="resp_rank.rank_name", read_only=True, default="")
     status_label = serializers.SerializerMethodField()
     tfs_bool = serializers.SerializerMethodField()

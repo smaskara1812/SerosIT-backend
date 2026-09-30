@@ -40,7 +40,7 @@ class ItAssetDashboardView(APIView):
     entity_key = "dashboards.it_asset_overview"
 
     def get(self, request):
-        today = timezone.localdate()
+        today = timezone.now().date()
 
         qs = MstItAsset.objects.all()
 

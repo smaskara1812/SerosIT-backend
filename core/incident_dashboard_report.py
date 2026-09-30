@@ -6,13 +6,10 @@ incidents vs. Incident Actions vs. Other QHSE Actions — see
 DRILLDOWN_PDF_COLUMNS in incident_dashboard.py).
 """
 
-from zoneinfo import ZoneInfo
-
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils import timezone
 
-IST = ZoneInfo("Asia/Kolkata")
 PRINT_ROW_LIMIT = 2000
 
 
@@ -20,8 +17,7 @@ def _fmt_cell(v):
     import datetime
 
     if isinstance(v, datetime.datetime):
-        dt = v.astimezone(IST) if timezone.is_aware(v) else v
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return v.strftime("%d/%m/%Y %H:%M")
     if isinstance(v, datetime.date):
         return v.strftime("%d/%m/%Y")
     return v if v not in (None, "") else "—"
@@ -37,7 +33,7 @@ def render_drilldown_pdf(title, summary_lines, columns, rows):
         "summary_lines": summary_lines,
         "columns": columns,
         "rows": [[_fmt_cell(v) for v in row] for row in shown_rows],
-        "generated_at": timezone.now().astimezone(IST).strftime("%d/%m/%Y %H:%M"),
+        "generated_at": timezone.now().strftime("%d/%m/%Y %H:%M"),
         "total": total,
         "shown": len(shown_rows),
         "truncated": total > PRINT_ROW_LIMIT,

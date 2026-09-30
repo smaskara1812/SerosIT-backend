@@ -2960,8 +2960,13 @@ class HazardCard(models.Model):
     timeout_for_safety = models.CharField(max_length=1)
     hazard_desc = models.CharField(max_length=200)
     action_taken = models.CharField(max_length=200, null=True, blank=True)
+    # NOT Mst_Department — legacy's Responsible Dept picker for this form
+    # reads Mst_Vessel_Dept (Drilling/Subsea/Operations/...), a different,
+    # smaller table than the general-purpose org department master. Every
+    # imported resp_dept_id value (4-10) only makes sense as a
+    # MstVesselDept id (MstDepartment has 222 rows in a disjoint id range).
     resp_dept = models.ForeignKey(
-        MstDepartment, db_column="resp_dept_id", on_delete=models.PROTECT, related_name="hazard_cards"
+        MstVesselDept, db_column="resp_dept_id", on_delete=models.PROTECT, related_name="hazard_cards"
     )
     resp_rank = models.ForeignKey(
         MstRank, db_column="resp_rank_id", on_delete=models.PROTECT, related_name="hazard_cards"

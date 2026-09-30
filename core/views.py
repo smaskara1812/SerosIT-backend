@@ -1,5 +1,4 @@
 import json
-from zoneinfo import ZoneInfo
 
 from django.db.models import Q
 from django.utils import timezone as dj_timezone
@@ -98,7 +97,6 @@ def dashboard_api(request):
     authenticated user regardless of their User Rights grid — same trust
     level as the login screen itself, so only non-sensitive, own-account
     data belongs here (never a shared business figure)."""
-    ist = ZoneInfo("Asia/Kolkata")
     last_login = (
         SysAuditLog.objects.filter(username=request.user.username, action="login")
         .order_by("-ts")
@@ -107,8 +105,8 @@ def dashboard_api(request):
     )
     return Response(
         {
-            "server_time": dj_timezone.localtime(dj_timezone.now(), ist).isoformat(),
-            "last_login": dj_timezone.localtime(last_login, ist).isoformat() if last_login else None,
+            "server_time": dj_timezone.now().isoformat(),
+            "last_login": last_login.isoformat() if last_login else None,
         }
     )
 
@@ -441,11 +439,8 @@ def admin_audit_list_api(request):
             "ip",
         )
     )
-    ist = ZoneInfo("Asia/Kolkata")
     for r in rows:
-        r["ts"] = (
-            dj_timezone.localtime(r["ts"], ist).strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
-        )
+        r["ts"] = r["ts"].strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
     return Response(
         {
             "results": rows,
@@ -536,11 +531,8 @@ def admin_email_log_list_api(request):
     )
     sender_ids = {r["sent_by_user_id"] for r in rows if r["sent_by_user_id"]}
     sender_names = dict(MstUser.objects.filter(user_id__in=sender_ids).values_list("user_id", "user_login_id"))
-    ist = ZoneInfo("Asia/Kolkata")
     for r in rows:
-        r["sent_dt"] = (
-            dj_timezone.localtime(r["sent_dt"], ist).strftime("%Y-%m-%d %H:%M:%S") if r["sent_dt"] else ""
-        )
+        r["sent_dt"] = r["sent_dt"].strftime("%Y-%m-%d %H:%M:%S") if r["sent_dt"] else ""
         r["sent_by"] = sender_names.get(r["sent_by_user_id"], "") or "System"
     return Response(
         {

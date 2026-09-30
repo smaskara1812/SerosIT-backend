@@ -283,7 +283,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             if active in ("Y", "N"):
                 from django.utils import timezone
 
-                today = timezone.localdate()
+                today = timezone.now().date()
                 ongoing = Q(**{f"{self.date_active_field}__isnull": True}) | Q(
                     **{f"{self.date_active_field}__gte": today}
                 )
@@ -1570,7 +1570,7 @@ class MstVesselDeptViewSet(BaseMasterViewSet):
     serializer_class = MstVesselDeptSerializer
     entity_key = "masters.vessel_depts"
     name_field = "vessel_dept_name"
-    reference_checks = [("ranks", "Ranks")]
+    reference_checks = [("ranks", "Ranks"), ("hazard_cards", "Hazard Cards")]
     search_fields = ["vessel_dept_name"]
 
 
@@ -1939,7 +1939,7 @@ def _parse_action_date(request):
 
     raw = request.data.get("action_date")
     if not raw:
-        return timezone.localdate()
+        return timezone.now().date()
     return parse_date(raw)
 
 
@@ -1951,9 +1951,9 @@ def _close_datetime_for(action_date):
     used when an end date is typed into the holder edit form."""
     from django.utils import timezone
 
-    if action_date == timezone.localdate():
+    if action_date == timezone.now().date():
         return timezone.now()
-    return timezone.make_aware(datetime.datetime.combine(action_date, datetime.time(23, 59, 59)))
+    return datetime.datetime.combine(action_date, datetime.time(23, 59, 59))
 
 
 class MstItAssetViewSet(BaseMasterViewSet):
@@ -2024,7 +2024,7 @@ class MstItAssetViewSet(BaseMasterViewSet):
         if warranty_status:
             from django.utils import timezone
 
-            today = timezone.localdate()
+            today = timezone.now().date()
             soon = today + timezone.timedelta(days=90)
             if warranty_status == "expired":
                 qs = qs.filter(it_asset_warranty_upto__lt=today)
@@ -2281,9 +2281,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         # output_field) crashes trying to timezone-convert a str. Wrapping
         # the whole thing in Cast(..., DateTimeField()) forces MySQL to
         # CAST(... AS DATETIME) and actually report the right column type.
-        far_future = Value(
-            datetime.datetime(2100, 1, 1, tzinfo=datetime.timezone.utc), output_field=DateTimeField()
-        )
+        far_future = Value(datetime.datetime(2100, 1, 1), output_field=DateTimeField())
         return qs.annotate(
             _sort_to=Cast(Coalesce("it_asset_holder_to", far_future), output_field=DateTimeField())
         ).order_by("-_sort_to", "-it_asset_holder_from")

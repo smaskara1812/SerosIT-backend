@@ -293,7 +293,7 @@ class ActivityMonitorDetailView(APIView):
                 completion_dt = date.fromisoformat(completion_dt_raw)
             except ValueError:
                 return Response({"error": "Invalid Completion Date."}, status=400)
-            if completion_dt > timezone.localdate():
+            if completion_dt > timezone.now().date():
                 return Response({"error": "Completion Date must be on or before today."}, status=400)
 
         completion_remark = (data.get("completion_remark") or "").strip() or None

@@ -13,16 +13,24 @@
 
   .header {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     justify-content: space-between;
+    gap: 12px;
     padding-bottom: 8px;
     border-bottom: 1.5px solid #1a3f7a;
     margin-bottom: 8px;
   }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .logo { height: 30px; }
   .title { font-size: 15pt; font-weight: 700; color: #1a3f7a; }
-  .subtitle { font-size: 8pt; color: #6b7280; margin-top: 2px; }
-  .meta { text-align: right; font-size: 7.6pt; color: #6b7280; }
+  .meta { text-align: right; font-size: 7.6pt; color: #6b7280; flex-shrink: 0; }
   .meta .value { font-weight: 600; color: #374151; }
+
+  .filters { margin-bottom: 8px; }
+  .filter-chip {
+    background: #eef2ff; color: #374151; border: 0.75px solid #c7d2fe;
+    border-radius: 999px; padding: 2px 8px; font-size: 7.2pt;
+  }
 
   .truncated-note {
     background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
@@ -48,15 +56,17 @@
 </head>
 <body>
   <div class="header">
-    <div>
+    <div class="header-left">
+      {% if logo_path %}<img class="logo" src="file://{{ logo_path }}">{% endif %}
       <div class="title">Incident Register</div>
-      <div class="subtitle">{{ filter_summary }}</div>
     </div>
     <div class="meta">
       <div>Generated <span class="value">{{ generated_at }}</span></div>
       <div>Total <span class="value">{{ total }}</span> incident{{ total|pluralize }}</div>
     </div>
   </div>
+
+  <div class="filters"><span class="filter-chip">{{ filter_summary }}</span></div>
 
   {% if truncated %}
   <div class="truncated-note">

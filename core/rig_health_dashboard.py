@@ -52,7 +52,7 @@ class RigHealthDashboardView(APIView):
     entity_key = "dashboards.rig_health"
 
     def get(self, request):
-        today = timezone.localdate()
+        today = timezone.now().date()
         year_start = date(today.year, 1, 1)
         accessible = get_accessible_rig_ids(request)  # None = every rig
 
