@@ -10,6 +10,7 @@ from .incident_views import (
     IncidentRootCauseViewSet,
 )
 from .hazard_card_views import HazardCardViewSet as HazardIdCardViewSet
+from .hse_drill_record import HseDrillRecordHdrViewSet
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
@@ -38,6 +39,16 @@ from .activity_monitor import (
     ActivityMonitorSuggestView,
     ActivityMonitorView,
 )
+from .mis_hse_return import (
+    MisHseReturnActivitiesView,
+    MisHseReturnDetailView,
+    MisHseReturnEnvironmentView,
+    MisHseReturnIncidentsView,
+    MisHseReturnManhoursView,
+    MisHseReturnMeetingsView,
+    MisHseReturnView,
+)
+from .mis_hse_review import MisHseReviewMetaView, MisHseReviewPrintView, MisHseReviewView, ProjectRigsView
 
 router = DefaultRouter()
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
@@ -46,6 +57,7 @@ router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename=
 router.register("qhse/incident-actions", IncidentActionViewSet, basename="qhse-incident-action")
 router.register("qhse/incident-register", IncidentRegisterViewSet, basename="qhse-incident-register")
 router.register("qhse/hazard-id-card", HazardIdCardViewSet, basename="qhse-hazard-id-card")
+router.register("qhse/hse-drill-record", HseDrillRecordHdrViewSet, basename="qhse-hse-drill-record")
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")
@@ -101,6 +113,11 @@ router.register("masters/parts-of-body", masters_views.MstPartsOfBodyViewSet, ba
 router.register("masters/qhse-categories", masters_views.MstQhseCategoryViewSet, basename="qhse-category")
 router.register("masters/hse-activities", masters_views.MstHseActivityViewSet, basename="hse-activity")
 router.register("masters/hse-consumables", masters_views.MstHseConsumableViewSet, basename="hse-consumable")
+router.register(
+    "masters/hse-manhours-parties", masters_views.MstHseManhoursPartyViewSet, basename="hse-manhours-party"
+)
+router.register("masters/hse-meetings", masters_views.MstHseMeetingViewSet, basename="hse-meeting")
+router.register("masters/hse-drills", masters_views.MstHseDrillViewSet, basename="hse-drill")
 router.register("masters/hazard-types", masters_views.MstHazardTypeViewSet, basename="hazard-type")
 router.register("masters/users", masters_views.MstUserViewSet, basename="mst-user")
 router.register("masters/employees", masters_views.MstEmployeeViewSet, basename="mst-employee")
@@ -390,6 +407,37 @@ urlpatterns = [
     path("qhse/activity-monitor/suggest/", ActivityMonitorSuggestView.as_view(), name="qhse_activity_monitor_suggest"),
     path("qhse/activity-monitor/export/", ActivityMonitorExportView.as_view(), name="qhse_activity_monitor_export"),
     path("qhse/activity-monitor/<int:pk>/", ActivityMonitorDetailView.as_view(), name="qhse_activity_monitor_detail"),
+    path("qhse/mis-hse-return/", MisHseReturnView.as_view(), name="qhse_mis_hse_return"),
+    path("qhse/mis-hse-return/<int:pk>/", MisHseReturnDetailView.as_view(), name="qhse_mis_hse_return_detail"),
+    path(
+        "qhse/mis-hse-return/<int:pk>/manhours/",
+        MisHseReturnManhoursView.as_view(),
+        name="qhse_mis_hse_return_manhours",
+    ),
+    path(
+        "qhse/mis-hse-return/<int:pk>/incidents/",
+        MisHseReturnIncidentsView.as_view(),
+        name="qhse_mis_hse_return_incidents",
+    ),
+    path(
+        "qhse/mis-hse-return/<int:pk>/meetings/",
+        MisHseReturnMeetingsView.as_view(),
+        name="qhse_mis_hse_return_meetings",
+    ),
+    path(
+        "qhse/mis-hse-return/<int:pk>/activities/",
+        MisHseReturnActivitiesView.as_view(),
+        name="qhse_mis_hse_return_activities",
+    ),
+    path(
+        "qhse/mis-hse-return/<int:pk>/environment/",
+        MisHseReturnEnvironmentView.as_view(),
+        name="qhse_mis_hse_return_environment",
+    ),
+    path("qhse/mis-hse-review/meta/", MisHseReviewMetaView.as_view(), name="qhse_mis_hse_review_meta"),
+    path("qhse/mis-hse-review/project-rigs/", ProjectRigsView.as_view(), name="qhse_mis_hse_review_project_rigs"),
+    path("qhse/mis-hse-review/", MisHseReviewView.as_view(), name="qhse_mis_hse_review"),
+    path("qhse/mis-hse-review/print/", MisHseReviewPrintView.as_view(), name="qhse_mis_hse_review_print"),
     path(
         "qhse/activity-closure-analysis/",
         ActivityClosureAnalysisView.as_view(),

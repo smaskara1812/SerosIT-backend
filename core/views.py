@@ -5,6 +5,8 @@ from django.utils import timezone as dj_timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from . import audit as _audit
@@ -70,6 +72,18 @@ def logout_api(request):
         UserMailCredential.objects.filter(user_id=uid).delete()
     except UserProfile.DoesNotExist:
         pass
+    # Blacklist the refresh token this session is actually holding — the
+    # access token expires on its own in 15 minutes, but without this the
+    # refresh token (7-day lifetime) stayed valid after "Sign out" and
+    # could still mint new access tokens with it, same as rotation's own
+    # BLACKLIST_AFTER_ROTATION already does for every *other* refresh, just
+    # never for the one still live in the browser at logout time.
+    refresh = request.data.get("refresh")
+    if refresh:
+        try:
+            RefreshToken(refresh).blacklist()
+        except TokenError:
+            pass
     return Response({"success": True})
 
 

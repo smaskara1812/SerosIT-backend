@@ -87,7 +87,7 @@ def _pie_chart(title, counts, size=132):
     return {"title": title, "svg": svg, "legend": legend}
 
 
-def render_hazard_card_report_pdf(queryset, filter_summary):
+def render_hazard_card_report_pdf(queryset, filter_summary, period_label=None):
     from weasyprint import HTML
 
     total = queryset.count()
@@ -149,6 +149,7 @@ def render_hazard_card_report_pdf(queryset, filter_summary):
 
     context = {
         "logo_path": seros_logo_path(),
+        "period_label": period_label,
         "charts": charts,
         "groups": grouped_rows,
         "filter_summary": filter_summary,

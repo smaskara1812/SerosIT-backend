@@ -129,10 +129,23 @@ class ActivityMonitorView(APIView):
     entity_key = "qhse.activity_monitor"
     permission_classes = [HasMenuPermission]
 
+    # Default sort per status — open work leads with the most overdue item
+    # (oldest scheduled_dt) since that's the most urgent; a completed/all
+    # log defaults to newest-first, the right read for a history view. The
+    # ?ordering= param (below) lets the frontend override either default.
+    _ORDERINGS = {
+        "scheduled_asc": ("scheduled_dt", "activity_monitor_id"),
+        "scheduled_desc": ("-scheduled_dt", "-activity_monitor_id"),
+    }
+
     def get(self, request):
-        qs = ActivityMonitor.objects.select_related("activity", "rig").order_by("-scheduled_dt", "-activity_monitor_id")
+        qs = ActivityMonitor.objects.select_related("activity", "rig")
 
         status_param = request.query_params.get("status")
+        default_ordering = "scheduled_asc" if status_param == "open" else "scheduled_desc"
+        ordering_param = request.query_params.get("ordering") or default_ordering
+        qs = qs.order_by(*self._ORDERINGS.get(ordering_param, self._ORDERINGS[default_ordering]))
+
         if status_param == "open":
             qs = qs.filter(completion_dt__isnull=True)
         elif status_param == "completed":

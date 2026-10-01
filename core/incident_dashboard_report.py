@@ -10,6 +10,8 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils import timezone
 
+from .company_branding import seros_logo_path
+
 PRINT_ROW_LIMIT = 2000
 
 
@@ -29,6 +31,7 @@ def render_drilldown_pdf(title, summary_lines, columns, rows):
     total = len(rows)
     shown_rows = rows[:PRINT_ROW_LIMIT]
     context = {
+        "logo_path": seros_logo_path(),
         "title": title,
         "summary_lines": summary_lines,
         "columns": columns,

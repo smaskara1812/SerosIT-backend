@@ -471,18 +471,39 @@ class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
     def _filter_summary(self, request):
         """Human-readable caption for the print/PDF header — mirrors the
         legacy report's "For the Period X to Y" caption, extended with
-        whichever Category/date range is actually active."""
+        every filter get_queryset actually reads (previously missing Rigs
+        and Incident Types entirely — confirmed: picking a single rig and
+        printing showed no mention of it in the report header at all)."""
         params = request.query_params
         parts = []
         category_id = params.get("category")
         if category_id and category_id.isdigit():
             category = MstFsCategory.objects.filter(pk=category_id).first()
             if category:
-                parts.append(category.fs_category_name)
+                parts.append(f"Category: {category.fs_category_name}")
+        rigs = params.get("rigs")
+        if rigs:
+            rig_ids = [x for x in rigs.split(",") if x.strip().isdigit()]
+            names = list(MstRig.objects.filter(rig_id__in=rig_ids).order_by("rig_name").values_list("rig_name", flat=True))
+            if names:
+                parts.append(f"Rig{'s' if len(names) > 1 else ''}: {', '.join(names)}")
+        incident_types = params.get("incident_types")
+        if incident_types:
+            type_ids = [x for x in incident_types.split(",") if x.strip().isdigit()]
+            names = list(
+                MstIncidentType.objects.filter(incident_type_id__in=type_ids)
+                .order_by("incident_type")
+                .values_list("incident_type", flat=True)
+            )
+            if names:
+                parts.append(f"Type{'s' if len(names) > 1 else ''}: {', '.join(names)}")
         date_from = params.get("date_from")
         date_to = params.get("date_to")
         if date_from or date_to:
             parts.append(f"Period: {date_from or '…'} to {date_to or '…'}")
+        search = params.get("search")
+        if search:
+            parts.append(f'Search: "{search}"')
         return " · ".join(parts) if parts else "All incidents"
 
     @action(detail=False, methods=["get"], url_path="meta")
@@ -549,7 +570,10 @@ class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
         )
         _audit.record_action(
             request, "export", self.entity_key, record_label="Incident Register Excel export",
-            changes={"rows_exported": {"old": None, "new": len(rows)}},
+            changes={
+                "filters": {"old": None, "new": self._filter_summary(request)},
+                "rows_exported": {"old": None, "new": len(rows)},
+            },
         )
         return response
 
@@ -565,6 +589,9 @@ class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
         response["Content-Disposition"] = 'inline; filename="Incident Register.pdf"'
         _audit.record_action(
             request, "export", self.entity_key, record_label="Incident Register PDF print",
-            changes={"rows_printed": {"old": None, "new": qs.count()}},
+            changes={
+                "filters": {"old": None, "new": self._filter_summary(request)},
+                "rows_printed": {"old": None, "new": qs.count()},
+            },
         )
         return response

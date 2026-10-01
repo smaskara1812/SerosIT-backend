@@ -288,8 +288,19 @@ class HazardCardViewSet(BaseMasterViewSet):
         _validate_close_out(data, instance=serializer.instance)
         old_snapshot = self._snapshot(serializer.instance)
         uid = self._current_user_id(self.request)
-        rig = data.get("rig", serializer.instance.rig)
-        save_kwargs = {"contract": self._resolve_contract(rig), "mod_user_id": uid, "mod_dt": timezone.now()}
+        save_kwargs = {"mod_user_id": uid, "mod_dt": timezone.now()}
+        new_rig = data.get("rig")
+        if new_rig is not None and new_rig != serializer.instance.rig:
+            # Rig actually changed — re-resolve which contract that rig is
+            # on today. Otherwise the contract already stored on the card
+            # is left untouched: re-resolving on every save was silently
+            # rewriting it to "today's" contract for that rig on every
+            # edit (even an unrelated remark or status change), and
+            # outright blocked saving any card whose rig has no contract
+            # active today even though the card already had one on file.
+            # Confirmed against real data: 325 open cards stored on an
+            # older contract, 164 with none active today.
+            save_kwargs["contract"] = self._resolve_contract(new_rig)
         party = data.get("reported_by_party", serializer.instance.reported_by_party)
         if "reported_by_party" in data or "reported_by_fs_emp" in data or "reported_by_name" in data:
             save_kwargs["reported_by_fs_emp"] = data.get("reported_by_fs_emp") if party == "EOSIL" else None
@@ -382,11 +393,16 @@ class HazardCardViewSet(BaseMasterViewSet):
         period_label = f"{_fmt_date(date_from)} - {_fmt_date(date_to)}" if (date_from or date_to) else None
 
         qs = self.get_queryset()
-        pdf_bytes = render_hazard_card_report_pdf(qs, self._filter_summary(request), period_label)
+        filter_summary = self._filter_summary(request)
+        pdf_bytes = render_hazard_card_report_pdf(qs, filter_summary, period_label)
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = 'inline; filename="Hazard ID Card Report.pdf"'
         _audit.record_action(
             request, "export", self.entity_key, record_label="Hazard ID Card Report PDF print",
-            changes={"rows_printed": {"old": None, "new": qs.count()}},
+            changes={
+                "filters": {"old": None, "new": " · ".join(filter_summary)},
+                "period": {"old": None, "new": period_label},
+                "rows_printed": {"old": None, "new": qs.count()},
+            },
         )
         return response

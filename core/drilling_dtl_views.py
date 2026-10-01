@@ -11,7 +11,7 @@ from rest_framework.response import Response
 
 from . import approvals, mail_recipients, mail_templates, mailer
 from .drilling_dtl_serializers import DrillingDtlSerializer
-from .drilling_report import recompute_dtl_totals, resolve_drilling_hdr
+from .drilling_report import recompute_dtl_totals, recompute_hdr_totals, resolve_drilling_hdr
 from .masters_views import BaseMasterViewSet
 from .models import ApproverMappingDtl, DrillingDtl, MailRecipientMapping, MstUser, MstUserRigMapping, UserMailCredential
 
@@ -246,16 +246,37 @@ class DrillingDtlViewSet(BaseMasterViewSet):
 
     def perform_update(self, serializer):
         old_snapshot = self._snapshot(serializer.instance)
+        old_hdr_id = serializer.instance.drilling_hdr_id
         uid = self._current_user_id(self.request)
         rig = serializer.validated_data.get("rig") or serializer.instance.rig
         report_date = serializer.validated_data.get("drilling_dtl_dt") or serializer.instance.drilling_dtl_dt
         hdr = resolve_drilling_hdr(rig.rig_id, report_date)
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now(), drilling_hdr=hdr)
         recompute_dtl_totals(instance, uid)
+        # recompute_dtl_totals only rolls this day's numbers up onto
+        # whichever well it's on *now*. Changing Rig or Date can move a
+        # day to a different well (drilling_hdr is resolved fresh above) —
+        # without this, the well it left behind keeps that day baked into
+        # its tot_* totals forever, stale and un-recomputable from the UI.
+        if old_hdr_id and old_hdr_id != instance.drilling_hdr_id:
+            recompute_hdr_totals(old_hdr_id)
         changes = self._diff(old_snapshot, self._snapshot(instance))
         from . import audit as _audit
 
         _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def destroy(self, request, *args, **kwargs):
+        """Same reasoning as the Rig/Date-change case in perform_update
+        above — the base destroy() (BaseMasterViewSet's) has no way to
+        know this day's well needs recomputing once it's gone, so its
+        tot_* totals would otherwise keep including a day that no longer
+        exists."""
+        instance = self.get_object()
+        hdr_id = instance.drilling_hdr_id
+        response = super().destroy(request, *args, **kwargs)
+        if response.status_code < 400 and hdr_id:
+            recompute_hdr_totals(hdr_id)
+        return response
 
     def _role(self, instance):
         uid = self._current_user_id(self.request)

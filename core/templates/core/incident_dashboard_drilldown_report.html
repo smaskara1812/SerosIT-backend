@@ -5,20 +5,28 @@
 <style>
   @page {
     size: A4 landscape;
-    margin: 12mm 12mm 13mm 12mm;
+    margin: 30mm 12mm 13mm 12mm;
+    @top-center { content: element(pageHeader); width: 100%; }
     @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9ca3af; font-family: Arial, Helvetica, sans-serif; }
   }
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 8.4pt; color: #1f2937; margin: 0; }
 
+  /* Captured as a named running element (see @page's @top-center above) —
+     removed from normal document flow and re-rendered by WeasyPrint at
+     the top of every page, not just the first — same technique as
+     hazard_card_report.html / incident_register_report.html. */
   .header {
+    position: running(pageHeader);
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
+    width: 100%;
     padding-bottom: 8px;
     border-bottom: 1.5px solid #1a3f7a;
-    margin-bottom: 8px;
   }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .logo { height: 30px; }
   .title { font-size: 15pt; font-weight: 700; color: #1a3f7a; }
   .subtitle { font-size: 8pt; color: #6b7280; margin-top: 2px; }
 
@@ -54,13 +62,16 @@
 </head>
 <body>
   <div class="header">
-    <div>
-      <div class="title">{{ title }}</div>
-      <div class="subtitle">Incident Dashboard — drill-down record list</div>
-      <div class="filters">
-        {% for line in summary_lines %}
-        <span class="filter-chip">{{ line }}</span>
-        {% endfor %}
+    <div class="header-left">
+      {% if logo_path %}<img class="logo" src="file://{{ logo_path }}">{% endif %}
+      <div>
+        <div class="title">{{ title }}</div>
+        <div class="subtitle">Incident Dashboard — drill-down record list</div>
+        <div class="filters">
+          {% for line in summary_lines %}
+          <span class="filter-chip">{{ line }}</span>
+          {% endfor %}
+        </div>
       </div>
     </div>
     <div class="meta">

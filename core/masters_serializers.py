@@ -38,6 +38,9 @@ from .models import (
     MstHazardType,
     MstHseActivity,
     MstHseConsumable,
+    MstHseDrill,
+    MstHseManhoursParty,
+    MstHseMeeting,
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
@@ -340,6 +343,34 @@ class MstHseActivitySerializer(serializers.ModelSerializer):
 class MstHseConsumableSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstHseConsumable
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstHseManhoursPartySerializer(serializers.ModelSerializer):
+    cost_centre_type_name = serializers.CharField(
+        source="cost_centre_type.cost_centre_type_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = MstHseManhoursParty
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstHseMeetingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstHseMeeting
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class MstHseDrillSerializer(serializers.ModelSerializer):
+    hse_drill_frequency_display = serializers.CharField(source="get_hse_drill_frequency_display", read_only=True)
+    rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
+
+    class Meta:
+        model = MstHseDrill
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 

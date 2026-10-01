@@ -5,20 +5,26 @@
 <style>
   @page {
     size: A4 landscape;
-    margin: 12mm 12mm 13mm 12mm;
+    margin: 26mm 12mm 13mm 12mm;
+    @top-center { content: element(pageHeader); width: 100%; }
     @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9ca3af; font-family: Arial, Helvetica, sans-serif; }
   }
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 8.4pt; color: #1f2937; margin: 0; }
 
+  /* Captured as a named running element (see @page's @top-center above) —
+     removed from normal document flow and re-rendered by WeasyPrint at
+     the top of every page, not just the first — same technique as
+     hazard_card_report.html. */
   .header {
+    position: running(pageHeader);
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+    width: 100%;
     padding-bottom: 8px;
     border-bottom: 1.5px solid #1a3f7a;
-    margin-bottom: 8px;
   }
   .header-left { display: flex; align-items: center; gap: 10px; }
   .logo { height: 30px; }

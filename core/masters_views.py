@@ -32,6 +32,9 @@ from .models import (
     MstHazardType,
     MstHseActivity,
     MstHseConsumable,
+    MstHseDrill,
+    MstHseManhoursParty,
+    MstHseMeeting,
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
@@ -154,6 +157,9 @@ from .masters_serializers import (
     MstHazardTypeSerializer,
     MstHseActivitySerializer,
     MstHseConsumableSerializer,
+    MstHseDrillSerializer,
+    MstHseManhoursPartySerializer,
+    MstHseMeetingSerializer,
     MstIndicatorSubtypeSerializer,
     MstIndicatorTypeSerializer,
     MstInterviewerSerializer,
@@ -1134,6 +1140,33 @@ class MstHseConsumableViewSet(BaseMasterViewSet):
     entity_key = "masters.hse_consumables"
     name_field = "hse_consumable_name"
     search_fields = ["hse_consumable_name"]
+
+
+class MstHseManhoursPartyViewSet(BaseMasterViewSet):
+    queryset = MstHseManhoursParty.objects.select_related("cost_centre_type").all()
+    serializer_class = MstHseManhoursPartySerializer
+    entity_key = "masters.hse_manhours_parties"
+    name_field = "hse_manhours_party_name"
+    search_fields = ["hse_manhours_party_name"]
+    filterable_fields = ["hse_manhours_party_type", "cost_centre_type"]
+
+
+class MstHseMeetingViewSet(BaseMasterViewSet):
+    queryset = MstHseMeeting.objects.all()
+    serializer_class = MstHseMeetingSerializer
+    entity_key = "masters.hse_meetings"
+    name_field = "hse_meeting_type"
+    search_fields = ["hse_meeting_type"]
+
+
+class MstHseDrillViewSet(BaseMasterViewSet):
+    queryset = MstHseDrill.objects.select_related("rig_type").all()
+    serializer_class = MstHseDrillSerializer
+    entity_key = "masters.hse_drills"
+    name_field = "hse_drill_name"
+    active_field = "hse_drill_active"
+    search_fields = ["hse_drill_name"]
+    filterable_fields = ["rig_type"]
 
 
 class MstHazardTypeViewSet(BaseMasterViewSet):

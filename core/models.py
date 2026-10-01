@@ -992,6 +992,55 @@ class MstHseConsumable(models.Model):
         return self.hse_consumable_name
 
 
+HSE_MANHOURS_PARTY_TYPE_CHOICES = [
+    ("SEROS", "SEROS"),
+    ("TP", "Third Party"),
+]
+
+
+class MstHseManhoursParty(models.Model):
+    """MIS Monthly HSE Return → Manhours tab's row source. cost_centre_type
+    scopes a row to Rig/Base-Yard/Office cost centres (null = applies to
+    all types), matching legacy's per-cost-centre-type party list."""
+
+    hse_manhours_party_id = models.AutoField(primary_key=True)
+    hse_manhours_party_name = models.CharField(max_length=50)
+    hse_manhours_party_type = models.CharField(max_length=5, choices=HSE_MANHOURS_PARTY_TYPE_CHOICES)
+    cost_centre_type = models.ForeignKey(
+        MstCostCentreType,
+        db_column="cost_centre_type_id",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="hse_manhours_parties",
+    )
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_hse_manhours_party"
+
+    def __str__(self):
+        return self.hse_manhours_party_name
+
+
+class MstHseMeeting(models.Model):
+    hse_meeting_id = models.AutoField(primary_key=True)
+    hse_meeting_type = models.CharField(max_length=50)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_hse_meeting"
+
+    def __str__(self):
+        return self.hse_meeting_type
+
+
 HAZ_TYPE_CLASS_CHOICES = [("Positive", "Positive"), ("Negative", "Negative")]
 
 
@@ -2356,6 +2405,15 @@ class DrillingDtl(models.Model):
 
     class Meta:
         db_table = "drilling_dtl"
+        constraints = [
+            # Nothing previously stopped two daily reports for the same
+            # rig+date; both would resolve to the same well and get
+            # rolled into its tot_* totals, silently double-counting that
+            # day. Confirmed no existing rows violate this before adding
+            # it. DrillingDtlSerializer.validate() gives the friendly
+            # 400 for the normal UI path; this is the DB-level backstop.
+            models.UniqueConstraint(fields=["rig", "drilling_dtl_dt"], name="uniq_drilling_dtl_rig_date"),
+        ]
 
     def __str__(self):
         return f"{self.rig.rig_name} — {self.drilling_dtl_dt}"
@@ -2569,6 +2627,12 @@ class MstIncidentType(models.Model):
     incident_type_id = models.AutoField(primary_key=True)
     incident_type = models.CharField(max_length=50)
     incident_abrv = models.CharField(max_length=5)
+    # Which incident types appear as a row on MIS Monthly HSE Return's
+    # Incidents tab — legacy scoped the same report to a subset of types via
+    # a Business_System_Id_6='Y' flag; some of ours (Civil Disturbance,
+    # High Potential Incident, Security Incident, Traffic,
+    # "Environmental Incident < 100 ltrs") were never part of that subset.
+    show_on_mis_hse_report = models.CharField(max_length=1, default="N")
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
@@ -3749,3 +3813,331 @@ class ActivityMonitor(models.Model):
     def __str__(self):
         rig_label = self.rig.rig_name if self.rig_id else "Office/Port"
         return f"{self.activity.activity_name} — {rig_label} ({self.scheduled_dt})"
+
+
+class MisMonthlyHseReturnsHdr(models.Model):
+    """QHSE → MIS Monthly HSE Return. One header per Cost Centre+Report
+    Month; the six tabs on that single page (Manhours, Incidents, Meetings,
+    Haz ID and Prompt Cards, HSE Inspections/Drills/Audits, Environment
+    Reporting) all hang off this row. lti_free_days lives here rather than
+    its own child table — legacy's MIS_Monthly_HSE_Incidents table only
+    ever stores this one manually-entered value (every other Incidents-tab
+    row is a live computed count against Incident, never persisted)."""
+
+    monthly_hse_returns_hdr_id = models.AutoField(primary_key=True)
+    cost_centre = models.ForeignKey(
+        MstCostCentre,
+        db_column="cost_centre_id",
+        on_delete=models.PROTECT,
+        related_name="mis_hse_returns",
+    )
+    # Nullable — an Office/Base-Yard Cost Centre (e.g. "Essar House -
+    # Mahalaxmi") has no Rig at all, and legacy data has real headers
+    # against exactly that kind of cost centre (17 of them). Cost Centre is
+    # always present though, so that's the real per-month uniqueness key,
+    # not Rig.
+    rig = models.ForeignKey(
+        MstRig, db_column="rig_id", null=True, blank=True, on_delete=models.PROTECT, related_name="mis_hse_returns"
+    )
+    report_no = models.CharField(max_length=20)
+    report_month = models.DateField()
+    lti_free_days = models.IntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mis_monthly_hse_returns_hdr"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cost_centre", "report_month"], name="uniq_mis_hse_return_cost_centre_month"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.rig.rig_name} — {self.report_month:%b %Y}"
+
+
+class MisMonthlyHseManhours(models.Model):
+    monthly_hse_manhours_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(
+        MisMonthlyHseReturnsHdr, db_column="monthly_hse_returns_hdr_id", on_delete=models.CASCADE, related_name="manhours"
+    )
+    party = models.ForeignKey(MstHseManhoursParty, db_column="hse_manhours_party_id", on_delete=models.PROTECT)
+    no_of_personnel = models.IntegerField(null=True, blank=True)
+    hours_worked = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mis_monthly_hse_manhours"
+        constraints = [
+            models.UniqueConstraint(fields=["hdr", "party"], name="uniq_mis_hse_manhours_hdr_party"),
+        ]
+
+
+class MisMonthlyHseMeetings(models.Model):
+    monthly_hse_meeting_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(
+        MisMonthlyHseReturnsHdr, db_column="monthly_hse_returns_hdr_id", on_delete=models.CASCADE, related_name="meetings"
+    )
+    meeting = models.ForeignKey(MstHseMeeting, db_column="hse_meeting_id", on_delete=models.PROTECT)
+    total_meetings = models.IntegerField(null=True, blank=True)
+    total_seros_employees = models.IntegerField(null=True, blank=True)
+    total_contractors = models.IntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mis_monthly_hse_meetings"
+        constraints = [
+            models.UniqueConstraint(fields=["hdr", "meeting"], name="uniq_mis_hse_meetings_hdr_meeting"),
+        ]
+
+
+class MisMonthlyHseActivities(models.Model):
+    monthly_hse_activity_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(
+        MisMonthlyHseReturnsHdr,
+        db_column="monthly_hse_returns_hdr_id",
+        on_delete=models.CASCADE,
+        related_name="hse_activities",
+    )
+    activity = models.ForeignKey(MstHseActivity, db_column="hse_activity_id", on_delete=models.PROTECT)
+    total_activities = models.IntegerField(null=True, blank=True)
+    seros_emp_count = models.IntegerField(null=True, blank=True)
+    contractor_count = models.IntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mis_monthly_hse_activities"
+        constraints = [
+            models.UniqueConstraint(fields=["hdr", "activity"], name="uniq_mis_hse_activities_hdr_activity"),
+        ]
+
+
+class MisMonthlyHseEnvironment(models.Model):
+    monthly_hse_environment_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(
+        MisMonthlyHseReturnsHdr,
+        db_column="monthly_hse_returns_hdr_id",
+        on_delete=models.CASCADE,
+        related_name="environment_rows",
+    )
+    consumable = models.ForeignKey(MstHseConsumable, db_column="hse_consumable_id", on_delete=models.PROTECT)
+    total_quantity = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    remarks = models.CharField(max_length=200, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mis_monthly_hse_environment"
+        constraints = [
+            models.UniqueConstraint(fields=["hdr", "consumable"], name="uniq_mis_hse_environment_hdr_consumable"),
+        ]
+
+
+HSE_DRILL_FREQUENCY_CHOICES = [
+    ("W", "Weekly"),
+    ("M", "Monthly"),
+    ("Q", "Quarterly"),
+    ("A", "Annual"),
+]
+
+
+class MstHseDrill(models.Model):
+    """QHSE → HSE Drills/Exercises' Type of Drill/Training lookup.
+    rig_type scopes a drill to Offshore-only or Onshore-only rigs (null =
+    every rig type) — legacy's own page special-cased this to a single
+    hardcoded rig id instead of reading the rig's actual type; this build
+    reads MstRig.rig_type instead, which generalizes correctly to every
+    rig rather than just the one legacy happened to hardcode."""
+
+    hse_drill_id = models.AutoField(primary_key=True)
+    hse_drill_name = models.CharField(max_length=100)
+    hse_drill_frequency = models.CharField(max_length=1, choices=HSE_DRILL_FREQUENCY_CHOICES)
+    rig_type = models.ForeignKey(
+        MstRigType, db_column="rig_type_id", null=True, blank=True, on_delete=models.PROTECT, related_name="hse_drills"
+    )
+    hse_drill_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_hse_drill"
+
+    def __str__(self):
+        return self.hse_drill_name
+
+
+class HseDrillRecordHdr(models.Model):
+    """QHSE → HSE Drills/Exercises. Rebuild of legacy
+    frmHSE_Drill_Record_Hdr — one record per drill/exercise run on a rig.
+    drill_record_no is server-generated on create, legacy format
+    "{Rig short name}/{Sr. No. rigwise}/{Calendar year}" (see
+    hse_drill_record.py) — never user-entered, same as Hazard ID Card's
+    own card number.
+
+    The *_duration fields (initial_response_time, fire_team_*_duration,
+    snr_team_duration, drill_muster, abandon_muster_offshore,
+    total_time_of_drill) are legacy's packed MM.SS format, not true
+    decimal minutes — e.g. 13.00 means 13 min 0 sec, not 13 fractional
+    minutes. The fractional part must be a valid seconds value (00-59),
+    enforced in hse_drill_record.py, matching legacy's own
+    checkDecimal_And_Sec client-side rule.
+
+    Child tables (Event/Observation/Improvement/Corrective Action/Photo
+    Upload) from the legacy page aren't modeled yet — out of scope until
+    built."""
+
+    drill_record_hdr_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="hse_drill_records")
+    drill_record_sr_no = models.IntegerField()
+    drill_record_no = models.CharField(max_length=20)
+    drill_dt = models.DateTimeField()
+    drill_location = models.CharField(max_length=20)
+    hse_drill_1 = models.ForeignKey(
+        MstHseDrill, db_column="hse_drill_id_1", on_delete=models.PROTECT, related_name="drill_records_as_1"
+    )
+    hse_drill_2 = models.ForeignKey(
+        MstHseDrill,
+        db_column="hse_drill_id_2",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="drill_records_as_2",
+    )
+    head_count = models.IntegerField()
+    initiated_by_fs_emp_1 = models.ForeignKey(
+        MstEmployee, db_column="initiated_by_fs_emp_id_1", on_delete=models.PROTECT, related_name="drills_initiated_as_1"
+    )
+    initiated_by_fs_emp_2 = models.ForeignKey(
+        MstEmployee,
+        db_column="initiated_by_fs_emp_id_2",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="drills_initiated_as_2",
+    )
+    initial_response_time = models.DecimalField(max_digits=4, decimal_places=2)
+    no_of_participants = models.IntegerField()
+    control_room_on_shore = models.CharField(max_length=1)
+    fire_team_1_size = models.IntegerField(null=True, blank=True)
+    fire_team_1_duration = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    fire_team_2_size = models.IntegerField(null=True, blank=True)
+    fire_team_2_duration = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    stretcher_team_size = models.IntegerField(null=True, blank=True)
+    maintenance_team_size = models.IntegerField(null=True, blank=True)
+    snr_team_size = models.IntegerField(null=True, blank=True)
+    snr_team_duration = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    drill_muster = models.DecimalField(max_digits=4, decimal_places=2)
+    abandon_muster_offshore = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    total_time_of_drill = models.DecimalField(max_digits=4, decimal_places=2)
+    approved_by_oim_fs_emp = models.ForeignKey(
+        MstEmployee, db_column="approved_by_oim_fs_emp_id", on_delete=models.PROTECT, related_name="drills_approved"
+    )
+    approved_by_companyman = models.CharField(max_length=20, null=True, blank=True)
+    revision_value = models.IntegerField(default=0)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_hdr"
+        constraints = [
+            models.UniqueConstraint(fields=["rig", "drill_record_sr_no"], name="uniq_hse_drill_record_rig_sr_no"),
+        ]
+
+    def __str__(self):
+        return self.drill_record_no
+
+
+class HseDrillRecordEvent(models.Model):
+    """A timestamped event during a drill — one row per Time/Event line on
+    the legacy printable report's Event table. CASCADE on the header
+    matches legacy's own explicit multi-table delete in
+    Prc_HSE_Drill_Record_Hdr's Delete branch."""
+
+    drill_rec_event_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseDrillRecordHdr, db_column="drill_record_hdr_id", on_delete=models.CASCADE, related_name="events")
+    drill_rec_event_time = models.DateTimeField()
+    drill_rec_event_desc = models.CharField(max_length=200, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_event"
+        ordering = ["drill_rec_event_time"]
+
+
+class HseDrillRecordObservation(models.Model):
+    drill_rec_observation_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseDrillRecordHdr, db_column="drill_record_hdr_id", on_delete=models.CASCADE, related_name="observations")
+    drill_rec_observation_desc = models.CharField(max_length=200, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_observation"
+
+
+class HseDrillRecordImprovement(models.Model):
+    drill_rec_improvement_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseDrillRecordHdr, db_column="drill_record_hdr_id", on_delete=models.CASCADE, related_name="improvements")
+    drill_rec_improvement_desc = models.CharField(max_length=200, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_improvement"
+
+
+class HseDrillRecordCorrectiveAction(models.Model):
+    drill_rec_corrective_action_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseDrillRecordHdr, db_column="drill_record_hdr_id", on_delete=models.CASCADE, related_name="corrective_actions")
+    drill_rec_corrective_action_desc = models.CharField(max_length=200, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_corrective_action"
+
+
+class HseDrillRecordPhotoUpload(models.Model):
+    """drill_rec_photo_upload_path is migrated as a historical path string
+    only — the actual image files lived on the legacy IIS file server
+    (paths like /Images/HSE_Drills_Photos/1.jpg), which isn't available
+    here, so these paths won't resolve to a real image in this app."""
+
+    drill_rec_photo_upload_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseDrillRecordHdr, db_column="drill_record_hdr_id", on_delete=models.CASCADE, related_name="photo_uploads")
+    drill_rec_photo_upload_path = models.CharField(max_length=50)
+    drill_rec_photo_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_drill_record_photo_upload"

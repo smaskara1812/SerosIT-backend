@@ -59,6 +59,12 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
     contract = serializers.IntegerField(source="drilling_hdr.contract_id", read_only=True, default=None)
     contract_no = serializers.CharField(source="drilling_hdr.contract.prj_contract_no", read_only=True, default="")
     ops = DrillingDtlOpsSerializer(many=True, required=False)
+    # Suppresses DRF's auto-generated UniqueTogetherValidator for the
+    # model's UniqueConstraint(rig, drilling_dtl_dt) — its generic "The
+    # fields rig, drilling_dtl_dt must make a unique set." would otherwise
+    # fire before validate() below gets a chance to give the friendlier,
+    # rig-name-and-date message.
+    validators = []
 
     class Meta:
         model = DrillingDtl
@@ -84,6 +90,22 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
             "mod_user_id",
             "mod_dt",
         ]
+
+    def validate(self, attrs):
+        # Friendly 400 for the normal UI path — DrillingDtl's own
+        # UniqueConstraint(rig, drilling_dtl_dt) is the DB-level backstop
+        # for anything that bypasses this serializer.
+        rig = attrs.get("rig") or getattr(self.instance, "rig", None)
+        report_date = attrs.get("drilling_dtl_dt") or getattr(self.instance, "drilling_dtl_dt", None)
+        if rig and report_date:
+            qs = DrillingDtl.objects.filter(rig=rig, drilling_dtl_dt=report_date)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"drilling_dtl_dt": f"A drilling report already exists for {rig.rig_name} on {report_date}."}
+                )
+        return attrs
 
     def _duration_hours(self, time_from, time_to):
         delta = time_to - time_from

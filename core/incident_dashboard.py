@@ -250,10 +250,20 @@ def _build_part_of_body(qs, year_ids):
         for p in MstPartsOfBody.objects.order_by("part_of_body_name").values("part_of_body_id", "part_of_body_name")
     ]
     counts = defaultdict(int)
-    for slot in ("part_of_body_1_id", "part_of_body_2_id", "part_of_body_3_id", "part_of_body_4_id"):
-        grouped = qs.exclude(**{slot: None}).values(slot, "financial_year_id").annotate(n=Count("incident_id"))
-        for row in grouped:
-            counts[(row[slot], row["financial_year_id"])] += row["n"]
+    # Summing each slot's own Count() independently double-counted an
+    # incident that has the same part in two slots (e.g. Hand in both
+    # part_of_body_1 and part_of_body_3) — confirmed against real data: 32
+    # incidents have a repeated part across their 4 slots, inflating that
+    # part's pivot cell above what the drill-down actually lists (Hand was
+    # off by 16). Dedupe per incident instead: each incident contributes
+    # at most one count per distinct part_id, however many slots it's in.
+    rows = qs.values(
+        "financial_year_id", "part_of_body_1_id", "part_of_body_2_id", "part_of_body_3_id", "part_of_body_4_id"
+    )
+    for row in rows:
+        parts = {row[f"part_of_body_{i}_id"] for i in (1, 2, 3, 4)} - {None}
+        for part_id in parts:
+            counts[(part_id, row["financial_year_id"])] += 1
     return _pivot_from_counts(universe, counts, year_ids)
 
 
