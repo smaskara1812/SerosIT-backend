@@ -11,6 +11,12 @@ from .incident_views import (
 )
 from .hazard_card_views import HazardCardViewSet as HazardIdCardViewSet
 from .hse_drill_record import HseDrillRecordHdrViewSet
+from .hse_drill_record_children import (
+    HseDrillRecordCorrectiveActionViewSet,
+    HseDrillRecordEventViewSet,
+    HseDrillRecordImprovementViewSet,
+    HseDrillRecordObservationViewSet,
+)
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
@@ -58,6 +64,18 @@ router.register("qhse/incident-actions", IncidentActionViewSet, basename="qhse-i
 router.register("qhse/incident-register", IncidentRegisterViewSet, basename="qhse-incident-register")
 router.register("qhse/hazard-id-card", HazardIdCardViewSet, basename="qhse-hazard-id-card")
 router.register("qhse/hse-drill-record", HseDrillRecordHdrViewSet, basename="qhse-hse-drill-record")
+router.register("qhse/hse-drill-record-events", HseDrillRecordEventViewSet, basename="qhse-hse-drill-record-events")
+router.register(
+    "qhse/hse-drill-record-observations", HseDrillRecordObservationViewSet, basename="qhse-hse-drill-record-observations"
+)
+router.register(
+    "qhse/hse-drill-record-improvements", HseDrillRecordImprovementViewSet, basename="qhse-hse-drill-record-improvements"
+)
+router.register(
+    "qhse/hse-drill-record-corrective-actions",
+    HseDrillRecordCorrectiveActionViewSet,
+    basename="qhse-hse-drill-record-corrective-actions",
+)
 router.register("reports/hazard-cards", reports_views.HazardCardViewSet, basename="report-hazard-card")
 router.register("reports/it-assets", reports_views.ItAssetReportViewSet, basename="report-it-asset")
 router.register("masters/cost-centre-types", masters_views.MstCostCentreTypeViewSet, basename="mst-cost-centre-type")

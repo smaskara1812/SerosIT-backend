@@ -27,16 +27,29 @@ Card's Reported By).
 
 Child tables from the legacy page (Event/Observation/Improvement/
 Corrective Action/Photo Upload) are modeled (see models.py) and their
-legacy data is migrated — see SQL commands/import_hse_drill_record.sql —
-but there's no add/edit UI for them yet, and the printable Drill Record
-report built from them isn't built either; both stay on hold pending the
-legacy UI reference for those forms.
+legacy data is migrated — see SQL commands/import_hse_drill_record.sql.
+The four description-only ones have add/edit UI in
+hse_drill_record_children.py; Photo Upload's add/delete lives here instead
+(the `photos` action below), same reasoning as Incident Photos living on
+IncidentDetailViewSet rather than its own child viewset — it's upload/
+delete, not a JSON CRUD grid. New uploads go through media_uploads.
+save_media_file under media/HSE_Drills_photos/, named "<hdr id>_<next
+sequence>.<ext>" — the same id-based convention (never the original
+filename, never a random uuid) every other upload in this app already
+uses. A migrated row's path is still the legacy-format string until the
+photo library is copied in and rewritten (scripts/fix_hse_drill_photo_paths.py);
+until then `url` below comes back None for those rows rather than a
+broken link.
+The printable Drill Record report is built — see hse_drill_record_print.py.
 """
 
+import os
 from decimal import Decimal
 
+from django.conf import settings
 from django.db.models import Count, IntegerField, Max, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.decorators import action
@@ -44,7 +57,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from . import audit as _audit
+from .hse_drill_record_print import render_hse_drill_record_pdf
 from .masters_views import BaseMasterViewSet
+from .media_uploads import media_url, save_media_file
 from .models import (
     HseDrillRecordCorrectiveAction,
     HseDrillRecordEvent,
@@ -93,6 +108,31 @@ def _validate_mm_ss(attrs):
         seconds = abs(value) % 1
         if round(seconds * 100) > 59:
             raise ValidationError({field: "Seconds (the part after the decimal point) cannot be greater than 59."})
+
+
+PHOTO_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".png")
+PHOTO_SUBFOLDER = "HSE_Drills_photos"
+
+
+class HseDrillRecordPhotoUploadSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = HseDrillRecordPhotoUpload
+        fields = ["drill_rec_photo_upload_id", "drill_rec_photo_active", "url"]
+
+    def get_url(self, obj):
+        # A migrated row's path is still the legacy format
+        # ("/Images/HSE_Drills_Photos/<file>") until the photo library is
+        # copied in and rewritten — resolving to no real file here, so
+        # this comes back None rather than a link that 404s.
+        path = obj.drill_rec_photo_upload_path
+        if not path:
+            return None
+        abs_path = os.path.join(settings.MEDIA_ROOT, path.lstrip("/"))
+        if not os.path.isfile(abs_path):
+            return None
+        return media_url(self.context.get("request"), path)
 
 
 class HseDrillRecordHdrSerializer(serializers.ModelSerializer):
@@ -247,6 +287,69 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
                 for d in drills
             ]
         )
+
+    @action(detail=True, methods=["get"], url_path="print")
+    def print_pdf(self, request, pk=None):
+        instance = self.get_object()
+        pdf_bytes = render_hse_drill_record_pdf(instance)
+        filename = f"HSE Drill Record - {instance.drill_record_no}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        _audit.record_action(request, "export", self.entity_key, instance.pk, self.label_for(instance), {"printed": {"old": None, "new": True}})
+        return response
+
+    @action(detail=True, methods=["get"], url_path="photos")
+    def photos(self, request, pk=None):
+        instance = self.get_object()
+        rows = instance.photo_uploads.order_by("drill_rec_photo_upload_id")
+        serializer = HseDrillRecordPhotoUploadSerializer(rows, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    @photos.mapping.post
+    def upload_photo(self, request, pk=None):
+        """One file per call (the frontend calls this once per selected
+        file) — named `<hdr id>_<next sequence for this hdr>`, same
+        id-based naming convention as every other upload in this app
+        (media_uploads.py), not the original filename."""
+        instance = self.get_object()
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"error": "file is required"}, status=400)
+
+        next_seq = instance.photo_uploads.count() + 1
+        rel_path, error = save_media_file(f, PHOTO_SUBFOLDER, f"{instance.pk}_{next_seq}", allowed_extensions=PHOTO_ALLOWED_EXTENSIONS)
+        if error:
+            return Response({"error": error}, status=400)
+
+        uid = self._current_user_id(request)
+        photo = HseDrillRecordPhotoUpload.objects.create(
+            hdr=instance, drill_rec_photo_upload_path=rel_path, drill_rec_photo_active="Y", cr_user_id=uid or 1, cr_dt=timezone.now()
+        )
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, self.label_for(instance),
+            {"photo_added": {"old": None, "new": rel_path}},
+        )
+        return Response(HseDrillRecordPhotoUploadSerializer(photo, context={"request": request}).data, status=201)
+
+    @photos.mapping.delete
+    def delete_photo(self, request, pk=None):
+        instance = self.get_object()
+        photo_id = request.query_params.get("photo_id")
+        try:
+            photo = instance.photo_uploads.get(pk=photo_id)
+        except HseDrillRecordPhotoUpload.DoesNotExist:
+            return Response({"error": "Photo not found."}, status=404)
+
+        rel_path = photo.drill_rec_photo_upload_path
+        abs_path = os.path.join(settings.MEDIA_ROOT, rel_path.lstrip("/")) if rel_path else None
+        photo.delete()
+        if abs_path and os.path.isfile(abs_path):
+            os.remove(abs_path)
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, self.label_for(instance),
+            {"photo_removed": {"old": rel_path, "new": None}},
+        )
+        return Response(status=204)
 
     def perform_create(self, serializer):
         data = serializer.validated_data

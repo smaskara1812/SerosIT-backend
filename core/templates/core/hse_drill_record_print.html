@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 13mm 14mm 13mm 14mm;
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9ca3af; font-family: Arial, Helvetica, sans-serif; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 8.6pt; color: #1f2937; margin: 0; }
+
+  .header {
+    display: flex;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1.5px solid #1a3f7a;
+    margin-bottom: 6px;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; width: 100%; }
+  .logo-box img { max-height: 52px; width: auto; display: block; }
+  .company-name { font-size: 15pt; font-weight: 700; color: #1a3f7a; line-height: 1.15; letter-spacing: 0.01em; white-space: nowrap; }
+  .report-title { font-size: 8pt; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.09em; margin-top: 3px; }
+
+  .meta-strip {
+    display: flex; justify-content: flex-end; gap: 22px;
+    padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #e5e7eb;
+  }
+  .meta-item { text-align: right; }
+  .meta-item .label { display: block; margin-bottom: 1px; }
+  .meta-item .value { font-size: 8.6pt; font-weight: 600; color: #374151; margin-top: 0; }
+  .meta-item.emphasis .value { color: #1a3f7a; font-weight: 700; }
+
+  .section { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 14px; margin-bottom: 6px; page-break-inside: avoid; }
+  .section-title {
+    font-size: 7.6pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: #1a3f7a; margin-bottom: 5px; padding-left: 8px; border-left: 3px solid #2563eb;
+  }
+  .label { font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #374151; }
+  .value { font-size: 8.8pt; color: #111827; margin-top: 1px; line-height: 1.32; }
+  .value.empty { color: #c1c7d0; }
+
+  .grid { display: grid; gap: 6px 18px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+  table.event-table { width: 100%; border-collapse: collapse; margin-top: 2px; }
+  table.event-table th { text-align: left; font-size: 7pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #374151; padding: 3px 6px; border-bottom: 1px solid #e5e7eb; }
+  table.event-table td { font-size: 8.4pt; color: #111827; padding: 3px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  table.event-table td.time { white-space: nowrap; color: #6b7280; width: 60px; }
+
+  ul.bullets { margin: 0; padding-left: 14px; }
+  ul.bullets li { font-size: 8.6pt; color: #111827; line-height: 1.35; margin-bottom: 3px; }
+
+  .metric-card { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 5px; padding: 6px; text-align: center; }
+  .metric-value { font-size: 11.5pt; font-weight: 700; color: #1a3f7a; }
+  .metric-label { font-size: 6.6pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #374151; margin-top: 1px; }
+
+  .sign-block { border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; }
+  .sign-block .sign-header { padding: 6px 10px; font-size: 7.6pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #1a3f7a; background: #f8fafc; border-bottom: 1px solid #e5e7eb; }
+  .sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .sign-cell { padding: 10px; border-right: 1px solid #e5e7eb; }
+  .sign-cell:last-child { border-right: none; }
+  .sign-cell .sign-value { font-size: 8.8pt; color: #111827; min-height: 24px; }
+  .sign-cell .sign-caption { margin-top: 10px; font-size: 7pt; color: #374151; border-top: 1px solid #e5e7eb; padding-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .photos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  .photo-card { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; page-break-inside: avoid; }
+  .photo-card img { width: 100%; height: auto; display: block; }
+  .photo-card.unavailable { aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; background: #f8fafc; }
+  .photo-card.unavailable span { font-size: 7pt; color: #9ca3af; text-align: center; padding: 6px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo-box">
+      {% if logo_path %}<img src="file://{{ logo_path }}">{% endif %}
+    </div>
+    <div>
+      <div class="company-name">{{ company_name }}</div>
+      <div class="report-title">Emergency Response Drill Report</div>
+    </div>
+  </div>
+</div>
+
+<div class="meta-strip">
+  <div class="meta-item emphasis"><span class="label">Report No.</span><span class="value">{{ hdr.drill_record_no }}</span></div>
+  <div class="meta-item"><span class="label">Rig</span><span class="value">{{ rig_name }}</span></div>
+  <div class="meta-item"><span class="label">Report Date</span><span class="value">{{ report_date_time }}</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Drill / Exercise Record</div>
+  <div class="grid grid-2">
+    <div><div class="label">Date &amp; Location</div><div class="value">{{ drill_date_display }} — {{ hdr.drill_location|default:"—" }}</div></div>
+    <div><div class="label">Time</div><div class="value">{{ drill_time_display }}</div></div>
+    <div><div class="label">Type of Drilling, Training</div><div class="value">{{ type_of_drill_display|default:"—" }}</div></div>
+    <div><div class="label">Head Count</div><div class="value">{{ hdr.head_count|default:"—" }}</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Chronological Order of Events during the Drill</div>
+  {% if events %}
+  <table class="event-table">
+    <thead><tr><th>Time</th><th>Event</th></tr></thead>
+    <tbody>
+      {% for e in events %}
+      <tr><td class="time">{{ e.drill_rec_event_time|date:"H:i:s" }}</td><td>{{ e.drill_rec_event_desc }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="value empty">No events recorded.</div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-title">Observation during the Drill / Exercise</div>
+  {% if observations %}
+  <ul class="bullets">{% for o in observations %}<li>{{ o.drill_rec_observation_desc }}</li>{% endfor %}</ul>
+  {% else %}
+  <div class="value empty">—</div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-title">Areas of Improvement &amp; Lessons Learnt</div>
+  {% if improvements %}
+  <ul class="bullets">{% for i in improvements %}<li>{{ i.drill_rec_improvement_desc }}</li>{% endfor %}</ul>
+  {% else %}
+  <div class="value empty">—</div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-title">Corrective Action Taken</div>
+  {% if corrective_actions %}
+  <ul class="bullets">{% for c in corrective_actions %}<li>{{ c.drill_rec_corrective_action_desc }}</li>{% endfor %}</ul>
+  {% else %}
+  <div class="value empty">—</div>
+  {% endif %}
+</div>
+
+<div style="page-break-before: always;">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo-box">
+        {% if logo_path %}<img src="file://{{ logo_path }}">{% endif %}
+      </div>
+      <div>
+        <div class="company-name">{{ company_name }}</div>
+        <div class="report-title">Emergency Response Drill Report</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="meta-strip">
+    <div class="meta-item emphasis"><span class="label">Report No.</span><span class="value">{{ hdr.drill_record_no }}</span></div>
+    <div class="meta-item"><span class="label">Rig</span><span class="value">{{ rig_name }}</span></div>
+    <div class="meta-item"><span class="label">Report Date</span><span class="value">{{ report_date_time }}</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Drill Summary</div>
+    <div class="grid grid-3" style="margin-bottom: 8px;">
+      <div><div class="label">Initiated By</div><div class="value">{{ initiated_by_display|default:"—" }}</div></div>
+      <div><div class="label">Initial Response Time</div><div class="value">{{ durations.initial_response_time|default:"—" }}</div></div>
+      <div><div class="label">No. of Participants</div><div class="value">{{ hdr.no_of_participants|default:"—" }}</div></div>
+      <div><div class="label">Control Room (Offshore)</div><div class="value">{{ control_room_display }}</div></div>
+      <div><div class="label">Fire Team #1 Size</div><div class="value">{{ hdr.fire_team_1_size|default:"—" }}</div></div>
+      <div><div class="label">Fire Team #2 Size</div><div class="value">{{ hdr.fire_team_2_size|default:"—" }}</div></div>
+      <div><div class="label">Stretcher Team Size</div><div class="value">{{ hdr.stretcher_team_size|default:"—" }}</div></div>
+      <div><div class="label">Maintenance Team Size</div><div class="value">{{ hdr.maintenance_team_size|default:"—" }}</div></div>
+      <div><div class="label">S&amp;R Team Size</div><div class="value">{{ hdr.snr_team_size|default:"—" }}</div></div>
+    </div>
+    <div class="grid grid-4">
+      <div class="metric-card"><div class="metric-value">{{ durations.fire_team_1_duration|default:"—" }}</div><div class="metric-label">Fire Team #1 Duration</div></div>
+      <div class="metric-card"><div class="metric-value">{{ durations.fire_team_2_duration|default:"—" }}</div><div class="metric-label">Fire Team #2 Duration</div></div>
+      <div class="metric-card"><div class="metric-value">{{ durations.snr_team_duration|default:"—" }}</div><div class="metric-label">S&amp;R Duration</div></div>
+      <div class="metric-card"><div class="metric-value">{{ durations.drill_muster|default:"—" }}</div><div class="metric-label">Drill Muster</div></div>
+      <div class="metric-card"><div class="metric-value">{{ durations.abandon_muster_offshore|default:"—" }}</div><div class="metric-label">Abandon Muster (Offshore)</div></div>
+      <div class="metric-card"><div class="metric-value">{{ durations.total_time_of_drill|default:"—" }}</div><div class="metric-label">Total Time of Drill</div></div>
+    </div>
+  </div>
+
+  <div class="sign-block">
+    <div class="sign-header">Approved By</div>
+    <div class="sign-grid">
+      <div class="sign-cell"><div class="sign-value">{{ approved_by_oim_display|default:"—" }}</div><div class="sign-caption">PIC / OIM — Name</div></div>
+      <div class="sign-cell"><div class="sign-value">&nbsp;</div><div class="sign-caption">Signature</div></div>
+      <div class="sign-cell"><div class="sign-value">&nbsp;</div><div class="sign-caption">Stamp</div></div>
+    </div>
+  </div>
+  <div class="sign-block">
+    <div class="sign-grid">
+      <div class="sign-cell"><div class="sign-value">{{ hdr.approved_by_companyman|default:"—" }}</div><div class="sign-caption">Company Man — Name</div></div>
+      <div class="sign-cell"><div class="sign-value">&nbsp;</div><div class="sign-caption">Signature</div></div>
+      <div class="sign-cell"><div class="sign-value">&nbsp;</div><div class="sign-caption">Stamp</div></div>
+    </div>
+  </div>
+
+  {% if photos %}
+  <div class="section">
+    <div class="section-title">Drill Photos</div>
+    <div class="photos-grid">
+      {% for photo in photos %}
+      {% if photo.available %}
+      <div class="photo-card"><img src="file://{{ photo.path }}"></div>
+      {% else %}
+      <div class="photo-card unavailable"><span>Image not available</span></div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+</body>
+</html>
