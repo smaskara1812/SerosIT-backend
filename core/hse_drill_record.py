@@ -35,7 +35,8 @@ legacy UI reference for those forms.
 
 from decimal import Decimal
 
-from django.db.models import Count, Max, Q
+from django.db.models import Count, IntegerField, Max, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.decorators import action
@@ -44,8 +45,32 @@ from rest_framework.response import Response
 
 from . import audit as _audit
 from .masters_views import BaseMasterViewSet
-from .models import HseDrillRecordHdr, MstHseDrill, MstRig
+from .models import (
+    HseDrillRecordCorrectiveAction,
+    HseDrillRecordEvent,
+    HseDrillRecordHdr,
+    HseDrillRecordImprovement,
+    HseDrillRecordObservation,
+    HseDrillRecordPhotoUpload,
+    MstHseDrill,
+    MstRig,
+)
 from .permissions import HasMenuPermission
+
+
+def _child_count(model):
+    """A correlated-subquery row count for one child table, instead of a
+    Count(..., distinct=True) annotation. Annotating all five child
+    reverse-FKs as joins in the same query multiplies their row counts
+    against each other (e.g. 13 events x 6 observations x 5 improvements
+    x 3 corrective actions x 8 photos = 9,360 joined rows for one header,
+    even with distinct=True pruning the final count back down) — cheap at
+    63 headers, but it scales with the product of the child counts, not
+    their sum, so it gets expensive fast as more drills accumulate. A
+    subquery counts each child table on its own and never joins them
+    together."""
+    sub = model.objects.filter(hdr_id=OuterRef("pk")).order_by().values("hdr_id").annotate(c=Count("pk")).values("c")
+    return Coalesce(Subquery(sub, output_field=IntegerField()), Value(0))
 
 # Decimal(4,2) fields using legacy's packed MM.SS format (fractional part
 # is seconds 00-59, not a true decimal fraction) — validated below.
@@ -133,15 +158,11 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
     queryset = HseDrillRecordHdr.objects.select_related(
         "rig", "hse_drill_1", "hse_drill_2", "initiated_by_fs_emp_1", "initiated_by_fs_emp_2", "approved_by_oim_fs_emp"
     ).annotate(
-        # distinct=True on every one — annotating five separate reverse FKs
-        # at once joins all five, and without it each row's counts get
-        # cross-multiplied by the other four relations' row counts instead
-        # of staying independent.
-        events_count=Count("events", distinct=True),
-        observations_count=Count("observations", distinct=True),
-        improvements_count=Count("improvements", distinct=True),
-        corrective_actions_count=Count("corrective_actions", distinct=True),
-        photo_uploads_count=Count("photo_uploads", distinct=True),
+        events_count=_child_count(HseDrillRecordEvent),
+        observations_count=_child_count(HseDrillRecordObservation),
+        improvements_count=_child_count(HseDrillRecordImprovement),
+        corrective_actions_count=_child_count(HseDrillRecordCorrectiveAction),
+        photo_uploads_count=_child_count(HseDrillRecordPhotoUpload),
     )
     serializer_class = HseDrillRecordHdrSerializer
     entity_key = "qhse.hse_drill_record"
@@ -178,13 +199,24 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
     @action(detail=False, methods=["get"], url_path="meta")
     def meta(self, request):
         years = [d.year for d in self.queryset.dates("drill_dt", "year", order="DESC")]
-        drill_types = list(
-            MstHseDrill.objects.filter(hse_drill_active="Y").order_by("hse_drill_name").values("hse_drill_id", "hse_drill_name")
+        # The master has several active rows sharing a name (e.g. four
+        # "Fire Drill"/"fire drill" differing only by case) — the frequency
+        # + rig-type suffix is what actually tells them apart, same label
+        # format as the form's own rig-context picker.
+        drill_types = (
+            MstHseDrill.objects.filter(hse_drill_active="Y").select_related("rig_type").order_by("hse_drill_name")
         )
         return Response(
             {
                 "years": years,
-                "drill_types": [{"id": d["hse_drill_id"], "name": d["hse_drill_name"]} for d in drill_types],
+                "drill_types": [
+                    {
+                        "id": d.hse_drill_id,
+                        "name": d.hse_drill_name,
+                        "label": f"{d.hse_drill_name} — {d.get_hse_drill_frequency_display()} — {d.rig_type.rig_type_name if d.rig_type_id else 'All'}",
+                    }
+                    for d in drill_types
+                ],
             }
         )
 
