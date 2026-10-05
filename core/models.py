@@ -4000,8 +4000,7 @@ class HseDrillRecordHdr(models.Model):
     checkDecimal_And_Sec client-side rule.
 
     Child tables (Event/Observation/Improvement/Corrective Action/Photo
-    Upload) from the legacy page aren't modeled yet — out of scope until
-    built."""
+    Upload) are the HseDrillRecord* models below."""
 
     drill_record_hdr_id = models.AutoField(primary_key=True)
     rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="hse_drill_records")
@@ -4142,3 +4141,48 @@ class HseDrillRecordPhotoUpload(models.Model):
 
     class Meta:
         db_table = "hse_drill_record_photo_upload"
+
+
+class HseWeeklyDrillHdr(models.Model):
+    """QHSE → HSE Weekly Drill header — one row per rig per week of a
+    year. Rebuild of legacy frmHSE_Weekly_Drill_Hdr (eos.HSE_Weekly_Drill_Hdr).
+    drill_year is legacy's date-typed year, always 01/01/<year>. drill_week
+    defaults to the rig's last week that year + 1 (1 if none), but stays
+    editable, matching legacy. No header Update exists in legacy — the
+    detail rows depend on it."""
+
+    hse_weekly_drill_hdr_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="hse_weekly_drills")
+    drill_year = models.DateField()
+    drill_week = models.PositiveSmallIntegerField()
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_weekly_drill_hdr"
+        constraints = [models.UniqueConstraint(fields=["rig", "drill_year", "drill_week"], name="uq_hse_weekly_drill_rig_year_week")]
+
+
+class HseWeeklyDrillDtl(models.Model):
+    """One drill carried out in a weekly drill header's week. CASCADE on the
+    header — legacy's header Delete removes its detail rows too.
+    drill_last_conducted_dt is typed by the user only the first time that
+    rig records that drill; afterwards it's read off the rig's previous
+    entry for it (see hse_weekly_drill.py)."""
+
+    hse_weekly_drill_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseWeeklyDrillHdr, db_column="hse_weekly_drill_hdr_id", on_delete=models.CASCADE, related_name="dtls")
+    hse_drill = models.ForeignKey(MstHseDrill, db_column="hse_drill_id", on_delete=models.PROTECT, related_name="weekly_drill_dtls")
+    drill_conducted_dt = models.DateField()
+    drill_last_conducted_dt = models.DateField(null=True, blank=True)
+    remarks = models.CharField(max_length=150, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_weekly_drill_dtl"
+        constraints = [models.UniqueConstraint(fields=["hdr", "hse_drill"], name="uq_hse_weekly_drill_dtl_hdr_drill")]
