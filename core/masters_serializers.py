@@ -366,13 +366,48 @@ class MstHseMeetingSerializer(serializers.ModelSerializer):
 
 
 class MstHseDrillSerializer(serializers.ModelSerializer):
+    """Mirrors legacy frmMst_HSE_Drill: Rig Type is a required Onshore/
+    Offshore/Both choice ("Both" is stored as NULL, this form only), and a
+    saved drill's Name/Frequency/Rig Type can never change — only Active.
+    rig_type_choice is the form-facing value ("1"/"2"/"BOTH"); rig_type
+    stays the real FK column."""
+
+    RIG_TYPE_CHOICES = [("1", "Offshore Rig"), ("2", "Onshore Rig"), ("BOTH", "Both")]
+    LOCKED_ON_EDIT = ("hse_drill_name", "hse_drill_frequency")
+
     hse_drill_frequency_display = serializers.CharField(source="get_hse_drill_frequency_display", read_only=True)
     rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
+    rig_type_choice = serializers.ChoiceField(choices=RIG_TYPE_CHOICES, required=False)
+    rig_type = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = MstHseDrill
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["rig_type_choice"] = str(instance.rig_type_id) if instance.rig_type_id else "BOTH"
+        if not instance.rig_type_id:
+            data["rig_type_name"] = "Both"
+        return data
+
+    def validate(self, attrs):
+        choice = attrs.pop("rig_type_choice", None)
+        if self.instance is None:
+            if not choice:
+                raise serializers.ValidationError({"rig_type_choice": "This field is required."})
+            if not attrs.get("hse_drill_name") or not attrs.get("hse_drill_frequency"):
+                raise serializers.ValidationError("Drill Name and Frequency are required.")
+        if choice:
+            attrs["rig_type"] = None if choice == "BOTH" else MstRigType.objects.get(pk=int(choice))
+        if self.instance is not None:
+            for field in self.LOCKED_ON_EDIT:
+                if field in attrs and attrs[field] != getattr(self.instance, field):
+                    raise serializers.ValidationError({field: "Can't be changed once the drill is saved — deactivate it and add a new one."})
+            if "rig_type" in attrs and (attrs["rig_type"].pk if attrs["rig_type"] else None) != self.instance.rig_type_id:
+                raise serializers.ValidationError({"rig_type_choice": "Can't be changed once the drill is saved — deactivate it and add a new one."})
+        return attrs
 
 
 class MstHazardTypeSerializer(serializers.ModelSerializer):

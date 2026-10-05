@@ -1165,6 +1165,9 @@ class MstHseDrillViewSet(BaseMasterViewSet):
     entity_key = "masters.hse_drills"
     name_field = "hse_drill_name"
     active_field = "hse_drill_active"
+    # Legacy's Delete button is commented out on this page — a drill can
+    # only be deactivated, never removed.
+    http_method_names = ["get", "post", "put", "patch", "head", "options"]
     search_fields = ["hse_drill_name"]
     filterable_fields = ["rig_type"]
 

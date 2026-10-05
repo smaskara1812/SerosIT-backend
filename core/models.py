@@ -3951,7 +3951,8 @@ HSE_DRILL_FREQUENCY_CHOICES = [
     ("W", "Weekly"),
     ("M", "Monthly"),
     ("Q", "Quarterly"),
-    ("A", "Annual"),
+    ("B", "Bi-Annually"),
+    ("A", "Annually"),
 ]
 
 
