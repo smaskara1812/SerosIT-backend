@@ -14,6 +14,7 @@ from .hse_drill_record import HseDrillRecordHdrViewSet
 from .hse_drill_report import HseDrillReportExportView
 from .hse_lagging_indicators import LaggingIndicatorsViewSet
 from .hse_leading_indicators import LeadingIndicatorsViewSet
+from .corrective_actions import CorrectiveActionViewSet
 from .hse_weekly_drill import HseWeeklyDrillDtlViewSet, HseWeeklyDrillHdrViewSet
 from .hse_drill_record_children import (
     HseDrillRecordCorrectiveActionViewSet,
@@ -70,6 +71,7 @@ router.register("qhse/hazard-id-card", HazardIdCardViewSet, basename="qhse-hazar
 router.register("qhse/hse-drill-record", HseDrillRecordHdrViewSet, basename="qhse-hse-drill-record")
 router.register("qhse/leading-indicators", LeadingIndicatorsViewSet, basename="qhse-leading-indicators")
 router.register("qhse/lagging-indicators", LaggingIndicatorsViewSet, basename="qhse-lagging-indicators")
+router.register("qhse/corrective-actions", CorrectiveActionViewSet, basename="qhse-corrective-actions")
 router.register("qhse/hse-weekly-drill", HseWeeklyDrillHdrViewSet, basename="qhse-hse-weekly-drill")
 router.register("qhse/hse-weekly-drill-details", HseWeeklyDrillDtlViewSet, basename="qhse-hse-weekly-drill-details")
 router.register("qhse/hse-drill-record-events", HseDrillRecordEventViewSet, basename="qhse-hse-drill-record-events")
