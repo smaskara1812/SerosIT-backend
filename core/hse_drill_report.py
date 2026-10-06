@@ -21,17 +21,15 @@ period reports are unaffected. (Flagged for the mentor to decide on.)
 (Weekly 52, Monthly 12, Quarterly 4, Bi-Annually 2, Annually 1) — a fixed
 yearly figure, not scaled to the period, as in the legacy sample.
 
-The letterhead (company name + logo) is resolved from the first selected
-rig and the period start date via company_branding.resolve_rig_company_branding.
+Letterhead: the general SEROS logo only, always, and no company name (the
+legacy export has none).
 """
 
 import calendar
 import io
-import os
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
-from django.conf import settings
 from django.db.models import Count
 from django.http import HttpResponse
 from openpyxl import Workbook
@@ -43,7 +41,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import audit as _audit
-from .company_branding import resolve_rig_company_branding
+from .company_branding import seros_logo_path
 from .models import HseWeeklyDrillDtl, MstHseDrill, MstRig
 from .permissions import HasMenuPermission
 
@@ -159,73 +157,88 @@ def build_report(params):
 
 
 def render_workbook(report):
+    """Laid out to match the legacy export: logo top-left, "SIS Report Date"
+    top-right, a rule under row 4, the bold title in row 6, a grey header row
+    (yellow Required/Total), tight bordered rows, then the chart straight
+    after its title. The chart's source numbers live on a hidden second
+    sheet so only the chart shows, as in legacy."""
     wb = Workbook()
     ws = wb.active
     ws.title = "HSE_Emergency_Drill_Matrix"
-    thin = Side(style="thin", color="999999")
+    thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     head_fill = PatternFill("solid", fgColor="D9D9D9")
-    req_fill = PatternFill("solid", fgColor="FFFF00")
+    yellow = PatternFill("solid", fgColor="FFFF00")
+    base_font = Font(name="Arial", size=9)
+    bold_font = Font(name="Arial", size=9, bold=True)
 
-    branding = resolve_rig_company_branding(report["rigs"][0].pk, report["from"])
-    logo_rel = branding["big_logo_path"] or branding["small_logo_path"]
-    logo_abs = os.path.join(settings.MEDIA_ROOT, logo_rel) if logo_rel else None
-    if logo_abs and os.path.isfile(logo_abs):
+    first_col, last_col = 3, 3 + 1 + 52 + 2  # C .. Total
+    # Only the general SEROS logo — never a per-company one.
+    logo_abs = seros_logo_path()
+    if logo_abs:
         img = XlImage(logo_abs)
-        img.height, img.width = 48, int(48 * img.width / img.height)
-        ws.add_image(img, "B1")
-    ws["F2"] = branding["company_name"] or ""
-    ws["F2"].font = Font(bold=True, size=14, color="1A3F7A")
+        img.height, img.width = 36, int(36 * img.width / img.height)
+        ws.add_image(img, "C1")
+    ws.merge_cells(start_row=2, start_column=last_col - 14, end_row=2, end_column=last_col)
+    c = ws.cell(row=2, column=last_col - 14, value=f"SIS Report Date:  {datetime.now():%d/%m/%Y %H:%M}")
+    c.font, c.alignment = Font(name="Arial", size=8, bold=True), Alignment(horizontal="right")
+    for col in range(first_col, last_col + 1):
+        ws.cell(row=4, column=col).border = Border(bottom=Side(style="medium", color="808080"))
 
-    ws["B6"] = f"Emergency Drill Matrix ({report['label']} ) ({report['from']:%d/%m/%Y} - {report['to']:%d/%m/%Y})"
-    ws["B6"].font = Font(bold=True, size=12)
+    ws.cell(row=6, column=first_col, value=f"Emergency Drill Matrix ({report['label']} ) ({report['from']:%d/%m/%Y} - {report['to']:%d/%m/%Y})").font = Font(
+        name="Arial", size=10, bold=True
+    )
 
     hdr_row = 8
     headers = ["Drill Name", "Drill Frequency", *range(1, 53), "Required", "Total"]
     for i, h in enumerate(headers):
-        c = ws.cell(row=hdr_row, column=2 + i, value=h)
-        c.font, c.border = Font(bold=True), border
-        c.alignment = Alignment(horizontal="center")
-        c.fill = req_fill if h in ("Required", "Total") else head_fill
+        c = ws.cell(row=hdr_row, column=first_col + i, value=h)
+        c.font, c.border = bold_font, border
+        c.alignment = Alignment(horizontal="left" if i < 2 else "center", vertical="center")
+        c.fill = yellow if h in ("Required", "Total") else head_fill
     for r, m in enumerate(report["matrix"], start=hdr_row + 1):
         vals = [m["name"], m["frequency"], *m["weeks"], m["required"], m["total"]]
         for i, v in enumerate(vals):
-            c = ws.cell(row=r, column=2 + i, value=v)
-            c.border = border
-            if i >= 2:
-                c.alignment = Alignment(horizontal="center")
-    ws.column_dimensions["A"].width = 3
-    ws.column_dimensions["B"].width = 38
-    ws.column_dimensions["C"].width = 16
-    for col in range(4, 4 + 52):
-        ws.column_dimensions[get_column_letter(col)].width = 4.5
-    ws.column_dimensions[get_column_letter(56)].width = 10
-    ws.column_dimensions[get_column_letter(57)].width = 8
+            c = ws.cell(row=r, column=first_col + i, value=v)
+            c.font, c.border = base_font, border
+            c.alignment = Alignment(horizontal="left" if i < 2 else "center")
+        ws.row_dimensions[r].height = 12.75
+    ws.column_dimensions["A"].width = 2
+    ws.column_dimensions["B"].width = 2
+    ws.column_dimensions["C"].width = 34
+    ws.column_dimensions["D"].width = 14
+    for col in range(first_col + 2, first_col + 2 + 52):
+        ws.column_dimensions[get_column_letter(col)].width = 3.6
+    ws.column_dimensions[get_column_letter(last_col - 1)].width = 9
+    ws.column_dimensions[get_column_letter(last_col)].width = 6.5
 
-    # HSE Report: the chart's own source table (drill x rig counts) + the chart.
     chart = report["chart"]
-    top = hdr_row + len(report["matrix"]) + 3
-    ws.cell(row=top, column=2, value=f"HSE Report ({report['label']} ) ({report['from']:%d/%m/%Y} - {report['to']:%d/%m/%Y})").font = Font(bold=True, size=12)
-    ws.cell(row=top + 1, column=2, value="Drill").font = Font(bold=True)
-    for j, rig in enumerate(chart["rigs"]):
-        ws.cell(row=top + 1, column=3 + j, value=rig).font = Font(bold=True)
-    for i, drill in enumerate(chart["drills"]):
-        ws.cell(row=top + 2 + i, column=2, value=drill)
-        for j, rig in enumerate(chart["rigs"]):
-            ws.cell(row=top + 2 + i, column=3 + j, value=chart["counts"].get((drill, rig), 0))
+    title_row = hdr_row + len(report["matrix"]) + 3
+    ws.cell(row=title_row, column=first_col, value=f"HSE Report ({report['label']} ) ({report['from']:%d/%m/%Y} - {report['to']:%d/%m/%Y})").font = Font(
+        name="Arial", size=10, bold=True
+    )
     if chart["drills"]:
+        data = wb.create_sheet("Chart Data")
+        data.cell(row=1, column=1, value="Drill")
+        for j, rig in enumerate(chart["rigs"]):
+            data.cell(row=1, column=2 + j, value=rig)
+        for i, drill in enumerate(chart["drills"]):
+            data.cell(row=2 + i, column=1, value=drill)
+            for j, rig in enumerate(chart["rigs"]):
+                data.cell(row=2 + i, column=2 + j, value=chart["counts"].get((drill, rig), 0))
+        data.sheet_state = "hidden"
         bar = BarChart()
         bar.type, bar.grouping = "col", "clustered"
         bar.title = "HSE Report"
         bar.x_axis.title, bar.y_axis.title = "Emergency Drill", "No. of drills"
-        last = top + 1 + len(chart["drills"])
-        bar.add_data(Reference(ws, min_col=3, max_col=2 + len(chart["rigs"]), min_row=top + 1, max_row=last), titles_from_data=True)
-        bar.set_categories(Reference(ws, min_col=2, min_row=top + 2, max_row=last))
+        last = 1 + len(chart["drills"])
+        bar.add_data(Reference(data, min_col=2, max_col=1 + len(chart["rigs"]), min_row=1, max_row=last), titles_from_data=True)
+        bar.set_categories(Reference(data, min_col=1, min_row=2, max_row=last))
         bar.height, bar.width = 9, 22
         bar.x_axis.delete = bar.y_axis.delete = False
-        ws.add_chart(bar, f"B{last + 2}")
+        ws.add_chart(bar, f"C{title_row + 1}")
     else:
-        ws.cell(row=top + 1, column=2, value="No drills conducted in this period for the selected rigs.")
+        ws.cell(row=title_row + 1, column=first_col, value="No drills conducted in this period for the selected rigs.").font = base_font
 
     buf = io.BytesIO()
     wb.save(buf)

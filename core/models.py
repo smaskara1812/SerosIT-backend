@@ -4186,3 +4186,91 @@ class HseWeeklyDrillDtl(models.Model):
     class Meta:
         db_table = "hse_weekly_drill_dtl"
         constraints = [models.UniqueConstraint(fields=["hdr", "hse_drill"], name="uq_hse_weekly_drill_dtl_hdr_drill")]
+
+
+class LeadingIndicatorsHdr(models.Model):
+    """QHSE → HSE - Leading Indicators header (legacy eos.Leading_Indicators_Hdr):
+    one report per rig per period, with its own free-text Report No., unique
+    within this table. See core/hse_leading_indicators.py."""
+
+    leading_indicator_id = models.AutoField(primary_key=True)
+    company = models.ForeignKey(MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="+")
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="+")
+    report_no = models.CharField(max_length=12, unique=True)
+    period = models.DateField()
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "leading_indicators_hdr"
+
+
+class LeadingIndicatorsDtl(models.Model):
+    """One workgroup / indicator type / subtype row of a Leading Indicators
+    report (legacy eos.Leading_Indicators_Dtl). Rows are created once, when
+    the header is added, from the Workgroup→Indicator Type mapping and
+    subtypes — later master changes don't touch existing reports."""
+
+    leading_indicator_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(LeadingIndicatorsHdr, db_column="leading_indicator_id", on_delete=models.CASCADE, related_name="dtls")
+    workgroup = models.ForeignKey(MstWorkgroup, db_column="workgroup_id", on_delete=models.PROTECT, related_name="+")
+    indicator_type = models.ForeignKey(MstIndicatorType, db_column="indicator_type_id", on_delete=models.PROTECT, related_name="+")
+    indicator_subtype = models.ForeignKey(
+        MstIndicatorSubtype, db_column="indicator_subtype_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    total_sessions = models.PositiveIntegerField(default=0)
+    no_of_persons = models.PositiveIntegerField(default=0)
+    total_duration = models.PositiveIntegerField(default=0)
+    duration_type = models.CharField(max_length=1, null=True, blank=True)  # H = Hrs, W = Wks
+    active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "leading_indicators_dtl"
+
+
+class LaggingIndicatorsHdr(models.Model):
+    """QHSE → HSE - Lagging Indicators header (legacy eos.Lagging_Indicators_Hdr):
+    one report per rig per period, with its own free-text Report No., unique
+    within this table. See core/hse_lagging_indicators.py."""
+
+    lagging_indicator_id = models.AutoField(primary_key=True)
+    company = models.ForeignKey(MstCompany, db_column="company_id", on_delete=models.PROTECT, related_name="+")
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="+")
+    report_no = models.CharField(max_length=12, unique=True)
+    period = models.DateField()
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "lagging_indicators_hdr"
+
+
+class LaggingIndicatorsDtl(models.Model):
+    """One workgroup / indicator type / subtype row of a Lagging Indicators
+    report (legacy eos.Lagging_Indicators_Dtl) — a single Total Count per
+    row. Rows are created once, when the header is added."""
+
+    lagging_indicator_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(LaggingIndicatorsHdr, db_column="lagging_indicator_id", on_delete=models.CASCADE, related_name="dtls")
+    workgroup = models.ForeignKey(MstWorkgroup, db_column="workgroup_id", on_delete=models.PROTECT, related_name="+")
+    indicator_type = models.ForeignKey(MstIndicatorType, db_column="indicator_type_id", on_delete=models.PROTECT, related_name="+")
+    indicator_subtype = models.ForeignKey(
+        MstIndicatorSubtype, db_column="indicator_subtype_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    total_count = models.PositiveIntegerField(default=0)
+    active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "lagging_indicators_dtl"

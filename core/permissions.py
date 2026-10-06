@@ -91,6 +91,14 @@ _ACTION_PERM = {
     "unlost": "edit",
     "remove_assignment": "edit",
     "reassign": "add",
+    # HSE Leading/Lagging Indicators: the batch detail save is an Edit.
+    "save_details": "edit",
+    # Incident Photos and HSE Drill photos: uploading/removing a photo on a
+    # record needs Add or Edit on it — these used to fall back to View.
+    "upload_photo": ("add", "edit"),
+    "delete_photo": ("add", "edit"),
+    # HSE Leading/Lagging Indicators: the per-report Excel export.
+    "export_report": "export",
 }
 
 
@@ -109,7 +117,11 @@ class HasMenuPermission(BasePermission):
             return True
         entity_key = getattr(view, "entity_key", None)
         required = _ACTION_PERM.get(getattr(view, "action", None), "view")
-        return bool(access["perms"].get(entity_key, {}).get(required))
+        # A tuple means "any of these flags" (e.g. photo upload on a record
+        # is allowed to whoever can Add or Edit it).
+        flags = required if isinstance(required, tuple) else (required,)
+        entity_perms = access["perms"].get(entity_key, {})
+        return any(entity_perms.get(flag) for flag in flags)
 
 
 class HasMenuPermissionOrOpenRead(HasMenuPermission):
