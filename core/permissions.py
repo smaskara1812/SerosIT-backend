@@ -116,7 +116,10 @@ class HasMenuPermission(BasePermission):
         if access["is_admin"]:
             return True
         entity_key = getattr(view, "entity_key", None)
-        required = _ACTION_PERM.get(getattr(view, "action", None), "view")
+        action = getattr(view, "action", None)
+        # A view can widen what one of its actions needs (e.g. rank rows of a
+        # group are allowed to whoever can Add or Edit the group).
+        required = getattr(view, "action_perm_overrides", {}).get(action) or _ACTION_PERM.get(action, "view")
         # A tuple means "any of these flags" (e.g. photo upload on a record
         # is allowed to whoever can Add or Edit it).
         flags = required if isinstance(required, tuple) else (required,)

@@ -15,6 +15,10 @@ from .hse_drill_report import HseDrillReportExportView
 from .hse_lagging_indicators import LaggingIndicatorsViewSet
 from .hse_leading_indicators import LeadingIndicatorsViewSet
 from .corrective_actions import CorrectiveActionViewSet
+from .cert_to_rank_mapping import CertToRankMappingViewSet
+from .training_log import TrainingLogDtlViewSet, TrainingLogHdrViewSet
+from .training_org import TrainingOrgDtlViewSet, TrainingOrgHdrViewSet
+from .training_group import TrainingGroupDtlViewSet, TrainingGroupHdrViewSet
 from .hse_weekly_drill import HseWeeklyDrillDtlViewSet, HseWeeklyDrillHdrViewSet
 from .hse_drill_record_children import (
     HseDrillRecordCorrectiveActionViewSet,
@@ -71,6 +75,13 @@ router.register("qhse/hazard-id-card", HazardIdCardViewSet, basename="qhse-hazar
 router.register("qhse/hse-drill-record", HseDrillRecordHdrViewSet, basename="qhse-hse-drill-record")
 router.register("qhse/leading-indicators", LeadingIndicatorsViewSet, basename="qhse-leading-indicators")
 router.register("qhse/lagging-indicators", LaggingIndicatorsViewSet, basename="qhse-lagging-indicators")
+router.register("qhse/training-log", TrainingLogHdrViewSet, basename="qhse-training-log")
+router.register("qhse/training-log-trainees", TrainingLogDtlViewSet, basename="qhse-training-log-trainees")
+router.register("qhse/cert-to-rank-mapping", CertToRankMappingViewSet, basename="qhse-cert-to-rank-mapping")
+router.register("qhse/training-org", TrainingOrgHdrViewSet, basename="qhse-training-org")
+router.register("qhse/training-org-trainers", TrainingOrgDtlViewSet, basename="qhse-training-org-trainers")
+router.register("qhse/training-group", TrainingGroupHdrViewSet, basename="qhse-training-group")
+router.register("qhse/training-group-ranks", TrainingGroupDtlViewSet, basename="qhse-training-group-ranks")
 router.register("qhse/corrective-actions", CorrectiveActionViewSet, basename="qhse-corrective-actions")
 router.register("qhse/hse-weekly-drill", HseWeeklyDrillHdrViewSet, basename="qhse-hse-weekly-drill")
 router.register("qhse/hse-weekly-drill-details", HseWeeklyDrillDtlViewSet, basename="qhse-hse-weekly-drill-details")
@@ -173,6 +184,13 @@ router.register(
     "masters/fs-catg-to-rig-type-mapping",
     masters_views.FsCatgToRigTypeMappingViewSet,
     basename="fs-catg-to-rig-type-mapping",
+)
+router.register("masters/fs-employees", masters_views.MstFsEmployeeViewSet, basename="mst-fs-employee")
+router.register("masters/fs-emp-cur-status", masters_views.FsEmpCurStatusViewSet, basename="fs-emp-cur-status")
+router.register(
+    "masters/fs-catg-to-rank-mapping",
+    masters_views.FsCatgToRankMappingViewSet,
+    basename="fs-catg-to-rank-mapping",
 )
 router.register(
     "masters/rank-classification",

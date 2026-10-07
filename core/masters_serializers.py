@@ -44,6 +44,9 @@ from .models import (
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
+    FsCatgToRankMapping,
+    FsEmpCurStatus,
+    MstFsEmployee,
     FsCatgToRigTypeMapping,
     RankClassification,
     MstEmpNature,
@@ -1350,3 +1353,116 @@ class MstActivitySerializer(serializers.ModelSerializer):
         model = MstActivity
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+
+class FsCatgToRankMappingSerializer(serializers.ModelSerializer):
+    """Which ranks belong to an FS category. The vessel department is taken
+    from the rank itself, so it isn't asked for."""
+
+    fs_category_name = serializers.CharField(source="fs_category.fs_category_name", read_only=True, default="")
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
+    vessel_dept_name = serializers.CharField(source="vessel_dept.vessel_dept_name", read_only=True, default="")
+
+    class Meta:
+        model = FsCatgToRankMapping
+        fields = "__all__"
+        read_only_fields = ["vessel_dept", "cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        inst = self.instance
+        category = attrs.get("fs_category", getattr(inst, "fs_category", None))
+        rank = attrs.get("rank", getattr(inst, "rank", None))
+        changed = inst is None or category != inst.fs_category or rank != inst.rank
+        if changed and FsCatgToRankMapping.objects.filter(fs_category=category, rank=rank).exists():
+            raise serializers.ValidationError({"rank": "This rank is already mapped to this category."})
+        if rank is not None:
+            attrs["vessel_dept"] = rank.vessel_dept
+        return attrs
+
+
+FS_FLAGS = (
+    "fs_emp_temporary", "fs_emp_active", "pp_ecnr", "key_personnel",
+    "vfd_rig_exp", "scr_rig_exp", "hpht_exp", "erd_exp", "nov_exp", "canrig_exp",
+)
+
+
+def _yes_no(value):
+    """The legacy flags hold 'Y', 'N' or blank; blank means No."""
+    return "Y" if value == "Y" else "N"
+
+
+def _check_flags(attrs, names):
+    for name in names:
+        if name in attrs and attrs[name] not in ("Y", "N", "", None):
+            raise serializers.ValidationError({name: "Choose Yes or No."})
+
+
+class MstFsEmployeeSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    nationality_name = serializers.CharField(source="nationality.country_name", read_only=True)
+    home_town_name = serializers.CharField(source="home_town.location_name", read_only=True, default="")
+    domicile_state_name = serializers.CharField(source="domicile_state.country_state_name", read_only=True, default="")
+    qualification_name = serializers.CharField(source="qualification.qualification_name", read_only=True, default="")
+    pp_country_name = serializers.CharField(source="pp_country.country_name", read_only=True, default="")
+    pp_place_name = serializers.CharField(source="pp_place.location_name", read_only=True, default="")
+    cdc_country_name = serializers.CharField(source="cdc_country.country_name", read_only=True, default="")
+    cdc_place_name = serializers.CharField(source="cdc_place.location_name", read_only=True, default="")
+    fs_category_name = serializers.CharField(source="fs_category.fs_category_name", read_only=True)
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True)
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True)
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+
+    class Meta:
+        model = MstFsEmployee
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_full_name(self, obj):
+        return str(obj)
+
+    def validate(self, attrs):
+        _check_flags(attrs, FS_FLAGS)
+        return attrs
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for name in FS_FLAGS:
+            data[name] = _yes_no(getattr(instance, name))
+        return data
+
+
+class FsEmpCurStatusSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    fs_emp_name = serializers.SerializerMethodField()
+    fs_category_name = serializers.CharField(source="fs_category.fs_category_name", read_only=True)
+    rank_name = serializers.CharField(source="rank.rank_name", read_only=True)
+    emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True)
+    serv_type_name = serializers.CharField(source="serv_type.serv_type_name", read_only=True)
+    serv_subtype_name = serializers.CharField(source="serv_subtype.serv_subtype_name", read_only=True)
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+
+    class Meta:
+        model = FsEmpCurStatus
+        fields = "__all__"
+        read_only_fields = ["mod_user_id", "mod_dt"]
+        # The default "already exists" text names the table; validate() says it plainly.
+        extra_kwargs = {"fs_emp": {"validators": []}}
+
+    def get_full_name(self, obj):
+        return str(obj.fs_emp)
+
+    def get_fs_emp_name(self, obj):
+        return str(obj.fs_emp)
+
+    def validate(self, attrs):
+        _check_flags(attrs, ("fs_emp_active",))
+        if self.instance is not None and "fs_emp" in attrs and attrs["fs_emp"] != self.instance.fs_emp:
+            raise serializers.ValidationError({"fs_emp": "The employee can't be changed — add a status for the other person instead."})
+        if self.instance is None and FsEmpCurStatus.objects.filter(pk=attrs["fs_emp"].pk).exists():
+            raise serializers.ValidationError({"fs_emp": "This employee already has a status record."})
+        return attrs
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["fs_emp_active"] = _yes_no(instance.fs_emp_active)
+        return data

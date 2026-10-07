@@ -38,6 +38,9 @@ from .models import (
     MstIndicatorSubtype,
     MstIndicatorType,
     MstInterviewer,
+    FsCatgToRankMapping,
+    FsEmpCurStatus,
+    MstFsEmployee,
     FsCatgToRigTypeMapping,
     RankClassification,
     MstEmpNature,
@@ -163,6 +166,9 @@ from .masters_serializers import (
     MstIndicatorSubtypeSerializer,
     MstIndicatorTypeSerializer,
     MstInterviewerSerializer,
+    FsCatgToRankMappingSerializer,
+    FsEmpCurStatusSerializer,
+    MstFsEmployeeSerializer,
     FsCatgToRigTypeMappingSerializer,
     RankClassificationSerializer,
     MstEmpNatureSerializer,
@@ -1323,6 +1329,106 @@ class FsCatgToRigTypeMappingViewSet(BaseMasterViewSet):
 
     def label_for(self, instance):
         return f"{instance.fs_category.fs_category_name} — {instance.rig_type.rig_type_name}"
+
+
+class FsCatgToRankMappingViewSet(BaseMasterViewSet):
+    """Which Ranks belong to which FS Category. This is what the Training
+    Group and Training Certificate to Rank Mapping pages offer ranks from, so
+    a rank has to be mapped here before it can be picked there."""
+
+    queryset = FsCatgToRankMapping.objects.select_related("fs_category", "rank", "vessel_dept").all()
+    serializer_class = FsCatgToRankMappingSerializer
+    entity_key = "masters.fs_catg_to_rank_mapping"
+    search_fields = ["rank__rank_name", "fs_category__fs_category_name"]
+    filterable_fields = ["fs_category", "rank"]
+
+    def get_queryset(self):
+        qs = self._apply_filterable_fields(self.queryset)
+        if self.request.query_params.get("ordering") == "-name":
+            return qs.order_by("-rank__rank_name", "-pk")
+        return qs.order_by("rank__rank_name", "fs_category__fs_category_name", "pk")
+
+    def label_for(self, instance):
+        return f"{instance.fs_category.fs_category_name} — {instance.rank.rank_name}"
+
+    def _references(self, instance):
+        """Nothing points at a mapping row itself, but Training Groups and
+        Certificate mappings still use the category + rank pair it allows. A
+        repeated row (the old data has many) is free to delete; the last one
+        for a pair is held back while either still uses it."""
+        from .models import CertToRankMapping, HseTrainingGroupDtl
+
+        if FsCatgToRankMapping.objects.filter(fs_category=instance.fs_category, rank=instance.rank).exclude(pk=instance.pk).exists():
+            return []
+        pair = {"fs_category": instance.fs_category, "rank": instance.rank}
+        refs = []
+        for model, label in ((HseTrainingGroupDtl, "Training Group ranks"), (CertToRankMapping, "Training Certificate rank mappings")):
+            count = model.objects.filter(**pair).count()
+            if count:
+                refs.append({"label": label, "count": count})
+        return refs
+
+
+class MstFsEmployeeViewSet(BaseMasterViewSet):
+    """FS employee master. The whole legacy row is here, identity numbers
+    included, so access is whatever User Rights grants on this page."""
+
+    queryset = MstFsEmployee.objects.select_related(
+        "fs_category", "rank", "emp_type", "rig", "nationality", "home_town", "domicile_state",
+        "qualification", "pp_country", "pp_place", "cdc_country", "cdc_place",
+    ).all()
+    serializer_class = MstFsEmployeeSerializer
+    entity_key = "masters.fs_employees"
+    active_field = "fs_emp_active"
+    filterable_fields = ["fs_category", "rank", "rig", "emp_type"]
+    search_fields = ["fs_emp_fname", "fs_emp_mname", "fs_emp_lname", "fs_emp_staff_id", "rank__rank_name", "rig__rig_name"]
+
+    def get_queryset(self):
+        qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
+        if self.request.query_params.get("ordering") == "-name":
+            return qs.order_by("-fs_emp_lname", "-fs_emp_fname", "-pk")
+        return qs.order_by("fs_emp_lname", "fs_emp_fname", "pk")
+
+    def label_for(self, instance):
+        return str(instance)
+
+
+class FsEmpCurStatusViewSet(BaseMasterViewSet):
+    """Current status of an FS employee. Unlike most masters the table has
+    only mod_ columns (no cr_), so create/update stamp differently."""
+
+    queryset = FsEmpCurStatus.objects.select_related(
+        "fs_emp", "fs_category", "rank", "emp_type", "serv_type", "serv_subtype", "rig"
+    ).all()
+    serializer_class = FsEmpCurStatusSerializer
+    entity_key = "masters.fs_emp_cur_status"
+    active_field = "fs_emp_active"
+    filterable_fields = ["fs_category", "rank", "rig", "emp_type", "serv_type"]
+    search_fields = ["fs_emp__fs_emp_fname", "fs_emp__fs_emp_lname", "rank__rank_name", "rig__rig_name"]
+
+    def get_queryset(self):
+        qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
+        if self.request.query_params.get("ordering") == "-name":
+            return qs.order_by("-fs_emp__fs_emp_lname", "-fs_emp__fs_emp_fname", "-pk")
+        return qs.order_by("fs_emp__fs_emp_lname", "fs_emp__fs_emp_fname", "pk")
+
+    def label_for(self, instance):
+        return str(instance.fs_emp)
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
+        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+
+    def perform_update(self, serializer):
+        from django.utils import timezone
+
+        old = self._snapshot(serializer.instance)
+        instance = serializer.save(mod_user_id=self._current_user_id(self.request), mod_dt=timezone.now().date())
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance),
+            self._diff(old, self._snapshot(instance)) or None,
+        )
 
 
 class RankClassificationViewSet(BaseMasterViewSet):

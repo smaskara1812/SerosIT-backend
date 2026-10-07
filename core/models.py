@@ -4274,3 +4274,296 @@ class LaggingIndicatorsDtl(models.Model):
 
     class Meta:
         db_table = "lagging_indicators_dtl"
+
+
+class FsCatgToRankMapping(models.Model):
+    """Which ranks belong to which FS category (legacy Fs_Catg_To_Rank_Mapping).
+    Reference data only — it feeds the Training Group rank picker, and has no
+    screen of its own. Copied as-is, so rank 127 repeats many times under
+    categories 4 and 5; readers should use distinct ranks."""
+
+    fs_catg_to_rank_mapping_id = models.AutoField(primary_key=True)
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="rank_mappings")
+    vessel_dept = models.ForeignKey(MstVesselDept, db_column="vessel_dept_id", on_delete=models.PROTECT, related_name="+")
+    rank = models.ForeignKey(MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="category_mappings")
+    rank_order = models.PositiveSmallIntegerField(null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "fs_catg_to_rank_mapping"
+
+
+class HseTrainingGroupHdr(models.Model):
+    """QHSE → Training Group header (legacy HSE_Training_Group_Hdr). The name
+    is set once at creation; afterwards only Active changes, and switching a
+    group off switches all its ranks off."""
+
+    training_group_hdr_id = models.AutoField(primary_key=True)
+    training_group_hdr_name = models.CharField(max_length=30)
+    training_group_hdr_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_group_hdr"
+
+    def __str__(self):
+        return self.training_group_hdr_name
+
+
+class HseTrainingGroupDtl(models.Model):
+    """One rank in a training group, with whether training is mandatory for
+    it. CASCADE on the header — deleting a group removes its ranks. Legacy
+    data carries repeated ranks within a group and one blank mandatory flag;
+    both are kept as imported."""
+
+    training_group_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseTrainingGroupHdr, db_column="training_group_hdr_id", on_delete=models.CASCADE, related_name="dtls")
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="+")
+    rank = models.ForeignKey(MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="training_group_dtls")
+    mandatory_training = models.CharField(max_length=1, blank=True, default="")
+    training_group_dtl_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_group_dtl"
+
+
+class HseTrainingOrgHdr(models.Model):
+    """QHSE → Training Org (legacy HSE_Training_Org_Hdr): an organisation that
+    delivers training, with its contacts. Name and Location are set when it is
+    created and never change; country follows from the location. The legacy
+    Training Log refers to these rows by id, so imported ids are kept."""
+
+    training_org_hdr_id = models.AutoField(primary_key=True)
+    training_org_name = models.CharField(max_length=75)
+    training_org_address = models.CharField(max_length=100)
+    location = models.ForeignKey(MstLocation, db_column="location_id", on_delete=models.PROTECT, related_name="training_orgs")
+    country = models.ForeignKey(MstCountry, db_column="country_id", on_delete=models.PROTECT, related_name="training_orgs")
+    contact_person_1 = models.CharField(max_length=50, null=True, blank=True)
+    tel_no_1 = models.CharField(max_length=15, null=True, blank=True)
+    contact_person_2 = models.CharField(max_length=50, null=True, blank=True)
+    tel_no_2 = models.CharField(max_length=15, null=True, blank=True)
+    training_org_email = models.CharField(max_length=30, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_org_hdr"
+
+    def __str__(self):
+        return self.training_org_name
+
+
+class HseTrainingOrgDtl(models.Model):
+    """A trainer of a training org. CASCADE on the org — deleting an org
+    removes its trainers."""
+
+    training_org_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseTrainingOrgHdr, db_column="training_org_hdr_id", on_delete=models.CASCADE, related_name="dtls")
+    trainer_fname = models.CharField(max_length=25)
+    trainer_mname = models.CharField(max_length=25, null=True, blank=True)
+    trainer_lname = models.CharField(max_length=25)
+    trainer_qualification = models.CharField(max_length=50, null=True, blank=True)
+    trainer_mobile_no = models.CharField(max_length=15, null=True, blank=True)
+    trainer_email_id = models.CharField(max_length=50, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_org_dtl"
+
+
+class CertToRankMapping(models.Model):
+    """Which ranks a training certificate applies to (legacy
+    Cert_To_Rank_Mapping), per FS category, with an Active flag. Candidate
+    ranks come from the training groups, but once saved the row is just
+    certificate + category + rank. Legacy repeats rank 127 under two
+    certificates; those rows were imported untouched."""
+
+    cert_to_rank_mapping_id = models.AutoField(primary_key=True)
+    cert = models.ForeignKey(MstCert, db_column="cert_id", on_delete=models.PROTECT, related_name="rank_mappings")
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="+")
+    rank = models.ForeignKey(MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="cert_mappings")
+    cert_to_rank_mapping_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "cert_to_rank_mapping"
+
+
+class MstFsEmployee(models.Model):
+    """FS (field staff) employee master — legacy Mst_Fs_Employee, the
+    rig-going staff. Kept under their legacy ids (these are NOT the same
+    people as MstEmployee at the same id). The whole legacy row is carried,
+    including the identity and travel-document numbers, so it is as sensitive
+    as the HR record it came from — who can open it is controlled through
+    User Rights. New people get the next id."""
+
+    fs_emp_id = models.AutoField(primary_key=True)
+    fs_emp_fname = models.CharField(max_length=30, null=True, blank=True)
+    fs_emp_mname = models.CharField(max_length=30, null=True, blank=True)
+    fs_emp_lname = models.CharField(max_length=30)
+    permanent_addr = models.CharField(max_length=100)
+    mailing_addr = models.CharField(max_length=100, null=True, blank=True)
+    emergency_addr = models.CharField(max_length=100, null=True, blank=True)
+    fs_emp_tel_no = models.CharField(max_length=25, null=True, blank=True)
+    fs_emp_mobile_no = models.CharField(max_length=25, null=True, blank=True)
+    fs_emp_email_pers = models.CharField(max_length=50, null=True, blank=True)
+    fs_emp_email_official = models.CharField(max_length=50, null=True, blank=True)
+    gender = models.CharField(max_length=1)
+    blood_group = models.CharField(max_length=5, null=True, blank=True)
+    fs_emp_dob = models.DateField()
+    fs_emp_pob = models.CharField(max_length=20, null=True, blank=True)
+    marital_status = models.CharField(max_length=10, null=True, blank=True)
+    marriage_dt = models.DateField(null=True, blank=True)
+    nationality = models.ForeignKey(MstCountry, db_column="nationality_id", on_delete=models.PROTECT, related_name="+")
+    home_town = models.ForeignKey(MstLocation, db_column="home_town_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    domicile_state = models.ForeignKey(MstCountryState, db_column="domicile_state_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    religion = models.CharField(max_length=20, null=True, blank=True)
+    qualification = models.ForeignKey(MstQualification, db_column="qualification_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pan_no = models.CharField(max_length=10, null=True, blank=True)
+    aadhaar_no = models.CharField(max_length=12, null=True, blank=True)
+    area_of_interest = models.CharField(max_length=15, null=True, blank=True)
+    fs_emp_photo_path = models.CharField(max_length=65, null=True, blank=True)
+    pp_no = models.CharField(max_length=15, null=True, blank=True)
+    pp_dt = models.DateField(null=True, blank=True)
+    pp_country = models.ForeignKey(MstCountry, db_column="pp_country_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pin_code = models.CharField(max_length=10, null=True, blank=True)
+    pp_place = models.ForeignKey(MstLocation, db_column="pp_place_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pp_valid_till = models.DateField(null=True, blank=True)
+    pp_ecnr = models.CharField(max_length=1, null=True, blank=True)
+    pp_name = models.CharField(max_length=60, null=True, blank=True)
+    cdc_no = models.CharField(max_length=15, null=True, blank=True)
+    cdc_dt = models.DateField(null=True, blank=True)
+    cdc_country = models.ForeignKey(MstCountry, db_column="cdc_country_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    cdc_place = models.ForeignKey(MstLocation, db_column="cdc_place_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    cdc_valid_till = models.DateField(null=True, blank=True)
+    fs_emp_staff_id = models.IntegerField(null=True, blank=True)
+    fs_emp_doj = models.DateField()
+    hire_dt = models.DateField()
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="+")
+    rank = models.ForeignKey(MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="+")
+    rank_to_grade_id = models.IntegerField(null=True, blank=True)  # empty in every legacy row
+    emp_type = models.ForeignKey(MstEmpType, db_column="emp_type_id", on_delete=models.PROTECT, related_name="+")
+    rig = models.ForeignKey(MstRig, db_column="rig_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    dms_path_resume = models.CharField(max_length=200, null=True, blank=True)
+    key_personnel = models.CharField(max_length=1, null=True, blank=True)
+    vfd_rig_exp = models.CharField(max_length=1, null=True, blank=True)
+    scr_rig_exp = models.CharField(max_length=1, null=True, blank=True)
+    hpht_exp = models.CharField(max_length=1, null=True, blank=True)
+    erd_exp = models.CharField(max_length=1, null=True, blank=True)
+    nov_exp = models.CharField(max_length=1, null=True, blank=True)
+    canrig_exp = models.CharField(max_length=1, null=True, blank=True)
+    fs_emp_dol = models.DateField(null=True, blank=True)
+    off_hire_dt = models.DateField(null=True, blank=True)
+    fs_emp_temporary = models.CharField(max_length=1, null=True, blank=True)
+    fs_emp_active = models.CharField(max_length=1)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_fs_employee"
+
+    def __str__(self):
+        return " ".join(p for p in (self.fs_emp_fname, self.fs_emp_mname, self.fs_emp_lname) if p)
+
+
+class FsEmpCurStatus(models.Model):
+    """Where each field-staff member stands right now (legacy
+    Fs_Emp_Cur_Status): current rank, category, type, service, rig, crew
+    shift and the dates attached to them. One row per person."""
+
+    fs_emp = models.OneToOneField(MstFsEmployee, db_column="fs_emp_id", primary_key=True, on_delete=models.CASCADE, related_name="cur_status")
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="+")
+    rank = models.ForeignKey(MstRank, db_column="rank_id", on_delete=models.PROTECT, related_name="+")
+    emp_type = models.ForeignKey(MstEmpType, db_column="emp_type_id", on_delete=models.PROTECT, related_name="+")
+    serv_type = models.ForeignKey(MstServType, db_column="serv_type_id", on_delete=models.PROTECT, related_name="+")
+    serv_subtype = models.ForeignKey(MstServSubtype, db_column="serv_subtype_id", on_delete=models.PROTECT, related_name="+")
+    serv_subtype_from = models.DateField()
+    appx_end_dt = models.DateField(null=True, blank=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    crew_shift = models.CharField(max_length=1, null=True, blank=True)
+    cur_rank_from = models.DateField()
+    wage_process_dt = models.DateField()
+    fs_emp_active = models.CharField(max_length=1)
+    fs_emp_dol = models.DateField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateField(null=True, blank=True)
+
+    class Meta:
+        db_table = "fs_emp_cur_status"
+
+
+class HseTrainingLogHdr(models.Model):
+    """QHSE → Training Log header (legacy HSE_Training_Log_Hdr): one training
+    session at a rig — which course, when, where, who ran it. The rig is fixed
+    once the log is saved."""
+
+    TRAINING_TYPES = [("Internal", "Internal"), ("External", "External")]
+
+    training_log_hdr_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, related_name="training_logs")
+    cert = models.ForeignKey(MstCert, db_column="cert_id", on_delete=models.PROTECT, related_name="training_logs")
+    training_location = models.CharField(max_length=50)
+    training_dt = models.DateField()
+    training_type = models.CharField(max_length=8, choices=TRAINING_TYPES)
+    course_duration = models.PositiveSmallIntegerField()  # days
+    training_org = models.ForeignKey(HseTrainingOrgHdr, db_column="training_org_hdr_id", on_delete=models.PROTECT, related_name="training_logs")
+    training_org_dtl = models.ForeignKey(HseTrainingOrgDtl, db_column="training_org_dtl_id", on_delete=models.PROTECT, related_name="training_logs")
+    assessment_conducted = models.CharField(max_length=1)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_log_hdr"
+
+
+class HseTrainingLogDtl(models.Model):
+    """One trainee on a training log. Staff of the rig's own company are
+    picked from the FS employee roster and their details copied in; everyone
+    else is typed. Once saved only the certificate details change. CASCADE on
+    the log — deleting a log removes its trainees."""
+
+    training_log_dtl_id = models.AutoField(primary_key=True)
+    hdr = models.ForeignKey(HseTrainingLogHdr, db_column="training_log_hdr_id", on_delete=models.CASCADE, related_name="dtls")
+    training_party = models.CharField(max_length=15)
+    fs_emp = models.ForeignKey(MstFsEmployee, db_column="fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="training_logs")
+    trainee_fname = models.CharField(max_length=20)
+    trainee_mname = models.CharField(max_length=20, null=True, blank=True)
+    trainee_lname = models.CharField(max_length=25)
+    fs_category = models.ForeignKey(MstFsCategory, db_column="fs_category_id", on_delete=models.PROTECT, related_name="+")
+    trainee_designation = models.CharField(max_length=35)
+    trainee_department = models.CharField(max_length=50)
+    company_name = models.CharField(max_length=75)
+    certificate_issued = models.CharField(max_length=1)
+    certificate_no = models.CharField(max_length=25, null=True, blank=True)
+    certificate_dt = models.DateField(null=True, blank=True)
+    cert_valid_upto = models.DateField(null=True, blank=True)
+    certificate_path = models.CharField(max_length=150, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hse_training_log_dtl"
