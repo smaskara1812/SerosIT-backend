@@ -17,6 +17,7 @@ from .hse_leading_indicators import LeadingIndicatorsViewSet
 from .corrective_actions import CorrectiveActionViewSet
 from .cert_to_rank_mapping import CertToRankMappingViewSet
 from .training_log import TrainingLogDtlViewSet, TrainingLogHdrViewSet
+from .training_report import TrainingReportCategoriesView, TrainingReportExportView, TrainingReportPreviewView
 from .training_org import TrainingOrgDtlViewSet, TrainingOrgHdrViewSet
 from .training_group import TrainingGroupDtlViewSet, TrainingGroupHdrViewSet
 from .hse_weekly_drill import HseWeeklyDrillDtlViewSet, HseWeeklyDrillHdrViewSet
@@ -356,6 +357,9 @@ router.register("masters/approver-mappings", approvals_views.ApproverMappingView
 router.register("drilling/drilling-report", drilling_dtl_views.DrillingDtlViewSet, basename="drilling-dtl")
 
 urlpatterns = [
+    path("qhse/training-report/categories/", TrainingReportCategoriesView.as_view(), name="qhse-training-report-categories"),
+    path("qhse/training-report/preview/", TrainingReportPreviewView.as_view(), name="qhse-training-report-preview"),
+    path("qhse/training-report/export/", TrainingReportExportView.as_view(), name="qhse-training-report-export"),
     path("qhse/hse-drill-report/export/", HseDrillReportExportView.as_view(), name="qhse-hse-drill-report-export"),
     path("", include(router.urls)),
     path("health/", views.health, name="health"),
