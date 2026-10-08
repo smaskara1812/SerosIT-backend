@@ -1,6 +1,6 @@
 """QHSE → Hazard ID Card → Print Report: a filter-driven PDF with four pie
-charts plus a rig-grouped detail table, rendered with WeasyPrint (same
-pipeline as incident_register_report.py).
+charts plus a rig-grouped detail table, drawn with ReportLab (same table
+builder as incident_register_report.py).
 
 No legacy code exists for this report at all — no .aspx/.cs and no
 stored-procedure body (the requirements docx only names
@@ -17,24 +17,25 @@ whatever the current filter bar matches:
      chart with no data — consistent with few/no EOSIL-reported cards in
      that filtered set)
 
-No charting library exists anywhere in this codebase — rather than adding
-one (e.g. matplotlib) for four pie charts, each is a small hand-built
-inline SVG (a handful of arc-path slices computed from percentages),
-matching the WeasyPrint + Django-template + CSS-only pattern every other
-PDF in this app already uses.
+No charting library is needed: each pie is a handful of ReportLab wedges
+computed from the counts (see _pie_drawing).
 
 event_dt/close_out_dt are naive IST wall-clock values straight from the
 DB (TIME_ZONE="Asia/Kolkata", USE_TZ=False) — no conversion needed here.
 """
 
-import math
 from collections import Counter
 
-from django.conf import settings
-from django.template.loader import render_to_string
 from django.utils import timezone
+from reportlab.graphics.shapes import Circle, Drawing, Wedge
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.platypus import CondPageBreak, KeepTogether, Paragraph, Spacer, Table, TableStyle
 
 from .company_branding import seros_logo_path
+from .pdf_reportlab import FONT, FONT_BOLD, MM, NAVY, PX, Chips, data_table, flow_text, note_flowable, register_fonts, render_story_report
 
 PRINT_ROW_LIMIT = 2000
 
@@ -50,46 +51,117 @@ def _emp_name(emp):
     return " ".join(p for p in [emp.emp_fname, emp.emp_mname, emp.emp_sname] if p)
 
 
-def _pie_chart(title, counts, size=132):
-    """counts: list of (label, count), already sorted by caller. Returns
-    None-svg (rendered as "No Data Available", matching the sample PDF)
-    when the filtered set has nothing in this grouping."""
+def _pie_chart(title, counts):
+    """counts: list of (label, count), already sorted by caller. No slices
+    (rendered as "No Data Available", matching the sample PDF) when the
+    filtered set has nothing in this grouping."""
     total = sum(c for _, c in counts)
-    if not total:
-        return {"title": title, "svg": None, "legend": []}
+    slices = [
+        {"label": label, "count": count, "pct": round(count / total * 100, 1), "color": PIE_COLORS[i % len(PIE_COLORS)]}
+        for i, (label, count) in enumerate(counts)
+    ]
+    return {"title": title, "slices": slices if total else []}
 
-    cx = cy = r = size / 2
-    cursor = -90.0
-    paths = []
-    legend = []
-    for i, (label, count) in enumerate(counts):
-        color = PIE_COLORS[i % len(PIE_COLORS)]
-        angle = count / total * 360
-        if len(counts) == 1:
-            paths.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" />')
-        else:
-            x1 = cx + r * math.cos(math.radians(cursor))
-            y1 = cy + r * math.sin(math.radians(cursor))
-            cursor += angle
-            x2 = cx + r * math.cos(math.radians(cursor))
-            y2 = cy + r * math.sin(math.radians(cursor))
-            large_arc = 1 if angle > 180 else 0
-            paths.append(
-                f'<path d="M{cx},{cy} L{x1:.2f},{y1:.2f} '
-                f'A{r},{r} 0 {large_arc} 1 {x2:.2f},{y2:.2f} Z" fill="{color}" />'
-            )
-        legend.append({"label": label, "count": count, "pct": round(count / total * 100, 1), "color": color})
 
-    svg = (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
-        f'xmlns="http://www.w3.org/2000/svg">{"".join(paths)}</svg>'
+PIE_SIZE = 100 * PX
+
+
+def _pie_drawing(slices):
+    """Wedges clockwise from 12 o'clock, like the old SVG."""
+    d = Drawing(PIE_SIZE, PIE_SIZE)
+    r = PIE_SIZE / 2
+    total = sum(sl["count"] for sl in slices)
+    if len(slices) == 1:
+        d.add(Circle(r, r, r, fillColor=colors.HexColor(slices[0]["color"]), strokeColor=None))
+        return d
+    cursor = 0.0
+    for sl in slices:
+        angle = sl["count"] / total * 360
+        d.add(Wedge(r, r, r, 90 - cursor - angle, 90 - cursor, fillColor=colors.HexColor(sl["color"]), strokeColor=None, strokeWidth=0))
+        cursor += angle
+    return d
+
+
+def _legend(slices, width):
+    size = 6.8
+    label_style = ParagraphStyle("lg", fontName=FONT, fontSize=size, leading=size * 1.2, textColor=colors.HexColor("#374151"))
+    value_style = ParagraphStyle("lv", fontName=FONT, fontSize=size, leading=size * 1.2, textColor=colors.HexColor("#6b7280"))
+    dot_w = 6 * PX + 3 * PX
+    values = [f"{sl['count']} ({sl['pct']}%)" for sl in slices]
+    value_w = max(stringWidth(v, FONT, size) for v in values) + 2 * PX
+    rows = []
+    for sl, v in zip(slices, values):
+        dot = Drawing(6 * PX, 6 * PX)
+        dot.add(Circle(3 * PX, 3 * PX, 3 * PX, fillColor=colors.HexColor(sl["color"]), strokeColor=None))
+        rows.append([dot, Paragraph(flow_text(sl["label"]), label_style), Paragraph(v, value_style)])
+    t = Table(rows, colWidths=[dot_w, max(width - dot_w - value_w, 20), value_w])
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (0, -1), 3 * PX),
+                ("RIGHTPADDING", (1, 0), (1, -1), 2 * PX),
+                ("RIGHTPADDING", (2, 0), (2, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * PX),
+            ]
+        )
     )
-    return {"title": title, "svg": svg, "legend": legend}
+    return t
+
+
+def _chart_cards(charts, avail):
+    """Four equal-height bordered cards in a row."""
+    gap = 10 * PX
+    cw = (avail - gap * 3) / 4
+    inner = cw - 16 * PX
+    title_style = ParagraphStyle("ct", fontName=FONT_BOLD, fontSize=7.6, leading=7.6 * 1.2, textColor=NAVY, alignment=1)
+    empty_style = ParagraphStyle("ce", fontName=FONT, fontSize=7.6, leading=9.1, textColor=colors.HexColor("#9ca3af"), alignment=1)
+    contents = []
+    for ch in charts:
+        parts = [Paragraph(flow_text(ch["title"].upper()), title_style), Spacer(1, 6 * PX)]
+        if ch["slices"]:
+            legend_w = inner - PIE_SIZE - 6 * PX
+            body = Table([[_pie_drawing(ch["slices"]), _legend(ch["slices"], legend_w)]], colWidths=[PIE_SIZE + 6 * PX, legend_w])
+            body.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 6 * PX), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+            parts.append(body)
+        else:
+            parts += [Spacer(1, 30 * PX), Paragraph("No Data Available", empty_style), Spacer(1, 30 * PX)]
+        contents.append(parts)
+    height = 0
+    for parts in contents:
+        height = max(height, sum(p.wrap(inner, 10000)[1] for p in parts) + 16 * PX)
+    cards = []
+    for parts in contents:
+        c = Table([[parts]], colWidths=[cw], rowHeights=[height])
+        c.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#e5e7eb")), ("ROUNDEDCORNERS", [6 * PX] * 4), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8 * PX), ("RIGHTPADDING", (0, 0), (-1, -1), 8 * PX), ("TOPPADDING", (0, 0), (-1, -1), 8 * PX), ("BOTTOMPADDING", (0, 0), (-1, -1), 8 * PX)]))
+        cards.append(c)
+    row = Table([[cards[0], "", cards[1], "", cards[2], "", cards[3]]], colWidths=[cw, gap, cw, gap, cw, gap, cw])
+    row.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    return row
+
+
+COLUMNS = [
+    {"label": "Sr", "width": 24, "align": "right"},
+    {"label": "Card No.", "width": 44},
+    {"label": "Operator", "width": 70},
+    {"label": "Location", "width": 80},
+    {"label": "Date of Event", "width": 72},
+    {"label": "Reported By", "width": 64},
+    {"label": "Type", "width": 64},
+    {"label": "TOFS", "width": 38},
+    {"label": "Hazard Description", "width": None},
+    {"label": "Action Taken", "width": None},
+    {"label": "Resp Dept", "width": 68},
+    {"label": "Resp Rank", "width": 62},
+    {"label": "Close Out Date", "width": 72},
+    {"label": "Status", "width": 52},
+]
 
 
 def render_hazard_card_report_pdf(queryset, filter_summary, period_label=None):
-    from weasyprint import HTML
-
+    register_fonts()
     total = queryset.count()
     rows = list(queryset[:PRINT_ROW_LIMIT])
 
@@ -147,16 +219,35 @@ def render_hazard_card_report_pdf(queryset, filter_summary, period_label=None):
         for name in order
     ]
 
-    context = {
-        "logo_path": seros_logo_path(),
-        "period_label": period_label,
-        "charts": charts,
-        "groups": grouped_rows,
-        "filter_summary": filter_summary,
-        "generated_at": timezone.now().strftime("%d/%m/%Y %H:%M"),
-        "total": total,
-        "shown": len(rows),
-        "truncated": total > PRINT_ROW_LIMIT,
-    }
-    html = render_to_string("core/hazard_card_report.html", context)
-    return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    avail = landscape(A4)[0] - 24 * MM
+    story = []
+    if filter_summary:
+        story += [Chips(list(filter_summary)), Spacer(1, 10 * PX)]
+    if total > PRINT_ROW_LIMIT:
+        story += [note_flowable(f"Showing the first {len(rows)} of {total} matching hazard cards — narrow the filters to print the rest.", avail), Spacer(1, 8 * PX)]
+    story += [KeepTogether([_chart_cards(charts, avail)]), Spacer(1, 14 * PX)]
+    group_title = ParagraphStyle("gt", fontName=FONT_BOLD, fontSize=9, leading=10.8, textColor=NAVY)
+    for g in grouped_rows:
+        table_rows = [
+            [
+                r["sr_no"], r["haz_id_card_no"], r["operator_name"] or "—", r["work_location_name"] or "—", r["event_dt"], r["reported_by"] or "—",
+                r["haz_type_name"] or "—", r["tfs"], r["hazard_desc"], r["action_taken"] or "—", r["resp_dept_name"] or "—",
+                r["resp_rank_name"] or "—", r["close_out_dt"] or "—", r["status_label"],
+            ]
+            for r in g["rows"]
+        ]
+        # a heading never sits alone at the bottom of a page
+        story += [CondPageBreak(70), Spacer(1, 10 * PX), Paragraph(flow_text(g["rig_name"]), group_title), Spacer(1, 4 * PX)]
+        story += [data_table(COLUMNS, table_rows, avail, head_size=7.2, cell_size=7.4, pad_x=5, pad_y=4, center=(7,)), Spacer(1, 8 * PX)]
+    if not grouped_rows:
+        story.append(Paragraph("No hazard cards match the current filters.", ParagraphStyle("none", fontName=FONT, fontSize=8.4, textColor=colors.HexColor("#9ca3af"), alignment=1, spaceBefore=20)))
+    title = "Hazard ID Card Report" + (f" ({period_label})" if period_label else "")
+    return render_story_report(
+        story,
+        title=title,
+        logo_path=seros_logo_path(),
+        meta=[
+            [("Generated ", False), (timezone.now().strftime("%d/%m/%Y %H:%M"), True)],
+            [("Total ", False), (str(total), True), (f" hazard{'' if total == 1 else 's'}", False)],
+        ],
+    )

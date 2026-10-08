@@ -182,8 +182,11 @@ def _paged_response(request):
     offset = (page - 1) * page_size
 
     if record_status == "monthly":
-        rows = [_monthly_row(r) for r in _monthly_grouped(qs)[offset : offset + page_size]]
-        has_more = _monthly_grouped(qs)[offset + page_size : offset + page_size + 1].exists()
+        # One row past the page tells us whether more exist. A separate
+        # .exists() on this grouped, ordered query is invalid SQL on SQL Server.
+        fetched = list(_monthly_grouped(qs)[offset : offset + page_size + 1])
+        rows = [_monthly_row(r) for r in fetched[:page_size]]
+        has_more = len(fetched) > page_size
     else:
         daily_qs = qs.select_related("drilling_hdr", "rig").order_by("rig__rig_name", "drilling_hdr__location", "-drilling_dtl_dt")
         rows = [_daily_row(d) for d in daily_qs[offset : offset + page_size]]

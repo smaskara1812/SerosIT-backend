@@ -579,8 +579,7 @@ class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="print")
     def print_pdf(self, request):
-        """PDF version of the current filtered list — same WeasyPrint
-        pipeline as the per-incident Flash Report (incident_flash_report.py),
+        """PDF version of the current filtered list — drawn with ReportLab, like the per-incident Flash Report (incident_flash_report.py),
         landscape and row-based rather than a single-incident letterhead
         (see incident_register_report.py)."""
         qs = self.get_queryset()

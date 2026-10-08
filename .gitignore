@@ -6,3 +6,5 @@ db.sqlite3
 *.log
 .DS_Store
 /media/
+
+selftest_report_*.txt

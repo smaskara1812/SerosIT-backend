@@ -296,7 +296,7 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
                     "Yes" if h.timeout_for_safety == "Y" else "No",
                     h.hazard_desc,
                     h.action_taken or "",
-                    h.resp_dept.dept_dispname if h.resp_dept_id else "",
+                    h.resp_dept.vessel_dept_name if h.resp_dept_id else "",
                     h.resp_rank.rank_name if h.resp_rank_id else "",
                     h.reported_by_name or "",
                     close_out,

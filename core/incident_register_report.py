@@ -1,7 +1,5 @@
-"""QHSE Incident Register — printable PDF, rendered with WeasyPrint from a
-Django template (same pipeline as incident_flash_report.py's per-incident
-Flash Report — see that module for the established pattern this mirrors:
-render_to_string -> weasyprint.HTML(string=...).write_pdf()).
+"""QHSE Incident Register — printable PDF, drawn with ReportLab
+(pdf_reportlab.render_table_report).
 
 Unlike the Flash Report (one incident, full detail, per-rig letterhead),
 this is a plain listing report — whatever rows the current filter bar
@@ -9,11 +7,10 @@ matches, landscape, one row per incident — so it carries no dynamic
 company branding of its own.
 """
 
-from django.conf import settings
-from django.template.loader import render_to_string
 from django.utils import timezone
 
 from .company_branding import seros_logo_path
+from .pdf_reportlab import render_table_report
 
 # A PDF this deep would be slow to render and unwieldy to print — the
 # on-screen list already paginates, so Print is meant for "this filtered
@@ -30,29 +27,36 @@ def _fmt_dt(dt):
 
 
 def render_incident_register_pdf(queryset, filter_summary):
-    from weasyprint import HTML
-
     total = queryset.count()
     incidents = list(queryset[:PRINT_ROW_LIMIT])
-
-    context = {
-        "logo_path": seros_logo_path(),
-        "rows": [
-            {
-                "sr_no": i + 1,
-                "rig_name": r.rig.rig_name if r.rig_id else "Unknown",
-                "rig_incident_no": r.rig_incident_no or "",
-                "incident_date": _fmt_dt(r.incident_date),
-                "incident_type_abrv": r.incident_type.incident_abrv if r.incident_type_id else "",
-                "incident_descr": r.incident_descr,
-            }
-            for i, r in enumerate(incidents)
+    rows = [
+        [
+            i + 1,
+            r.rig.rig_name if r.rig_id else "Unknown",
+            r.rig_incident_no or "—",
+            _fmt_dt(r.incident_date),
+            (r.incident_type.incident_abrv if r.incident_type_id else "") or "—",
+            r.incident_descr,
+        ]
+        for i, r in enumerate(incidents)
+    ]
+    return render_table_report(
+        title="Incident Register",
+        logo_path=seros_logo_path(),
+        meta=[
+            [("Generated ", False), (_fmt_dt(timezone.now()), True)],
+            [("Total ", False), (str(total), True), (f" incident{'' if total == 1 else 's'}", False)],
         ],
-        "filter_summary": filter_summary,
-        "generated_at": _fmt_dt(timezone.now()),
-        "total": total,
-        "shown": len(incidents),
-        "truncated": total > PRINT_ROW_LIMIT,
-    }
-    html = render_to_string("core/incident_register_report.html", context)
-    return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        body_chips=[filter_summary],
+        note=f"Showing the first {len(incidents)} of {total} matching incidents — narrow the filters to print the rest." if total > PRINT_ROW_LIMIT else None,
+        columns=[
+            {"label": "Sr.No.", "width": 54, "align": "right"},
+            {"label": "Rig", "width": 110},
+            {"label": "Incident No.", "width": 80},
+            {"label": "Date & Time", "width": 110},
+            {"label": "Type", "width": 60},
+            {"label": "Brief Description of Incident", "width": None},
+        ],
+        rows=rows,
+        empty_text="No incidents match the current filters.",
+    )

@@ -682,7 +682,7 @@ DRILLDOWN_PDF_COLUMNS = {
 
 
 class IncidentDashboardDrilldownPrintView(APIView):
-    """PDF version of one drill-down's record list — same WeasyPrint
+    """PDF version of one drill-down's record list — drawn with ReportLab, like
     pipeline as the Incident Register's own Print (incident_register_report.py)
     — with the exact filter combination (dimension, row, year, population)
     stated in the header so the printed page is self-describing rather than
