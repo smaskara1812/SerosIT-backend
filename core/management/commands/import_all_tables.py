@@ -261,6 +261,14 @@ class Command(BaseCommand):
                                 pass
                         if identity_wrap:
                             cur.execute(f"SET IDENTITY_INSERT {quoted_table} ON")
+                        # A savepoint around the table's insert: a failed
+                        # fast_executemany() batch is NOT all-or-nothing — the
+                        # rows sent before the offending one stay inserted
+                        # (inside this transaction), so retrying the whole
+                        # batch on top of them dies on a duplicate primary key
+                        # (seen on drilling_hdr). Rolling back to this point
+                        # first makes the retry start from an empty table.
+                        sid = transaction.savepoint()
                         try:
                             cur.executemany(sql, row_tuples)
                         except DatabaseError as exc:
@@ -268,14 +276,15 @@ class Command(BaseCommand):
                             # buffer from an early sample of the batch, not
                             # every row — a later, legitimately shorter-than-
                             # the-column's-real-width value can still exceed
-                            # that guess and abort the whole batch with
-                            # "String data, right truncation". No XACT_ABORT
-                            # is set on this connection, so the failed
-                            # executemany() doesn't poison the transaction —
-                            # safe to just retry row-by-row without the fast
-                            # path, same "skip the speedup, don't fail the
-                            # import" fallback as the flag itself above.
+                            # that guess and abort the batch with "String data,
+                            # right truncation". No XACT_ABORT is set on this
+                            # connection, so the transaction survives; retry
+                            # row-by-row without the fast path (after undoing
+                            # the partial insert, see above), same "skip the
+                            # speedup, don't fail the import" fallback as the
+                            # flag itself above.
                             if vendor == "microsoft" and "right truncation" in str(exc).lower():
+                                transaction.savepoint_rollback(sid)
                                 self.stdout.write(
                                     self.style.WARNING(
                                         f"  {table}: fast_executemany batch hit a string-length "
@@ -289,6 +298,7 @@ class Command(BaseCommand):
                                 cur.executemany(sql, row_tuples)
                             else:
                                 raise
+                        transaction.savepoint_commit(sid)
                         if identity_wrap:
                             cur.execute(f"SET IDENTITY_INSERT {quoted_table} OFF")
                     self.stdout.write(f"  {table}: {len(row_tuples)} row(s) imported")
