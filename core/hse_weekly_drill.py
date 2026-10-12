@@ -22,7 +22,7 @@ Legacy's per-week start/end dates are deliberately not carried over
 (confirmed with the user).
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from django.db.models import Count, Max, Q
 from rest_framework import serializers
@@ -33,6 +33,7 @@ from . import audit as _audit
 from .masters_views import BaseMasterViewSet
 from .models import HseWeeklyDrillDtl, HseWeeklyDrillHdr, MstHseDrill, MstRig
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 
 ENTITY_KEY = "qhse.hse_weekly_drill"
 _AUDIT_READ_ONLY = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
@@ -40,6 +41,19 @@ _AUDIT_READ_ONLY = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 def _drill_label(d):
     return f"{d.hse_drill_name} — {d.get_hse_drill_frequency_display()} — {d.rig_type.rig_type_name if d.rig_type_id else 'All'}"
+
+
+def week_range(year, week):
+    """Sunday-to-Saturday span of a numbered week. Week 1 is the week that
+    contains 1 January, so it can start in the previous December
+    (2025 week 1 = 29 Dec 2024 to 4 Jan 2025)."""
+    jan1 = date(year, 1, 1)
+    start = jan1 - timedelta(days=(jan1.weekday() + 1) % 7) + timedelta(weeks=week - 1)
+    return start, start + timedelta(days=6)
+
+
+def _fmt(d):
+    return f"{d.day} {d.strftime('%b %Y')}"
 
 
 def _previous_conducted_dt(rig_id, drill_id, before, exclude_dtl_id=None):
@@ -64,6 +78,8 @@ class HseWeeklyDrillHdrSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         data["year"] = instance.drill_year.year
+        start, end = week_range(instance.drill_year.year, instance.drill_week)
+        data["week_start"], data["week_end"] = start.isoformat(), end.isoformat()
         return data
 
     def validate(self, attrs):
@@ -157,15 +173,27 @@ class HseWeeklyDrillDtlSerializer(serializers.ModelSerializer):
         # validate() below gives the friendlier duplicate-drill message.
         validators = []
 
+    @staticmethod
+    def _check_in_week(hdr, conducted):
+        start, end = week_range(hdr.drill_year.year, hdr.drill_week)
+        if not (start <= conducted <= end):
+            raise serializers.ValidationError(
+                {"drill_conducted_dt": f"Must fall in week {hdr.drill_week} ({_fmt(start)} to {_fmt(end)})."}
+            )
+
     def validate(self, attrs):
         if self.instance is not None:
             # Legacy's row Edit only touches Conducted Date + Remarks.
             for locked in ("hdr", "hse_drill", "drill_last_conducted_dt"):
                 if locked in attrs and attrs[locked] != getattr(self.instance, locked):
                     raise serializers.ValidationError({locked: "Can't be changed — delete the row and add it again."})
+            # Only when the date itself changes, so an old row stays editable for remarks.
+            if fields_changed(self.instance, attrs, "drill_conducted_dt"):
+                self._check_in_week(self.instance.hdr, attrs["drill_conducted_dt"])
             return attrs
 
         hdr, drill, conducted = attrs["hdr"], attrs["hse_drill"], attrs["drill_conducted_dt"]
+        self._check_in_week(hdr, conducted)
         if HseWeeklyDrillDtl.objects.filter(hdr=hdr, hse_drill=drill).exists():
             raise serializers.ValidationError({"hse_drill": "This drill is already added for this week."})
         rig = hdr.rig

@@ -15,7 +15,8 @@ Rules ported from legacy:
     Active) change, saved in one go.
   - Period is a month and can't be in the future; Report No. (max 12, letters/
     digits allowed) must be unique within Lagging — a Leading report may use
-    the same number (confirmed with the user; legacy data does).
+    the same number (confirmed with the user; legacy data does). Company + rig +
+    period is a unique key too (legacy DB rule; no duplicates existed, so it is enforced).
 Deliberate changes: Company is looked up from Rig + Period with the shared
 company_branding resolver and stays editable (legacy hardcoded a default);
 Delete (permission-gated) and Excel export are provided though legacy has
@@ -117,6 +118,12 @@ class LaggingIndicatorsHdrSerializer(serializers.ModelSerializer):
         period = _parse_period(attrs.pop("period_month"))
         if period > date.today():
             raise serializers.ValidationError({"period_month": "Period can't be in the future."})
+        # Legacy DB rule: company + rig + period form a unique key (one report per month).
+        same = LaggingIndicatorsHdr.objects.filter(company=attrs.get("company"), rig=attrs.get("rig"), period=period)
+        if self.instance is not None:
+            same = same.exclude(pk=self.instance.pk)
+        if same.exists():
+            raise serializers.ValidationError({"period_month": "There is already a report for this company, rig and period."})
         attrs["period"] = period
         return attrs
 

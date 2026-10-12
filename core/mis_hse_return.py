@@ -85,18 +85,148 @@ def _header_dict(hdr):
     }
 
 
-def _to_decimal(value):
-    """Blank/None → None (an empty box), otherwise a Decimal. Raises
-    InvalidOperation on anything unparsable so the caller can 400."""
-    if value in (None, ""):
-        return None
-    return Decimal(str(value))
+# ── validation of the tab grids ──────────────────────────────────────────
+# Mirrors frontend/src/lib/misHseChecks.js. A row you start must be complete;
+# a row left entirely blank is ignored (legacy returns only hold the rows that
+# were filled in).
+INT_MAX = 2147483647
+_WHOLE = "must be a whole number, 0 or more."
 
 
-def _to_int(value):
-    if value in (None, ""):
+def _blank(v):
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def _whole(v, label, errors, field):
+    """Whole number 0..INT_MAX, or None (and an entry in errors)."""
+    if _blank(v):
+        errors[field] = f"Enter {label}."
         return None
-    return int(value)
+    try:
+        d = Decimal(str(v).strip())
+    except InvalidOperation:
+        d = None
+    if d is None or not d.is_finite() or d != d.to_integral_value() or d < 0:
+        errors[field] = f"{label} {_WHOLE}"
+        return None
+    if d > INT_MAX:
+        errors[field] = f"{label} is too large."
+        return None
+    return int(d)
+
+
+def _amount(v, label, errors, field, max_value):
+    """Number 0..max_value with at most 2 decimals, or None (and an entry in errors)."""
+    if _blank(v):
+        errors[field] = f"Enter {label}."
+        return None
+    try:
+        d = Decimal(str(v).strip())
+    except InvalidOperation:
+        d = None
+    if d is None or not d.is_finite() or d < 0:
+        errors[field] = f"{label} must be a number, 0 or more."
+        return None
+    if d != d.quantize(Decimal("0.01")):
+        errors[field] = f"{label} can have at most 2 decimal places."
+        return None
+    if d > max_value:
+        errors[field] = f"{label} is too large."
+        return None
+    return d
+
+
+def _grid_response(row_errors, names):
+    lines = []
+    for rid, errs in row_errors.items():
+        lines.extend(f"{names.get(rid, 'Row')}: {msg}" for msg in errs.values())
+    return Response({"detail": "\n".join(lines), "row_errors": row_errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def check_manhours(rows):
+    clean, errors = [], {}
+    for row in rows:
+        rid = row.get("hse_manhours_party_id")
+        if not rid:
+            continue
+        e = {}
+        personnel = None if _blank(row.get("no_of_personnel")) else _whole(row.get("no_of_personnel"), "No. of Personnel", e, "no_of_personnel")
+        hours = _amount(row.get("hours_worked"), "Hours Worked", e, "hours_worked", Decimal("99.99"))
+        if e:
+            errors[rid] = e
+        else:
+            clean.append((rid, personnel, hours))
+    return clean, errors
+
+
+def check_meetings(rows):
+    clean, errors = [], {}
+    keys = ("total_meetings", "total_seros_employees", "total_contractors")
+    for row in rows:
+        rid = row.get("hse_meeting_id")
+        if not rid:
+            continue
+        if all(_blank(row.get(k)) for k in keys):
+            continue
+        e = {}
+        meetings = _whole(row.get("total_meetings"), "Total Meetings", e, "total_meetings")
+        staff = _whole(row.get("total_seros_employees"), "Total SEROS Employees", e, "total_seros_employees")
+        contractors = _whole(row.get("total_contractors"), "Total Contractors", e, "total_contractors")
+        if not e:
+            if meetings == 0 and (staff or contractors):
+                msg = "must be 0 when there are no meetings."
+                if staff:
+                    e["total_seros_employees"] = f"Total SEROS Employees {msg}"
+                if contractors:
+                    e["total_contractors"] = f"Total Contractors {msg}"
+            elif meetings and not (staff or contractors):
+                e["total_seros_employees"] = "Enter the employees or contractors who attended (at least one is above 0)."
+                e["total_contractors"] = e["total_seros_employees"]
+        if e:
+            errors[rid] = e
+        else:
+            clean.append((rid, meetings, staff, contractors))
+    return clean, errors
+
+
+def check_activities(rows):
+    clean, errors = [], {}
+    keys = ("total_activities", "seros_emp_count", "contractor_count")
+    for row in rows:
+        rid = row.get("hse_activity_id")
+        if not rid:
+            continue
+        if all(_blank(row.get(k)) for k in keys):
+            continue
+        e = {}
+        total = _whole(row.get("total_activities"), "Total Activities", e, "total_activities")
+        staff = _whole(row.get("seros_emp_count"), "SEROS Employees", e, "seros_emp_count")
+        contractors = _whole(row.get("contractor_count"), "Contractors", e, "contractor_count")
+        if e:
+            errors[rid] = e
+        else:
+            clean.append((rid, total, staff, contractors))
+    return clean, errors
+
+
+def check_environment(rows):
+    clean, errors = [], {}
+    for row in rows:
+        rid = row.get("hse_consumable_id")
+        if not rid:
+            continue
+        remarks = (row.get("remarks") or "").strip()
+        if _blank(row.get("total_quantity")) and not remarks:
+            continue
+        e = {}
+        qty = _amount(row.get("total_quantity"), "Total Quantity", e, "total_quantity", Decimal("99999999.99"))
+        if len(remarks) > 200:
+            e["remarks"] = "Remarks can be at most 200 characters."
+        if e:
+            errors[rid] = e
+        else:
+            clean.append((rid, qty, remarks))
+    return clean, errors
 
 
 class MisHseReturnView(APIView):
@@ -169,6 +299,12 @@ class MisHseReturnView(APIView):
                         f"A MIS HSE Return already exists for {cost_centre.cost_centre_name} on {report_month:%b %Y}."
                     )
                 },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if rig and MisMonthlyHseReturnsHdr.objects.filter(rig=rig, report_month=report_month).exists():
+            return Response(
+                {"report_month": f"{rig.rig_name} already has a MIS HSE Return for {report_month:%b %Y}."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -310,33 +446,25 @@ class MisHseReturnManhoursView(APIView):
 
     def put(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
+        rows = request.data.get("rows", [])
+        clean, errors = check_manhours(rows)
+        if errors:
+            names = dict(MstHseManhoursParty.objects.filter(pk__in=errors).values_list("pk", "hse_manhours_party_name"))
+            return _grid_response(errors, names)
         uid = _current_user_id(request)
         now = timezone.now()
-        try:
-            for row in request.data.get("rows", []):
-                party_id = row.get("hse_manhours_party_id")
-                if not party_id:
-                    continue
-                no_of_personnel = _to_int(row.get("no_of_personnel"))
-                hours_worked = _to_decimal(row.get("hours_worked"))
-                obj = MisMonthlyHseManhours.objects.filter(hdr=hdr, party_id=party_id).first()
-                if obj:
-                    obj.no_of_personnel = no_of_personnel
-                    obj.hours_worked = hours_worked
-                    obj.mod_user_id = uid
-                    obj.mod_dt = now
-                    obj.save()
-                else:
-                    MisMonthlyHseManhours.objects.create(
-                        hdr=hdr,
-                        party_id=party_id,
-                        no_of_personnel=no_of_personnel,
-                        hours_worked=hours_worked,
-                        cr_user_id=uid or 1,
-                        cr_dt=now,
-                    )
-        except (InvalidOperation, ValueError, TypeError):
-            return Response({"detail": "Invalid number in Manhours grid."}, status=status.HTTP_400_BAD_REQUEST)
+        for party_id, no_of_personnel, hours_worked in clean:
+            obj = MisMonthlyHseManhours.objects.filter(hdr=hdr, party_id=party_id).first()
+            if obj:
+                obj.no_of_personnel = no_of_personnel
+                obj.hours_worked = hours_worked
+                obj.mod_user_id = uid
+                obj.mod_dt = now
+                obj.save()
+            else:
+                MisMonthlyHseManhours.objects.create(
+                    hdr=hdr, party_id=party_id, no_of_personnel=no_of_personnel, hours_worked=hours_worked, cr_user_id=uid or 1, cr_dt=now
+                )
         _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Manhours", None)
         return Response({"saved": True})
 
@@ -350,10 +478,11 @@ class MisHseReturnIncidentsView(APIView):
 
     def put(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
-        try:
-            hdr.lti_free_days = _to_int(request.data.get("lti_free_days"))
-        except (ValueError, TypeError):
-            return Response({"detail": "Invalid LTI Free Days."}, status=status.HTTP_400_BAD_REQUEST)
+        e = {}
+        days = _whole(request.data.get("lti_free_days"), "LTI Free Days", e, "lti_free_days")
+        if e:
+            return Response(e, status=status.HTTP_400_BAD_REQUEST)
+        hdr.lti_free_days = days
         hdr.mod_user_id = _current_user_id(request)
         hdr.mod_dt = timezone.now()
         hdr.save(update_fields=["lti_free_days", "mod_user_id", "mod_dt"])
@@ -367,29 +496,23 @@ class MisHseReturnMeetingsView(APIView):
 
     def put(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
+        clean, errors = check_meetings(request.data.get("rows", []))
+        if errors:
+            names = dict(MstHseMeeting.objects.filter(pk__in=errors).values_list("pk", "hse_meeting_type"))
+            return _grid_response(errors, names)
         uid = _current_user_id(request)
         now = timezone.now()
-        try:
-            for row in request.data.get("rows", []):
-                meeting_id = row.get("hse_meeting_id")
-                if not meeting_id:
-                    continue
-                values = {
-                    "total_meetings": _to_int(row.get("total_meetings")),
-                    "total_seros_employees": _to_int(row.get("total_seros_employees")),
-                    "total_contractors": _to_int(row.get("total_contractors")),
-                }
-                obj = MisMonthlyHseMeetings.objects.filter(hdr=hdr, meeting_id=meeting_id).first()
-                if obj:
-                    for k, v in values.items():
-                        setattr(obj, k, v)
-                    obj.mod_user_id = uid
-                    obj.mod_dt = now
-                    obj.save()
-                else:
-                    MisMonthlyHseMeetings.objects.create(hdr=hdr, meeting_id=meeting_id, cr_user_id=uid or 1, cr_dt=now, **values)
-        except (ValueError, TypeError):
-            return Response({"detail": "Invalid number in Meetings grid."}, status=status.HTTP_400_BAD_REQUEST)
+        for meeting_id, meetings, staff, contractors in clean:
+            values = {"total_meetings": meetings, "total_seros_employees": staff, "total_contractors": contractors}
+            obj = MisMonthlyHseMeetings.objects.filter(hdr=hdr, meeting_id=meeting_id).first()
+            if obj:
+                for k, v in values.items():
+                    setattr(obj, k, v)
+                obj.mod_user_id = uid
+                obj.mod_dt = now
+                obj.save()
+            else:
+                MisMonthlyHseMeetings.objects.create(hdr=hdr, meeting_id=meeting_id, cr_user_id=uid or 1, cr_dt=now, **values)
         _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Meetings", None)
         return Response({"saved": True})
 
@@ -400,31 +523,23 @@ class MisHseReturnActivitiesView(APIView):
 
     def put(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
+        clean, errors = check_activities(request.data.get("rows", []))
+        if errors:
+            names = dict(MstHseActivity.objects.filter(pk__in=errors).values_list("pk", "hse_activity_name"))
+            return _grid_response(errors, names)
         uid = _current_user_id(request)
         now = timezone.now()
-        try:
-            for row in request.data.get("rows", []):
-                activity_id = row.get("hse_activity_id")
-                if not activity_id:
-                    continue
-                values = {
-                    "total_activities": _to_int(row.get("total_activities")),
-                    "seros_emp_count": _to_int(row.get("seros_emp_count")),
-                    "contractor_count": _to_int(row.get("contractor_count")),
-                }
-                obj = MisMonthlyHseActivities.objects.filter(hdr=hdr, activity_id=activity_id).first()
-                if obj:
-                    for k, v in values.items():
-                        setattr(obj, k, v)
-                    obj.mod_user_id = uid
-                    obj.mod_dt = now
-                    obj.save()
-                else:
-                    MisMonthlyHseActivities.objects.create(
-                        hdr=hdr, activity_id=activity_id, cr_user_id=uid or 1, cr_dt=now, **values
-                    )
-        except (ValueError, TypeError):
-            return Response({"detail": "Invalid number in Activities grid."}, status=status.HTTP_400_BAD_REQUEST)
+        for activity_id, total, staff, contractors in clean:
+            values = {"total_activities": total, "seros_emp_count": staff, "contractor_count": contractors}
+            obj = MisMonthlyHseActivities.objects.filter(hdr=hdr, activity_id=activity_id).first()
+            if obj:
+                for k, v in values.items():
+                    setattr(obj, k, v)
+                obj.mod_user_id = uid
+                obj.mod_dt = now
+                obj.save()
+            else:
+                MisMonthlyHseActivities.objects.create(hdr=hdr, activity_id=activity_id, cr_user_id=uid or 1, cr_dt=now, **values)
         _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Activities", None)
         return Response({"saved": True})
 
@@ -435,32 +550,23 @@ class MisHseReturnEnvironmentView(APIView):
 
     def put(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
+        clean, errors = check_environment(request.data.get("rows", []))
+        if errors:
+            names = dict(MstHseConsumable.objects.filter(pk__in=errors).values_list("pk", "hse_consumable_name"))
+            return _grid_response(errors, names)
         uid = _current_user_id(request)
         now = timezone.now()
-        try:
-            for row in request.data.get("rows", []):
-                consumable_id = row.get("hse_consumable_id")
-                if not consumable_id:
-                    continue
-                total_quantity = _to_decimal(row.get("total_quantity"))
-                remarks = row.get("remarks") or ""
-                obj = MisMonthlyHseEnvironment.objects.filter(hdr=hdr, consumable_id=consumable_id).first()
-                if obj:
-                    obj.total_quantity = total_quantity
-                    obj.remarks = remarks
-                    obj.mod_user_id = uid
-                    obj.mod_dt = now
-                    obj.save()
-                else:
-                    MisMonthlyHseEnvironment.objects.create(
-                        hdr=hdr,
-                        consumable_id=consumable_id,
-                        total_quantity=total_quantity,
-                        remarks=remarks,
-                        cr_user_id=uid or 1,
-                        cr_dt=now,
-                    )
-        except (InvalidOperation, ValueError, TypeError):
-            return Response({"detail": "Invalid number in Environment Reporting grid."}, status=status.HTTP_400_BAD_REQUEST)
+        for consumable_id, total_quantity, remarks in clean:
+            obj = MisMonthlyHseEnvironment.objects.filter(hdr=hdr, consumable_id=consumable_id).first()
+            if obj:
+                obj.total_quantity = total_quantity
+                obj.remarks = remarks
+                obj.mod_user_id = uid
+                obj.mod_dt = now
+                obj.save()
+            else:
+                MisMonthlyHseEnvironment.objects.create(
+                    hdr=hdr, consumable_id=consumable_id, total_quantity=total_quantity, remarks=remarks, cr_user_id=uid or 1, cr_dt=now
+                )
         _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Environment Reporting", None)
         return Response({"saved": True})

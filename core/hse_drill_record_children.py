@@ -33,6 +33,7 @@ from .models import (
     HseDrillRecordObservation,
 )
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 
 _AUDIT_READ_ONLY = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
@@ -43,6 +44,18 @@ class HseDrillRecordEventSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = _AUDIT_READ_ONLY
         extra_kwargs = {"drill_rec_event_desc": {"required": True, "allow_blank": False, "allow_null": False}}
+
+    def validate(self, attrs):
+        # Legacy DB rule: a drill record can't have two events at the same time.
+        hdr = attrs.get("hdr", getattr(self.instance, "hdr", None))
+        when = attrs.get("drill_rec_event_time", getattr(self.instance, "drill_rec_event_time", None))
+        if hdr and when and fields_changed(self.instance, attrs, "hdr", "drill_rec_event_time"):
+            same = HseDrillRecordEvent.objects.filter(hdr=hdr, drill_rec_event_time=when)
+            if self.instance is not None:
+                same = same.exclude(pk=self.instance.pk)
+            if same.exists():
+                raise serializers.ValidationError({"drill_rec_event_time": "This drill already has an event at that time."})
+        return attrs
 
 
 class HseDrillRecordObservationSerializer(serializers.ModelSerializer):

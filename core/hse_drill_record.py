@@ -71,6 +71,7 @@ from .models import (
     MstRig,
 )
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 
 
 def _child_count(model):
@@ -152,6 +153,9 @@ class HseDrillRecordHdrSerializer(serializers.ModelSerializer):
     corrective_actions_count = serializers.IntegerField(read_only=True, default=0)
     photo_uploads_count = serializers.IntegerField(read_only=True, default=0)
 
+    # Allowed values (legacy DB rule). The form sends N for "No"; old records store blank.
+    control_room_on_shore = serializers.ChoiceField(choices=["Y", "N"])
+
     class Meta:
         model = HseDrillRecordHdr
         fields = "__all__"
@@ -166,7 +170,39 @@ class HseDrillRecordHdrSerializer(serializers.ModelSerializer):
     def get_approved_by_oim_fs_emp_name(self, obj):
         return str(obj.approved_by_oim_fs_emp) if obj.approved_by_oim_fs_emp_id else ""
 
+    # Legacy front-end / database rules. Each is checked only when the fields it
+    # involves are new or changed, so an old record that already breaks one can still
+    # be edited for something else.
+    def _legacy_rules(self, attrs):
+        def val(name):
+            if name in attrs:
+                return attrs[name]
+            return getattr(self.instance, name, None) if self.instance is not None else None
+
+        errors = {}
+        drill_dt = val("drill_dt")
+        if drill_dt and fields_changed(self.instance, attrs, "drill_dt") and drill_dt > timezone.now():
+            errors["drill_dt"] = "Drill date and time can't be in the future."
+        for name, label in (
+            ("head_count", "Head Count"), ("no_of_participants", "No. of Participants"),
+            ("initial_response_time", "Initial Response Time"), ("drill_muster", "Drill Muster"),
+            ("total_time_of_drill", "Total Time of Drill"),
+        ):
+            value = val(name)
+            if value is not None and fields_changed(self.instance, attrs, name) and value <= 0:
+                errors[name] = f"{label} must be more than 0."
+        if drill_dt and val("rig") and val("hse_drill_1") and fields_changed(self.instance, attrs, "rig", "drill_dt", "hse_drill_1"):
+            same = HseDrillRecordHdr.objects.filter(rig=val("rig"), drill_dt=drill_dt, hse_drill_1=val("hse_drill_1"))
+            if self.instance is not None:
+                same = same.exclude(pk=self.instance.pk)
+            if same.exists():
+                errors.setdefault("drill_dt", "This rig already has this drill recorded at that date and time.")
+        return errors
+
     def validate(self, attrs):
+        errors = self._legacy_rules(attrs)
+        if errors:
+            raise ValidationError(errors)
         _validate_mm_ss(attrs)
         head_count = attrs.get("head_count", getattr(self.instance, "head_count", None))
         participants = attrs.get("no_of_participants", getattr(self.instance, "no_of_participants", None))

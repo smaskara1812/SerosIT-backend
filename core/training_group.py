@@ -84,6 +84,10 @@ class TrainingGroupHdrSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         inst = self.instance
         if inst is None:
+            if HseTrainingGroupHdr.objects.filter(training_group_hdr_name__iexact=attrs["training_group_hdr_name"]).exists():
+                raise serializers.ValidationError(
+                    {"training_group_hdr_name": f"A group named {attrs['training_group_hdr_name']} already exists."}
+                )
             attrs["training_group_hdr_active"] = "Y"
             return attrs
         if inst.training_group_hdr_active != "Y":

@@ -26,6 +26,7 @@ from . import audit as _audit
 from .masters_views import BaseMasterViewSet
 from .models import HseTrainingOrgDtl, HseTrainingOrgHdr
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 from .xlsx_export import build_xlsx_response
 
 ENTITY_KEY = "qhse.training_org"
@@ -72,8 +73,13 @@ class TrainingOrgHdrSerializer(serializers.ModelSerializer):
             for locked, msg in (("training_org_name", "The name can't be changed once it is saved."), ("location", "The location can't be changed once it is saved.")):
                 if locked in attrs and attrs[locked] != getattr(inst, locked):
                     raise serializers.ValidationError({locked: msg})
-        elif "location" in attrs:
-            attrs["country"] = attrs["location"].country
+        else:
+            if HseTrainingOrgHdr.objects.filter(training_org_name__iexact=attrs["training_org_name"]).exists():
+                raise serializers.ValidationError(
+                    {"training_org_name": f"An organisation named {attrs['training_org_name']} already exists."}
+                )
+            if "location" in attrs:
+                attrs["country"] = attrs["location"].country
         return attrs
 
 
@@ -146,8 +152,17 @@ class TrainingOrgDtlSerializer(serializers.ModelSerializer):
                 if not attrs[name]:
                     raise serializers.ValidationError({name: "This field is required."})
         _blank_to_none(attrs, ("trainer_mname", "trainer_qualification", "trainer_mobile_no", "trainer_email_id"))
-        if self.instance is not None and "hdr" in attrs and attrs["hdr"] != self.instance.hdr:
+        inst = self.instance
+        if inst is not None and "hdr" in attrs and attrs["hdr"] != inst.hdr:
             raise serializers.ValidationError({"hdr": "Can't be changed — delete the trainer and add them again."})
+        mobile = attrs.get("trainer_mobile_no", getattr(inst, "trainer_mobile_no", None))
+        if mobile and fields_changed(inst, attrs, "trainer_mobile_no"):
+            hdr = attrs.get("hdr", getattr(inst, "hdr", None))
+            others = HseTrainingOrgDtl.objects.filter(hdr=hdr, trainer_mobile_no=mobile)
+            if inst is not None:
+                others = others.exclude(pk=inst.pk)
+            if others.exists():
+                raise serializers.ValidationError({"trainer_mobile_no": "This organisation already has a trainer with this mobile number."})
         return attrs
 
 

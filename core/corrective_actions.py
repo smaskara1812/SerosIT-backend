@@ -23,6 +23,7 @@ from . import audit as _audit
 from .masters_views import BaseMasterViewSet
 from .models import OtherQhseAction
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 from .xlsx_export import build_xlsx_response
 
 ENTITY_KEY = "qhse.corrective_actions"
@@ -57,6 +58,16 @@ class CorrectiveActionSerializer(serializers.ModelSerializer):
 
         def pick(name):
             return attrs[name] if name in attrs else getattr(inst, name, None)
+
+        # Legacy DB rule: ICR No. is unique (ignoring capital letters). Only checked when it
+        # is new or changed, so an old record can still be edited for something else.
+        icr = (pick("icr_no") or "").strip()
+        if icr and fields_changed(inst, attrs, "icr_no"):
+            same = OtherQhseAction.objects.filter(icr_no__iexact=icr)
+            if inst is not None:
+                same = same.exclude(pk=inst.pk)
+            if same.exists():
+                raise serializers.ValidationError({"icr_no": "This ICR No. is already used."})
 
         dt, target = pick("other_qhse_action_dt"), pick("target_date")
         if dt and (inst is None or "other_qhse_action_dt" in attrs and attrs["other_qhse_action_dt"] != inst.other_qhse_action_dt):

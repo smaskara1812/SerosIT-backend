@@ -11,8 +11,8 @@ Rules ported from legacy:
   - The header can't be edited afterwards; only the detail rows (sessions,
     persons, duration + type, active) change, saved in one go.
   - Period is a month and can't be in the future; Report No. (max 12, letters/
-    digits allowed) must be unique — confirmed with the user (duplicate rig +
-    period is fine).
+    digits allowed) must be unique. Company + rig + period is a unique key too (legacy DB
+    rule; no duplicates existed, so it is enforced).
   - Total Duration > 0 requires a Duration Type (Hrs/Wks); 0 clears it.
 Deliberate changes: Company is looked up from Rig + Period with the shared
 company_branding resolver and stays editable (legacy hardcoded a default);
@@ -121,6 +121,12 @@ class LeadingIndicatorsHdrSerializer(serializers.ModelSerializer):
         period = _parse_period(attrs.pop("period_month"))
         if period > date.today():
             raise serializers.ValidationError({"period_month": "Period can't be in the future."})
+        # Legacy DB rule: company + rig + period form a unique key (one report per month).
+        same = LeadingIndicatorsHdr.objects.filter(company=attrs.get("company"), rig=attrs.get("rig"), period=period)
+        if self.instance is not None:
+            same = same.exclude(pk=self.instance.pk)
+        if same.exists():
+            raise serializers.ValidationError({"period_month": "There is already a report for this company, rig and period."})
         attrs["period"] = period
         return attrs
 

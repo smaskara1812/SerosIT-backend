@@ -37,6 +37,8 @@ derived query (distinct vessel_dept_id off MstRank), not a plain field
 filter on MstVesselDept itself.
 """
 
+import datetime
+
 from django.db.models import Max
 from django.http import HttpResponse
 from django.utils import timezone
@@ -51,9 +53,11 @@ from .incident_views import _category_rig_type_ids
 from .masters_views import BaseMasterViewSet
 from .models import FsCatgToRigTypeMapping, HazardCard, MstFsCategory, MstRank, MstRig, MstVesselDept
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 
-# See module docstring — reconstructed, not confirmed from a DB proc.
-REPORTED_BY_PARTY_OPTIONS = ["SEROS", "EOSIL", "Operator", "Visitor", "Subcontractor", "Other"]
+# See module docstring — reconstructed, not confirmed from a DB proc. OGDSL was
+# added because 8,170 existing cards use it.
+REPORTED_BY_PARTY_OPTIONS = ["SEROS", "EOSIL", "OGDSL", "Operator", "Visitor", "Subcontractor", "Other"]
 
 # Legacy's Get_Vessel_Dept_Wise_Rank comment: when a rig's rig_type has no
 # active Fs_Category mapping at all, the underlying proc falls back to
@@ -82,6 +86,10 @@ def _next_haz_id_card_no():
 
 
 def _validate_reported_by(data, instance=None):
+    # Only checked when what it involves is new or changed: an old card that already
+    # lacks a reporter can still be edited for something else.
+    if not fields_changed(instance, data, "reported_by_party", "reported_by_fs_emp", "reported_by_name"):
+        return
     party = data.get("reported_by_party", getattr(instance, "reported_by_party", None))
     fs_emp = data.get("reported_by_fs_emp") if "reported_by_fs_emp" in data else getattr(instance, "reported_by_fs_emp", None)
     name = data.get("reported_by_name") if "reported_by_name" in data else getattr(instance, "reported_by_name", None)
@@ -92,14 +100,11 @@ def _validate_reported_by(data, instance=None):
         raise ValidationError({"reported_by_name": "Reported By is required."})
 
 
-def _validate_close_out(data, instance=None):
-    status = data.get("haz_id_card_status", getattr(instance, "haz_id_card_status", None))
-    close_out_dt = data.get("close_out_dt") if "close_out_dt" in data else getattr(instance, "close_out_dt", None)
-    event_dt = data.get("event_dt", getattr(instance, "event_dt", None))
-    if status == "C" and not close_out_dt:
-        raise ValidationError({"close_out_dt": "Close Out Date/Time is required when Status is Closed."})
-    if close_out_dt and event_dt and close_out_dt <= event_dt:
-        raise ValidationError({"close_out_dt": "Close Out Date/Time must be after the Event Date/Time."})
+def _date_param(value):
+    try:
+        return datetime.date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 class HazardCardViewSet(BaseMasterViewSet):
@@ -156,9 +161,14 @@ class HazardCardViewSet(BaseMasterViewSet):
         if work_location:
             qs = qs.filter(work_location_id=work_location)
         date_from = params.get("date_from")
+        date_to = params.get("date_to")
+        from_day, to_day = _date_param(date_from), _date_param(date_to)
+        if from_day and to_day and from_day > to_day:
+            raise ValidationError({"date_to": "From date can't be after To date."})
+        if to_day and to_day > timezone.now().date():
+            raise ValidationError({"date_to": "To date can't be in the future."})
         if date_from:
             qs = qs.filter(event_dt__date__gte=date_from)
-        date_to = params.get("date_to")
         if date_to:
             qs = qs.filter(event_dt__date__lte=date_to)
 
@@ -268,7 +278,6 @@ class HazardCardViewSet(BaseMasterViewSet):
     def perform_create(self, serializer):
         data = serializer.validated_data
         _validate_reported_by(data)
-        _validate_close_out(data)
         contract = self._resolve_contract(data["rig"])
         uid = self._current_user_id(self.request)
         instance = serializer.save(
@@ -286,7 +295,6 @@ class HazardCardViewSet(BaseMasterViewSet):
     def perform_update(self, serializer):
         data = serializer.validated_data
         _validate_reported_by(data, instance=serializer.instance)
-        _validate_close_out(data, instance=serializer.instance)
         old_snapshot = self._snapshot(serializer.instance)
         uid = self._current_user_id(self.request)
         save_kwargs = {"mod_user_id": uid, "mod_dt": timezone.now()}

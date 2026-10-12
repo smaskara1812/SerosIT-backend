@@ -1,6 +1,8 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from .media_uploads import media_url
+from .validation_helpers import fields_changed
 from .models import (
     Incident,
     IncidentAction,
@@ -13,6 +15,12 @@ from .models import (
     MstRigOperation,
     MstWorkLocation,
 )
+
+
+# "Belongs To" codes — the legacy ddlIncident_Party / ddlThird_Party list (see
+# IncidentDetailsFormPage.jsx BELONGS_TO_OPTIONS, kept in sync by hand).
+BELONGS_TO_CODES = ["0", "1", "2", "10", "30", "308", "309", "316"]
+SEVERITY_CODES = ["H", "M", "L"]
 
 
 class IncidentRegisterSerializer(serializers.ModelSerializer):
@@ -91,21 +99,87 @@ class IncidentDetailSerializer(serializers.ModelSerializer):
     severity_potential_display = serializers.SerializerMethodField()
     photos = IncidentPhotoSerializer(many=True, read_only=True)
 
-    # These four are nullable at the model level (the column itself allows
+    # Rig is optional here: the legacy form takes a Rig OR a free-text Unit name
+    # (validate() below makes sure exactly one of them is given).
+    rig = serializers.PrimaryKeyRelatedField(queryset=MstRig.objects.all(), required=False, allow_null=True)
+    # These three are nullable at the model level (the column itself allows
     # it, e.g. for older bulk-imported rows with gaps), but the live form
-    # requires all four — matches the red asterisks in the actual UI spec,
+    # requires them — matches the red asterisks in the actual UI spec,
     # not the column's own nullability.
-    rig = serializers.PrimaryKeyRelatedField(queryset=MstRig.objects.all(), required=True)
     rig_operation = serializers.PrimaryKeyRelatedField(queryset=MstRigOperation.objects.all(), required=True)
     work_location = serializers.PrimaryKeyRelatedField(queryset=MstWorkLocation.objects.all(), required=True)
     contact_expo_type = serializers.PrimaryKeyRelatedField(
         queryset=MstContactExposureType.objects.all(), required=True
     )
 
+    # Allowed values (legacy DB rules). Person Injured is blank for "No" in the
+    # imported data and "N" from the form, so both are accepted.
+    incident_party = serializers.ChoiceField(choices=BELONGS_TO_CODES)
+    third_party = serializers.ChoiceField(choices=BELONGS_TO_CODES, required=False, allow_null=True, allow_blank=True)
+    incident_severity = serializers.ChoiceField(choices=SEVERITY_CODES)
+    incident_severity_potential = serializers.ChoiceField(choices=SEVERITY_CODES)
+    person_injured = serializers.ChoiceField(choices=["Y", "N"], required=False, allow_null=True, allow_blank=True)
+    incident_reported_dt = serializers.DateTimeField()
+
     class Meta:
         model = Incident
         fields = "__all__"
         read_only_fields = ["incident_no", "financial_year", "cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    # ── legacy front-end / database rules (Incident Details) ──
+    # A rule is checked only when the fields it involves are being created or
+    # changed: an old incident that already breaks a rule can still be edited
+    # for something else without being asked to fix it first.
+    def _changed(self, data, *names):
+        return fields_changed(self.instance, data, *names)
+
+    def validate(self, data):
+        def val(name):
+            if name in data:
+                return data[name]
+            return getattr(self.instance, name, None) if self.instance is not None else None
+
+        errors = {}
+        rig, unit = val("rig"), (val("unit_name") or "").strip()
+        if self._changed(data, "rig", "unit_name"):
+            if not rig and not unit:
+                errors["rig"] = "Pick a rig or enter a unit name."
+            elif rig and unit:
+                errors["unit_name"] = "Pick a rig or enter a unit name, not both."
+
+        incident_dt, reported_dt = val("incident_date"), val("incident_reported_dt")
+        if incident_dt and self._changed(data, "incident_date") and incident_dt > timezone.now():
+            errors["incident_date"] = "Incident date and time can't be in the future."
+        if incident_dt and reported_dt and self._changed(data, "incident_date", "incident_reported_dt") and reported_dt < incident_dt:
+            errors["incident_reported_dt"] = "Reported date and time can't be before the incident date and time."
+
+        amount = val("financial_loss_amt")
+        if amount and amount > 0 and not val("financial_loss_currency") and self._changed(data, "financial_loss_amt", "financial_loss_currency"):
+            errors["financial_loss_currency"] = "Select the currency for the loss amount."
+
+        injury_fields = ("person_injured", "fs_emp", "emp_name", "rank", "rank_name", "total_rig_exp_months",
+                         "part_of_body_1", "part_of_body_2", "part_of_body_3", "part_of_body_4")
+        if val("person_injured") == "Y" and self._changed(data, *injury_fields):
+            if not (val("emp_name") or "").strip() and not val("fs_emp"):
+                errors["emp_name"] = "Enter the name of the injured person."
+            if not val("rank") and not (val("rank_name") or "").strip():
+                errors["rank"] = "Select the injured person's designation."
+            if val("total_rig_exp_months") is None:
+                errors["total_rig_exp_months"] = "Enter the total rig/field experience in months."
+            if not any(val(f"part_of_body_{i}") for i in range(1, 5)):
+                errors["part_of_body_1"] = "Choose at least one part of the body that was injured."
+
+        number = (val("rig_incident_no") or "").strip()
+        if number and rig and self._changed(data, "rig", "rig_incident_no"):
+            clash = Incident.objects.exclude(marked_as_deleted="Y").filter(rig=rig, rig_incident_no__iexact=number)
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                errors["rig_incident_no"] = f"This rig already has incident number {number}."
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return data
 
     def get_severity_display(self, obj):
         return {"H": "High", "M": "Medium", "L": "Low"}.get(obj.incident_severity, "")

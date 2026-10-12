@@ -55,6 +55,7 @@ from .models import (
     MstRig,
 )
 from .permissions import HasMenuPermission
+from .validation_helpers import fields_changed
 from .xlsx_export import build_xlsx_response
 
 CONTRACTOR_REQUIRED_THIRD_PARTY = {"0", "1"}
@@ -76,6 +77,10 @@ def _next_incident_no(financial_year):
 
 
 def _validate_contractor_rule(data, instance=None):
+    # Like the other rules, only checked when what it involves is being changed:
+    # an old incident that already breaks it can still be edited for something else.
+    if not fields_changed(instance, data, "person_injured", "third_party", "contractor"):
+        return
     person_injured = data.get("person_injured", getattr(instance, "person_injured", None))
     third_party = data.get("third_party") if "third_party" in data else getattr(instance, "third_party", None)
     contractor = data.get("contractor") if "contractor" in data else getattr(instance, "contractor", None)

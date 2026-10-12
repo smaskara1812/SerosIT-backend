@@ -1,4 +1,7 @@
+from django.utils import timezone
 from rest_framework import serializers
+
+from .validation_helpers import fields_changed
 
 from .models import (
     DocToSignMapping,
@@ -382,6 +385,7 @@ class MstHseDrillSerializer(serializers.ModelSerializer):
     rig_type_name = serializers.CharField(source="rig_type.rig_type_name", read_only=True, default="")
     rig_type_choice = serializers.ChoiceField(choices=RIG_TYPE_CHOICES, required=False)
     rig_type = serializers.PrimaryKeyRelatedField(read_only=True)
+    hse_drill_active = serializers.ChoiceField(choices=("Y", "N"), required=False)
 
     class Meta:
         model = MstHseDrill
@@ -1329,6 +1333,28 @@ class RigCertSerializer(serializers.ModelSerializer):
     def get_display_name(self, obj):
         return f"{obj.rig.rig_name} — {obj.buss_cert.buss_cert_name} ({obj.certificate_no})"
 
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        errors = {}
+        if "certificate_no" in attrs:
+            attrs["certificate_no"] = (attrs["certificate_no"] or "").strip()
+        cert_date, valid_till = get("cert_date"), get("valid_till")
+        if cert_date and fields_changed(inst, attrs, "cert_date") and cert_date > timezone.now().date():
+            errors["cert_date"] = "Certificate Date can't be in the future."
+        if cert_date and valid_till and fields_changed(inst, attrs, "cert_date", "valid_till") and valid_till <= cert_date:
+            errors["valid_till"] = "Valid Till must be after the Certificate Date."
+        others = RigCert.objects.exclude(pk=inst.pk) if inst else RigCert.objects.all()
+        no = get("certificate_no")
+        if no and fields_changed(inst, attrs, "certificate_no") and others.filter(certificate_no__iexact=no).exists():
+            errors["certificate_no"] = f"Certificate No. {no} is already used."
+        rig, cert = get("rig"), get("buss_cert")
+        if rig and cert and cert_date and fields_changed(inst, attrs, "rig", "buss_cert", "cert_date") and others.filter(rig=rig, buss_cert=cert, cert_date=cert_date).exists():
+            errors["cert_date"] = errors.get("cert_date") or "This rig already has this certificate dated that day."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class RigCertScheduleSerializer(serializers.ModelSerializer):
     rig_name = serializers.CharField(source="rig_cert.rig.rig_name", read_only=True, default="")
@@ -1342,6 +1368,20 @@ class RigCertScheduleSerializer(serializers.ModelSerializer):
 
     def get_rig_cert_display(self, obj):
         return str(obj.rig_cert)
+
+    def validate(self, attrs):
+        inst = self.instance
+        today = timezone.now().date()
+        errors = {}
+        scheduled = attrs.get("scheduled_dt", getattr(inst, "scheduled_dt", None))
+        completed = attrs.get("completion_dt", getattr(inst, "completion_dt", None))
+        if scheduled and fields_changed(inst, attrs, "scheduled_dt") and scheduled < today:
+            errors["scheduled_dt"] = "Scheduled Date can't be in the past."
+        if completed and fields_changed(inst, attrs, "completion_dt") and completed > today:
+            errors["completion_dt"] = "Completion Date can't be in the future."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstActivitySerializer(serializers.ModelSerializer):

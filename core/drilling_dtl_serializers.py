@@ -1,9 +1,51 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
+from .drilling_report import DOWNTIME_TRIGGER_CODES, RIG_MOVE_CODES, STANDBY_CODES
 from .models import DrillingDtl, DrillingDtlOps
+from .validation_helpers import fields_changed
+
+# Numbers that can't be below 0 (the legacy "greater than or equal to 0" rules).
+NON_NEGATIVE = (
+    "at_press_mbar", "vdl", "avdl", "kg", "kg_margin", "draft", "consumption_diesel", "consumption_water",
+    "received_diesel", "received_water", "generated_water",
+)
+# Plain wording for the database digit limits (KG 99.99, KG Margin 9.99, Draft 99.99, Current K 9.9).
+_LIMIT_MESSAGES = {"kg": "KG can be at most 99.99.", "kg_margin": "KG Margin can be at most 9.99.", "draft": "Draft can be at most 99.99.", "current_k": "Current K can be at most 9.9."}
+MIN_SUMMARY_LENGTH = 10
+MAX_DAY_HOURS = 24
+
+
+def _bucket(code):
+    """Which of the six hour buckets a rate code belongs to (same mapping as recompute_dtl_totals), or None."""
+    if code == "R1":
+        return "operating"
+    if code in STANDBY_CODES:
+        return "standby"
+    if code.startswith("Other"):
+        return "service"
+    if code == "R3":
+        return "repair_rate"
+    if code == "R0":
+        return "zero_rate"
+    if code in RIG_MOVE_CODES:
+        return "rig_move"
+    return None
+
+
+def _ops_key(rows):
+    """What identifies a time-log row for "did the time log change"."""
+    return sorted(
+        (
+            str(getattr(r.get("time_from"), "isoformat", lambda: r.get("time_from"))()), str(getattr(r.get("time_to"), "isoformat", lambda: r.get("time_to"))()),
+            getattr(r.get("drilling_ops"), "pk", None), getattr(r.get("drilling_section"), "pk", None),
+            str(r.get("depth_from")), str(r.get("depth_to")), getattr(r.get("prj_drilling_rate"), "pk", None),
+        )
+        for r in rows
+    )
 
 
 class DrillingDtlOpsSerializer(serializers.ModelSerializer):
@@ -69,6 +111,13 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
     class Meta:
         model = DrillingDtl
         fields = "__all__"
+        extra_kwargs = {
+            **{name: {"min_value": 0} for name in NON_NEGATIVE},
+            **{
+                name: {**({"min_value": 0} if name in NON_NEGATIVE else {}), "error_messages": {"max_digits": msg, "max_whole_digits": msg, "max_value": msg}}
+                for name, msg in _LIMIT_MESSAGES.items()
+            },
+        }
         read_only_fields = [
             "drilling_hdr",
             "operating_hrs",
@@ -105,6 +154,56 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"drilling_dtl_dt": f"A drilling report already exists for {rig.rig_name} on {report_date}."}
                 )
+        return self._legacy_rules(attrs)
+
+    def _legacy_rules(self, attrs):
+        """Rules from the legacy document. A rule about a value is only judged when that value is
+        new or changed, so an old report stays editable for something else."""
+        inst = self.instance
+        errors = {}
+
+        if report_date := attrs.get("drilling_dtl_dt"):
+            if fields_changed(inst, attrs, "drilling_dtl_dt") and report_date > timezone.now().date():
+                errors["drilling_dtl_dt"] = "The Drilling Date can't be in the future."
+
+        if inst is None and attrs.get("received_water") is None:
+            errors["received_water"] = "Enter the Received Water (0 if none)."
+
+        if "remark" in attrs or inst is None:
+            remark = (attrs.get("remark") or "").strip()
+            if fields_changed(inst, attrs, "remark"):
+                if not remark:
+                    errors["remark"] = "Enter the Operations Summary."
+                elif len(remark) < MIN_SUMMARY_LENGTH:
+                    errors["remark"] = f"Give more detail in the Operations Summary (at least {MIN_SUMMARY_LENGTH} characters)."
+            if "remark" in attrs:
+                attrs["remark"] = remark
+
+        if "ops" in attrs:
+            rows = attrs["ops"]
+            old_rows = [] if inst is None else [
+                {"time_from": o.time_from, "time_to": o.time_to, "drilling_ops": o.drilling_ops, "drilling_section": o.drilling_section,
+                 "depth_from": o.depth_from, "depth_to": o.depth_to, "prj_drilling_rate": o.prj_drilling_rate}
+                for o in inst.ops.select_related("drilling_ops", "drilling_section", "prj_drilling_rate")
+            ]
+            if inst is None or _ops_key(rows) != _ops_key(old_rows):
+                totals, downtime = {}, False
+                for r in rows:
+                    code = r["prj_drilling_rate"].drilling_rate.rate_code
+                    if code in DOWNTIME_TRIGGER_CODES:
+                        downtime = True
+                    bucket = _bucket(code)
+                    if bucket:
+                        totals[bucket] = totals.get(bucket, 0) + self._duration_hours(r["time_from"], r["time_to"])
+                total = sum(totals.values(), 0)
+                if total > MAX_DAY_HOURS:
+                    errors["ops"] = f"The hours in the time log add up to {total}; a day can't be more than {MAX_DAY_HOURS}."
+                reason = (attrs.get("downtime_reason") if "downtime_reason" in attrs else getattr(inst, "downtime_reason", None)) or ""
+                if downtime and not reason.strip():
+                    errors["downtime_reason"] = "Enter the Downtime Reason (the time log has Repair Rate or Zero Rate time)."
+
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
     def _duration_hours(self, time_from, time_to):
