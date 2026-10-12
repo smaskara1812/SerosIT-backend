@@ -280,6 +280,13 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
                 "Reported By", "Close Out Date", "Age (days)",
             ]
         )
+        # Only the columns this CSV writes: the table is wide and, when the database
+        # is on another server, every extra column travels the network for each row.
+        qs = qs.only(
+            "haz_id_card_no", "event_dt", "close_out_dt", "haz_id_card_status", "timeout_for_safety", "hazard_desc",
+            "action_taken", "reported_by_name", "rig__rig_name", "haz_type__haz_type_name",
+            "work_location__work_location", "resp_dept__vessel_dept_name", "resp_rank__rank_name",
+        )
         row_count = 0
         for h in qs.iterator():
             row_count += 1
@@ -386,7 +393,9 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
             ]
         )
         row_count = 0
-        for r in qs.iterator(chunk_size=200):
+        # Each chunk costs an extra prefetch query, so use big chunks (kept under SQL Server's
+        # 2,100-parameter limit for the prefetch's IN list).
+        for r in qs.iterator(chunk_size=1000):
             row_count += 1
             ser = self.serializer_class(r)
             d = ser.data

@@ -123,7 +123,7 @@ class Command(BaseCommand):
     def record(self, res):
         self.results.append(res)
         mark = {"ok": self.style.SUCCESS("  ok  "), "warn": self.style.WARNING(" WARN "), "fail": self.style.ERROR(" FAIL ")}[res.status]
-        if res.status != "ok" or self.verbose_all:
+        if res.status != "ok" or self.verbose_all or res.area == "env":
             self.say(f"{mark} [{res.area}] {res.name}  {res.detail}".rstrip())
 
     # ── part 1 ──────────────────────────────────────────────────────────────
@@ -148,6 +148,30 @@ class Command(BaseCommand):
                     ver = c.fetchone()[0]
             self.say(f"Database: {connection.vendor} {connection.settings_dict['NAME']} - {ver}")
             return f"{connection.vendor}"
+
+        def round_trip():
+            """Network cost of talking to the database: matters most when it is on another server."""
+            with connection.cursor() as c:
+                c.execute("SELECT 1")
+                c.fetchone()  # first call may open the connection
+                t0 = time.time()
+                for _ in range(20):
+                    c.execute("SELECT 1")
+                    c.fetchone()
+            ms = (time.time() - t0) / 20 * 1000
+            note = f"{ms:.1f} ms per query round trip (a page of 12 calls x 3 queries waits about {ms * 36 / 1000:.1f}s on this alone)"
+            return ("warn", note + " - slow link; fewer calls and fewer queries matter most") if ms > 15 else note
+
+        def fetch_speed():
+            """How fast a wide table comes back: the cost of big lists and exports."""
+            from core.models import HazardCard
+
+            t0 = time.time()
+            rows = list(HazardCard.objects.exclude(marked_as_deleted="Y").order_by("-event_dt")[:3000])
+            secs = time.time() - t0
+            size = sum(len(str(r.hazard_desc or "")) + len(str(r.action_taken or "")) for r in rows) / 1024
+            note = f"{len(rows)} wide hazard rows in {secs:.1f}s ({len(rows) / max(secs, 0.001):.0f} rows/s)"
+            return ("warn", note + " - an export of 30,000 rows would take about " + f"{30000 / max(len(rows) / max(secs, 0.001), 1):.0f}s") if secs > 3 else note
 
         def migrations():
             ex = MigrationExecutor(connection)
@@ -203,6 +227,8 @@ class Command(BaseCommand):
             return "ok", f"running as {self.user.username}" if self.user else ("fail", "no active app admin found")
 
         run("Database connection", database)
+        run("Database round trip", round_trip)
+        run("Database fetch speed", fetch_speed)
         run("Migrations", migrations)
         run("Django system check", system_check)
         run("PDF engine (ReportLab)", pdf_engine)

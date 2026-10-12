@@ -1,4 +1,4 @@
-from .approvals_serializers import ApproverMappingSerializer
+from .approvals_serializers import ApproverMappingListSerializer, ApproverMappingSerializer
 from .masters_views import BaseMasterViewSet
 from .models import ApproverMapping
 
@@ -16,6 +16,14 @@ class ApproverMappingViewSet(BaseMasterViewSet):
     )
     serializer_class = ApproverMappingSerializer
     entity_key = "admin.approver_mapping"
+
+    def get_serializer_class(self):
+        return ApproverMappingListSerializer if self.action == "list" else super().get_serializer_class()
+
+    def filter_queryset(self, queryset):
+        qs = super().filter_queryset(queryset)
+        # List rows carry no scope grid, so don't fetch it.
+        return qs.prefetch_related(None) if self.action == "list" else qs
     # No plain name column on this model — get_queryset below supplies its
     # own ordering and label_for its own label, so this is only a fallback.
     name_field = "approver_mapping_id"

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.db.models import DateTimeField, Prefetch, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -275,6 +275,60 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     # for the Leaflet map) and isn't itself real column data worth exporting
     # alongside the actual latitude/longitude strings.
     export_exclude_fields = []
+    # Write the CSV export as a stream (rows leave as they are read, in chunks)
+    # instead of building the whole file in memory first. Same file, but it starts
+    # downloading at once and uses little memory on a big table. Only for viewsets
+    # whose serializer runs no queries of its own per row: the stream keeps one
+    # database cursor open while it serializes, and SQL Server (without MARS)
+    # refuses a second query on that connection.
+    export_streaming = False
+    EXPORT_CHUNK = 1000  # under SQL Server's 2,100-parameter limit
+
+    def _export_streamed(self, request, qs, filename):
+        class _Echo:
+            def write(self, value):
+                return value
+
+        def chunks():
+            buf = []
+            for obj in qs.iterator(chunk_size=self.EXPORT_CHUNK):
+                buf.append(obj)
+                if len(buf) >= self.EXPORT_CHUNK:
+                    yield buf
+                    buf = []
+            if buf:
+                yield buf
+
+        source = chunks()
+        first = next(source, None)
+        exclude = set(self.export_exclude_fields)
+        if first is None:
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+            response.write("\ufeff")
+            self._audit_export(request, 0)
+            return response
+        first_rows = self.get_serializer(first, many=True).data
+        fieldnames = [f for f in first_rows[0].keys() if f not in exclude]
+        writer = csv.DictWriter(_Echo(), fieldnames=fieldnames)
+
+        def stream():
+            yield "\ufeff"  # BOM, see export() for why
+            yield writer.writerow({f: f.replace("_", " ").title() for f in fieldnames})
+            count = 0
+            rows = first_rows
+            while rows is not None:
+                for row in rows:
+                    count += 1
+                    yield writer.writerow({k: v for k, v in row.items() if k not in exclude})
+                nxt = next(source, None)
+                rows = self.get_serializer(nxt, many=True).data if nxt is not None else None
+            self._audit_export(request, count)
+
+        response = StreamingHttpResponse(stream(), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+        response["X-Accel-Buffering"] = "no"  # let a reverse proxy pass the stream through
+        return response
 
     def _apply_active_filter(self, qs):
         """Shared by the default get_queryset below and by subclasses that
@@ -358,9 +412,11 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         master gets this for free, at the cost of raw field names rather
         than hand-picked friendly ones."""
         qs = self.filter_queryset(self.get_queryset())
+        filename = (self.entity_key or "export").split(".")[-1]
+        if self.export_streaming:
+            return self._export_streamed(request, qs, filename)
         serializer = self.get_serializer(qs, many=True)
         rows = serializer.data
-        filename = (self.entity_key or "export").split(".")[-1]
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
         # Excel ignores the response's own charset and guesses the file's

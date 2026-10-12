@@ -106,3 +106,10 @@ class ApproverMappingSerializer(serializers.ModelSerializer):
                     dtl.delete()
 
         return instance
+
+
+class ApproverMappingListSerializer(ApproverMappingSerializer):
+    """List rows: the header fields only. The Rig/Dept scope grid is about 80% of a
+    row and is only needed when one mapping is opened (the page then loads it)."""
+
+    details = None

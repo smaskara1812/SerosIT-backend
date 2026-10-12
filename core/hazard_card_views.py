@@ -111,6 +111,7 @@ class HazardCardViewSet(BaseMasterViewSet):
     entity_key = "qhse.hazard_id_card"
     permission_classes = [HasMenuPermission]
     search_fields = ["haz_id_card_no", "hazard_desc", "action_taken", "reported_by_name"]
+    export_streaming = True  # the largest export (31,000+ cards); see BaseMasterViewSet._export_streamed
 
     _ORDERINGS = {
         "event_dt": ("event_dt",),

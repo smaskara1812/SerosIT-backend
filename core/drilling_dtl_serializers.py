@@ -178,3 +178,12 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
                     op.delete()
 
         return instance
+
+
+class DrillingDtlSlimSerializer(DrillingDtlSerializer):
+    """Rows for the list and the bulk CSV export: the same fields without the
+    nested Time Log, which is about three quarters of each row and is only needed
+    when one report is opened. A CSV cell can't hold that grid either (it came out
+    as a text dump), and a single report's own export (export_one) writes it properly."""
+
+    ops = None

@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import approvals, mail_recipients, mail_templates, mailer
-from .drilling_dtl_serializers import DrillingDtlSerializer
+from .drilling_dtl_serializers import DrillingDtlSerializer, DrillingDtlSlimSerializer
 from .drilling_report import recompute_dtl_totals, recompute_hdr_totals, resolve_drilling_hdr
 from .masters_views import BaseMasterViewSet
 from .models import ApproverMappingDtl, DrillingDtl, MailRecipientMapping, MstUser, MstUserRigMapping, UserMailCredential
@@ -166,6 +166,14 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         "meterage": ("drilling_meterage", "-drilling_dtl_dt"),
         "-meterage": ("-drilling_meterage", "-drilling_dtl_dt"),
     }
+
+    def get_serializer_class(self):
+        return DrillingDtlSlimSerializer if self.action in ("list", "export") else super().get_serializer_class()
+
+    def filter_queryset(self, queryset):
+        qs = super().filter_queryset(queryset)
+        # The list and the bulk export have no Time Log column, so don't fetch Time Logs for them.
+        return qs.prefetch_related(None) if self.action in ("list", "export") else qs
 
     def get_queryset(self):
         qs = self._apply_filterable_fields(self.queryset)
