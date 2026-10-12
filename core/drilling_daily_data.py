@@ -2,6 +2,7 @@ import re
 from datetime import date
 
 from django.db.models import Min
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -78,8 +79,13 @@ def _filtered_queryset(request):
         to_dt = date.fromisoformat(to_dt)
     except ValueError:
         return None, None, None, None, "Invalid date."
+    today = timezone.now().date()
+    if from_dt > today:
+        return None, None, None, None, "From date can't be in the future."
+    if to_dt > today:
+        return None, None, None, None, "To date can't be in the future."
     if from_dt > to_dt:
-        return None, None, None, None, "From date must be before To date."
+        return None, None, None, None, "To date can't be before the From date."
 
     qs = DrillingDtlOps.objects.filter(
         drilling_dtl__rig_id=rig_id,

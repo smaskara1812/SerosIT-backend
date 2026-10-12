@@ -218,6 +218,15 @@ class IncidentRootCauseSerializer(serializers.ModelSerializer):
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
     def validate(self, data):
+        inst = self.instance
+        get = lambda name: data.get(name, getattr(inst, name, None))
+        incident, cause, sub = get("incident"), get("root_cause"), get("root_subcause")
+        if incident and cause and sub and fields_changed(inst, data, "incident", "root_cause", "root_subcause"):
+            repeats = IncidentRootCause.objects.filter(incident=incident, root_cause=cause, root_subcause=sub).exclude(marked_as_deleted="Y")
+            if inst is not None:
+                repeats = repeats.exclude(pk=inst.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"root_subcause": "This incident already has this root cause and subcause."})
         subcause = data.get("root_subcause") or getattr(self.instance, "root_subcause", None)
         others = data.get("root_subcause_others") if "root_subcause_others" in data else getattr(
             self.instance, "root_subcause_others", None
@@ -261,7 +270,7 @@ class IncidentActionSerializer(serializers.ModelSerializer):
     # 'OP' itself (legacy never lets the Add form choose a status either —
     # the dropdown is disabled until an existing row is selected for
     # Update). Still writable on update — see Meta's own note below.
-    action_status = serializers.CharField(required=False)
+    action_status = serializers.ChoiceField(choices=("OP", "IN", "CL"), required=False)
 
     class Meta:
         model = IncidentAction

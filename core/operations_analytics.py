@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -68,8 +69,13 @@ def _build_table(request):
         to_dt = date.fromisoformat(to_dt)
     except ValueError:
         return [], [], [], "Invalid date."
+    today = timezone.now().date()
+    if from_dt > today:
+        return [], [], [], "From date can't be in the future."
+    if to_dt > today:
+        return [], [], [], "To date can't be in the future."
     if from_dt > to_dt:
-        return [], [], [], "From date must be before To date."
+        return [], [], [], "To date can't be before the From date."
 
     dtl_qs = DrillingDtl.objects.filter(rig_id=rig_id, drilling_dtl_dt__gte=from_dt, drilling_dtl_dt__lte=to_dt)
     ops_qs = DrillingDtlOps.objects.filter(

@@ -187,26 +187,30 @@ class ActivityMonitorView(APIView):
         data = request.data
         activity_id = data.get("activity")
         if not activity_id:
-            return Response({"error": "Activity must be selected."}, status=400)
+            return Response({"activity": "Activity must be selected."}, status=400)
         try:
             activity = MstActivity.objects.get(pk=activity_id)
         except MstActivity.DoesNotExist:
-            return Response({"error": "Activity not found."}, status=400)
+            return Response({"activity": "Activity not found."}, status=400)
 
         rig_id = data.get("rig") or None
         if activity.activity_location in RIG_REQUIRED_LOCATIONS:
             if not rig_id:
-                return Response({"error": "Rig must be selected for this Activity."}, status=400)
+                return Response({"rig": "Rig must be selected for this Activity."}, status=400)
         else:
             rig_id = None
 
         scheduled_dt = data.get("scheduled_dt")
         if not scheduled_dt:
-            return Response({"error": "Schedule Date must be entered."}, status=400)
+            return Response({"scheduled_dt": "Schedule Date must be entered."}, status=400)
+        try:
+            date.fromisoformat(str(scheduled_dt))
+        except ValueError:
+            return Response({"scheduled_dt": "Invalid Schedule Date."}, status=400)
 
         if ActivityMonitor.objects.filter(activity_id=activity_id, rig_id=rig_id, completion_dt__isnull=True).exists():
             rig_name = MstRig.objects.filter(pk=rig_id).values_list("rig_name", flat=True).first() if rig_id else None
-            return Response({"error": _blocked_message(activity, rig_name)}, status=400)
+            return Response({"activity": _blocked_message(activity, rig_name)}, status=400)
 
         uid = _current_user_id(request)
         instance = ActivityMonitor.objects.create(
@@ -238,7 +242,7 @@ class ActivityMonitorSuggestView(APIView):
         try:
             activity = MstActivity.objects.get(pk=activity_id)
         except MstActivity.DoesNotExist:
-            return Response({"error": "Activity not found."}, status=400)
+            return Response({"activity": "Activity not found."}, status=400)
 
         rig_required = activity.activity_location in RIG_REQUIRED_LOCATIONS
         rig_id = request.query_params.get("rig") or None
@@ -287,17 +291,17 @@ class ActivityMonitorDetailView(APIView):
 
         scheduled_dt_raw = data.get("scheduled_dt")
         if not scheduled_dt_raw:
-            return Response({"error": "Schedule Date must be entered."}, status=400)
+            return Response({"scheduled_dt": "Schedule Date must be entered."}, status=400)
         try:
             new_scheduled_dt = date.fromisoformat(scheduled_dt_raw)
         except ValueError:
-            return Response({"error": "Invalid Schedule Date."}, status=400)
+            return Response({"scheduled_dt": "Invalid Schedule Date."}, status=400)
 
         planning_remark = (data.get("planning_remark") or "").strip() or None
         old_scheduled_dt = m.scheduled_dt
         schedule_changed = new_scheduled_dt != old_scheduled_dt
         if schedule_changed and not planning_remark:
-            return Response({"error": "Planning Remark must be entered when Schedule Date changes."}, status=400)
+            return Response({"planning_remark": "Planning Remark must be entered when Schedule Date changes."}, status=400)
 
         completion_dt = None
         completion_dt_raw = data.get("completion_dt")
@@ -305,13 +309,13 @@ class ActivityMonitorDetailView(APIView):
             try:
                 completion_dt = date.fromisoformat(completion_dt_raw)
             except ValueError:
-                return Response({"error": "Invalid Completion Date."}, status=400)
+                return Response({"completion_dt": "Invalid Completion Date."}, status=400)
             if completion_dt > timezone.now().date():
-                return Response({"error": "Completion Date must be on or before today."}, status=400)
+                return Response({"completion_dt": "Completion Date must be on or before today."}, status=400)
 
         completion_remark = (data.get("completion_remark") or "").strip() or None
         if completion_dt and not completion_remark:
-            return Response({"error": "Completion Remark must be entered."}, status=400)
+            return Response({"completion_remark": "Completion Remark must be entered."}, status=400)
 
         next_scheduled_dt = None
         next_planning_remark = None
@@ -319,17 +323,17 @@ class ActivityMonitorDetailView(APIView):
         if completion_dt:
             next_required = data.get("next_schedule_required")
             if next_required not in ("Y", "N"):
-                return Response({"error": "Select whether to create Next Schedule (Yes / No)."}, status=400)
+                return Response({"next_schedule_required": "Select whether to create Next Schedule (Yes / No)."}, status=400)
             if next_required == "Y":
                 next_dt_raw = data.get("next_scheduled_dt")
                 if not next_dt_raw:
-                    return Response({"error": "Next Schedule Date must be entered."}, status=400)
+                    return Response({"next_scheduled_dt": "Next Schedule Date must be entered."}, status=400)
                 try:
                     next_scheduled_dt = date.fromisoformat(next_dt_raw)
                 except ValueError:
-                    return Response({"error": "Invalid Next Schedule Date."}, status=400)
+                    return Response({"next_scheduled_dt": "Invalid Next Schedule Date."}, status=400)
                 if next_scheduled_dt <= new_scheduled_dt:
-                    return Response({"error": "Next Schedule Date must be greater than Schedule Date."}, status=400)
+                    return Response({"next_scheduled_dt": "Next Schedule Date must be greater than Schedule Date."}, status=400)
                 next_planning_remark = (data.get("next_planning_remark") or "").strip() or None
                 create_next = True
 

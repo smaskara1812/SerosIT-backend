@@ -18,6 +18,7 @@ legacy frmIncident_Details.aspx(.cs) rather than guessed:
     only, not ddlIncident_Party.
 """
 
+import datetime
 import os
 
 from django.db import transaction
@@ -290,6 +291,21 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         return Response(status=204)
 
 
+def _day_param(value):
+    try:
+        return datetime.date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+def _delete_reason(request):
+    """The reason for a delete (at least 10 characters), or a 400 naming the box."""
+    reason = (request.data.get("deleted_remarks") or "").strip()
+    if len(reason) < 10:
+        raise ValidationError({"deleted_remarks": "Enter a reason for deleting this record (at least 10 characters)."})
+    return reason
+
+
 class IncidentRootCauseViewSet(BaseMasterViewSet):
     """QHSE → Incident Root Cause — legacy frmIncident_Root_Cause.aspx(.cs).
     One or more root-cause/subcause rows recorded against an Incident,
@@ -335,7 +351,7 @@ class IncidentRootCauseViewSet(BaseMasterViewSet):
         instance = self.get_object()
         uid = self._current_user_id(request)
         instance.marked_as_deleted = "Y"
-        instance.deleted_remarks = request.data.get("deleted_remarks") or None
+        instance.deleted_remarks = _delete_reason(request)
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
@@ -390,7 +406,7 @@ class IncidentActionViewSet(BaseMasterViewSet):
         instance = self.get_object()
         uid = self._current_user_id(request)
         instance.marked_as_deleted = "Y"
-        instance.deleted_remarks = request.data.get("deleted_remarks") or None
+        instance.deleted_remarks = _delete_reason(request)
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
@@ -456,9 +472,17 @@ class IncidentRegisterViewSet(viewsets.ReadOnlyModelViewSet):
                 qs = qs.filter(incident_type_id__in=type_ids)
 
         date_from = params.get("date_from")
+        date_to = params.get("date_to")
+        from_day, to_day = _day_param(date_from), _day_param(date_to)
+        today = timezone.now().date()
+        if from_day and from_day > today:
+            raise ValidationError({"date_from": "From date can't be in the future."})
+        if to_day and to_day > today:
+            raise ValidationError({"date_to": "To date can't be in the future."})
+        if from_day and to_day and from_day > to_day:
+            raise ValidationError({"date_to": "From date can't be after To date."})
         if date_from:
             qs = qs.filter(incident_date__date__gte=date_from)
-        date_to = params.get("date_to")
         if date_to:
             qs = qs.filter(incident_date__date__lte=date_to)
 

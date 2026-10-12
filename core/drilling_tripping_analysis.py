@@ -2,6 +2,7 @@ from datetime import date
 
 from django.db.models import Avg
 from django.db.models.functions import Abs
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -32,8 +33,13 @@ def _build_table(request):
         to_dt = date.fromisoformat(to_dt)
     except ValueError:
         return [], [], "Invalid date."
+    today = timezone.now().date()
+    if from_dt > today:
+        return [], [], "From date can't be in the future."
+    if to_dt > today:
+        return [], [], "To date can't be in the future."
     if from_dt > to_dt:
-        return [], [], "From date must be before To date."
+        return [], [], "To date can't be before the From date."
 
     code_no = REPORT_TYPE_CODES.get(report_type, REPORT_TYPE_CODES["drilling"])
     try:

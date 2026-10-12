@@ -110,6 +110,9 @@ def resolve_period(params):
         start, end = _month_start(fy, fm), _month_end(ty, tm)
         if start > end:
             raise ValueError("To Month/Year can't be before Month/Year.")
+        this_month = date.today().replace(day=1)
+        if _month_start(ty, tm) > this_month:
+            raise ValueError("To Month/Year can't be after the current month.")
         return start, end, f"{MON[fm - 1]}-{fy} To {MON[tm - 1]}-{ty}"
     raise ValueError("Period must be selected.")
 

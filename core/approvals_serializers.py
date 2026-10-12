@@ -3,6 +3,9 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .models import ApproverMapping, ApproverMappingDtl
+from .validation_helpers import fields_changed
+
+FLAGS = ("receive_mail", "approve_yn", "open_for_revision_yn", "create_yn")
 
 
 class ApproverMappingDtlSerializer(serializers.ModelSerializer):
@@ -51,6 +54,28 @@ class ApproverMappingSerializer(serializers.ModelSerializer):
         model = ApproverMapping
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        inst = self.instance
+        errors = {}
+        if "approver_active" in attrs and fields_changed(inst, attrs, "approver_active") and attrs["approver_active"] not in ("Y", "N"):
+            errors["approver_active"] = "Choose Active or Inactive."
+        details = attrs.get("details")
+        if details is not None:
+            seen = set()
+            for row in details:
+                key = (getattr(row.get("rig"), "pk", None), getattr(row.get("dept"), "pk", None))
+                if key in seen:
+                    errors["details"] = "A rig and department can only appear once in the scope."
+                    break
+                seen.add(key)
+                bad = [f for f in FLAGS if row.get(f) not in ("Y", "N", None, "")]
+                if bad:
+                    errors["details"] = "Mail, Approve, Open for Revision and Create can only be Yes or No."
+                    break
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     @transaction.atomic
     def create(self, validated_data):

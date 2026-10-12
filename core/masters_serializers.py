@@ -1,7 +1,24 @@
+import re
 from django.utils import timezone
 from rest_framework import serializers
 
 from .validation_helpers import fields_changed
+
+
+def _check_unique_name(serializer, attrs, field, what):
+    """Refuse a name another record already has (ignoring capitals and spaces). Only when the
+    name is new or changed, so an old record that repeats a name can still be edited."""
+    if field not in attrs:
+        return
+    name = (attrs[field] or "").strip()
+    attrs[field] = name
+    inst = serializer.instance
+    if name and fields_changed(inst, attrs, field):
+        others = serializer.Meta.model.objects.filter(**{f"{field}__iexact": name})
+        if inst is not None:
+            others = others.exclude(pk=inst.pk)
+        if others.exists():
+            raise serializers.ValidationError({field: f"{what} named {name} already exists."})
 
 from .models import (
     DocToSignMapping,
@@ -113,6 +130,47 @@ from .models import (
 )
 
 
+def _get(serializer, attrs, name):
+    """The value being saved, falling back to the saved record's."""
+    return attrs.get(name, getattr(serializer.instance, name, None))
+
+
+def _changed(serializer, attrs, *names):
+    return fields_changed(serializer.instance, attrs, *names)
+
+
+def _check_active(serializer, attrs, errors, field="rig_active"):
+    """Active is Y or N. Judged only when it is changed, so an old blank value can stay."""
+    if field in attrs and _changed(serializer, attrs, field) and attrs[field] not in ("Y", "N"):
+        errors[field] = "Choose Active or Inactive."
+
+
+def _check_unique_value(serializer, attrs, errors, field, message):
+    """Another record with this text (ignoring capitals and spaces) is refused, when it is new or changed."""
+    if field not in attrs:
+        return
+    value = (attrs[field] or "").strip()
+    attrs[field] = value
+    if value and _changed(serializer, attrs, field):
+        others = serializer.Meta.model.objects.filter(**{f"{field}__iexact": value})
+        if serializer.instance is not None:
+            others = others.exclude(pk=serializer.instance.pk)
+        if others.exists():
+            errors[field] = message.format(value=value)
+
+
+def _check_date_not_future(serializer, attrs, errors, field, label):
+    value = _get(serializer, attrs, field)
+    if value and _changed(serializer, attrs, field) and value > timezone.now().date():
+        errors[field] = f"{label} can't be in the future."
+
+
+def _check_to_after_from(serializer, attrs, errors, start, end, label, equal_ok=True):
+    a, b = _get(serializer, attrs, start), _get(serializer, attrs, end)
+    if a and b and _changed(serializer, attrs, start, end) and (b < a if equal_ok else b <= a):
+        errors[end] = f"{label} can't be before the From date." if equal_ok else f"{label} must be after the From date."
+
+
 class MstDepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstDepartment
@@ -126,12 +184,28 @@ class MstCostCentreTypeSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "cost_centre_type_name", "A cost centre type named {value} already exists.")
+        _check_unique_value(self, attrs, errors, "cost_centre_type_shortname", "A cost centre type with the short name {value} already exists.")
+        _check_active(self, attrs, errors, "cost_centre_type_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class MstContractorSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstContractor
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "contractor_name", "A contractor named {value} already exists.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstCertInstituteSerializer(serializers.ModelSerializer):
@@ -158,6 +232,22 @@ class MstOperatorSerializer(serializers.ModelSerializer):
         model = MstOperator
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "operator_name", "An operator named {value} already exists.")
+        tel = (attrs.get("tel_no") or "").strip() if "tel_no" in attrs else None
+        if tel is not None:
+            attrs["tel_no"] = tel or None
+            if tel and _changed(self, attrs, "tel_no"):
+                if not re.fullmatch(r"[0-9+()/ -]+", tel):
+                    errors["tel_no"] = "Telephone can have only digits and + - ( ) / and spaces."
+                elif len(re.findall(r"\d", tel)) < 8:
+                    errors["tel_no"] = "Telephone must have at least 8 digits."
+        _check_active(self, attrs, errors, "operator_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstRigTypeSerializer(serializers.ModelSerializer):
@@ -189,6 +279,44 @@ class MstRigSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        name = (attrs.get("rig_name") or "").strip() if "rig_name" in attrs else None
+        if name is not None:
+            attrs["rig_name"] = name
+            if name and _changed(self, attrs, "rig_name"):
+                if not re.search(r"[A-Za-z]", name):
+                    errors["rig_name"] = "Rig Name must contain letters."
+                elif len(re.findall(r"\d", name)) > 2:
+                    errors["rig_name"] = "Rig Name can have at most two digits."
+        short = (attrs.get("rig_short_name") or "").strip() if "rig_short_name" in attrs else None
+        if short is not None:
+            attrs["rig_short_name"] = short
+            if short and _changed(self, attrs, "rig_short_name") and not re.fullmatch(r"[A-Za-z0-9]+", short):
+                errors["rig_short_name"] = "Short Name can have only letters and digits."
+        _check_date_not_future(self, attrs, errors, "rig_built_dt", "Built date")
+        for field, label in (("rig_tel_no", "Telephone"), ("rig_fax_no", "Fax")):
+            value = (attrs.get(field) or "").strip() if field in attrs else None
+            if value is not None:
+                attrs[field] = value or None
+                if value and _changed(self, attrs, field) and not re.fullmatch(r"[0-9/]+", value):
+                    errors[field] = f"{label} can have only digits and forward slashes."
+        built, start, end = (_get(self, attrs, f) for f in ("rig_built_dt", "rig_from", "rig_to"))
+        if start and _changed(self, attrs, "rig_from"):
+            if start > timezone.now().date():
+                errors["rig_from"] = "From date can't be in the future."
+            elif built and start < built:
+                errors["rig_from"] = "From date can't be before the Built date."
+        if end and _changed(self, attrs, "rig_from", "rig_to"):
+            if start and end <= start:
+                errors["rig_to"] = "To date must be after the From date."
+            elif end > timezone.now().date():
+                errors["rig_to"] = "To date can't be in the future."
+        _check_active(self, attrs, errors, "rig_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class MstCostCentreSerializer(serializers.ModelSerializer):
     cost_centre_type_name = serializers.CharField(
@@ -203,6 +331,17 @@ class MstCostCentreSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "cost_centre_name", "A cost centre named {value} already exists.")
+        # A new cost centre needs its type, and a saved one can't lose it.
+        if (self.instance is None or "cost_centre_type" in attrs) and _get(self, attrs, "cost_centre_type") is None:
+            errors["cost_centre_type"] = "This field is required."
+        _check_active(self, attrs, errors, "cost_centre_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_fs_emp_name(self, obj):
         return str(obj.fs_emp) if obj.fs_emp_id else ""
 
@@ -216,6 +355,13 @@ class MstCompetencySerializer(serializers.ModelSerializer):
         model = MstCompetency
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_active(self, attrs, errors, "active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstFsCategorySerializer(serializers.ModelSerializer):
@@ -245,6 +391,25 @@ class JobDescriptionDtlSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        text = (attrs.get("jd_dtl_description") or "").strip() if "jd_dtl_description" in attrs else None
+        if text is not None:
+            attrs["jd_dtl_description"] = text
+            if text and _changed(self, attrs, "jd_dtl_description") and len(text) < 10:
+                errors["jd_dtl_description"] = "Give a fuller description (at least 10 characters)."
+        header, order = _get(self, attrs, "header"), _get(self, attrs, "jd_dtl_order")
+        if header and order is not None and _changed(self, attrs, "header", "jd_dtl_order"):
+            repeats = JobDescriptionDtl.objects.filter(header=header, jd_dtl_order=order)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["jd_dtl_order"] = f"Order {order} is already used under this heading."
+        _check_active(self, attrs, errors, "jd_dtl_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class JobDescriptionHdrSerializer(serializers.ModelSerializer):
     details = JobDescriptionDtlSerializer(many=True, read_only=True)
@@ -256,6 +421,21 @@ class JobDescriptionHdrSerializer(serializers.ModelSerializer):
         # sent by the client — required-but-missing was exactly the 400.
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "fs_category"]
 
+    def validate(self, attrs):
+        errors = {}
+        rank, order = _get(self, attrs, "rank"), _get(self, attrs, "jd_hdr_order")
+        # The category follows the rank, so Category + Rank + Order is Rank + Order.
+        if rank and order is not None and _changed(self, attrs, "rank", "jd_hdr_order"):
+            repeats = JobDescriptionHdr.objects.filter(rank=rank, jd_hdr_order=order)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["jd_hdr_order"] = f"Order {order} is already used for this rank."
+        _check_active(self, attrs, errors, "jd_hdr_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class TravelEligibilitySerializer(serializers.ModelSerializer):
     rank_name = serializers.CharField(source="rank.rank_name", read_only=True, default="")
@@ -266,6 +446,14 @@ class TravelEligibilitySerializer(serializers.ModelSerializer):
         model = TravelEligibility
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "fs_category"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_date_not_future(self, attrs, errors, "eligible_from", "Eligible From")
+        _check_to_after_from(self, attrs, errors, "eligible_from", "eligible_to", "Eligible To")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def get_display_name(self, obj):
         return f"{obj.rank.rank_name} — {obj.get_travel_mode_display()}"
@@ -282,6 +470,16 @@ class ReportingStructureSerializer(serializers.ModelSerializer):
         model = ReportingStructure
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        category, rank = _get(self, attrs, "fs_category"), _get(self, attrs, "rank")
+        if category and rank and _changed(self, attrs, "fs_category", "rank"):
+            repeats = ReportingStructure.objects.filter(fs_category=category, rank=rank)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"rank": "This rank already has a reporting line in this category."})
+        return attrs
 
     def get_display_name(self, obj):
         if obj.reporting_rank_id:
@@ -301,6 +499,10 @@ class MstContactExposureTypeSerializer(serializers.ModelSerializer):
         model = MstContactExposureType
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        _check_unique_name(self, attrs, "contact_expo_type_name", "A contact exposure type")
+        return attrs
 
 
 class MstIndicatorTypeSerializer(serializers.ModelSerializer):
@@ -334,6 +536,10 @@ class MstQhseCategorySerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        _check_unique_name(self, attrs, "qhse_category_name", "A QHSE category")
+        return attrs
+
 
 class MstHseActivitySerializer(serializers.ModelSerializer):
     hse_activity_type_display = serializers.CharField(
@@ -345,12 +551,20 @@ class MstHseActivitySerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        _check_unique_name(self, attrs, "hse_activity_name", "An HSE activity")
+        return attrs
+
 
 class MstHseConsumableSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstHseConsumable
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        _check_unique_name(self, attrs, "hse_consumable_name", "A consumable")
+        return attrs
 
 
 class MstHseManhoursPartySerializer(serializers.ModelSerializer):
@@ -362,6 +576,15 @@ class MstHseManhoursPartySerializer(serializers.ModelSerializer):
         model = MstHseManhoursParty
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        # A new party needs its Cost Centre Type, and a saved one can't lose it. (The same name and type
+        # may appear more than once: the legacy data already has such pairs, and that is allowed.)
+        if self.instance is None and attrs.get("cost_centre_type") is None:
+            raise serializers.ValidationError({"cost_centre_type": "This field is required."})
+        if self.instance is not None and "cost_centre_type" in attrs and attrs["cost_centre_type"] is None:
+            raise serializers.ValidationError({"cost_centre_type": "This field is required."})
+        return attrs
 
 
 class MstHseMeetingSerializer(serializers.ModelSerializer):
@@ -418,10 +641,16 @@ class MstHseDrillSerializer(serializers.ModelSerializer):
 
 
 class MstHazardTypeSerializer(serializers.ModelSerializer):
+    haz_type_active = serializers.ChoiceField(choices=("Y", "N"), required=False)
+
     class Meta:
         model = MstHazardType
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        _check_unique_name(self, attrs, "haz_type_name", "A hazard type")
+        return attrs
 
 
 class MstUserSerializer(serializers.ModelSerializer):
@@ -461,6 +690,21 @@ class MstUserRigMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_date_not_future(self, attrs, errors, "mapping_from", "From date")
+        _check_to_after_from(self, attrs, errors, "mapping_from", "mapping_to", "To date")
+        user, target, start = (_get(self, attrs, f) for f in ("user", "rig", "mapping_from"))
+        if user and target and start and _changed(self, attrs, "user", "rig", "mapping_from"):
+            repeats = MstUserRigMapping.objects.filter(user=user, rig=target, mapping_from=start)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors.setdefault("mapping_from", "This user already has this mapping from this date.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_user_name(self, obj):
         return f"{obj.user.user_name} ({obj.user.user_login_id})"
 
@@ -482,6 +726,21 @@ class MstUserFsCatgMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_date_not_future(self, attrs, errors, "mapping_from", "From date")
+        _check_to_after_from(self, attrs, errors, "mapping_from", "mapping_to", "To date")
+        user, target, start = (_get(self, attrs, f) for f in ("user", "fs_category", "mapping_from"))
+        if user and target and start and _changed(self, attrs, "user", "fs_category", "mapping_from"):
+            repeats = MstUserFsCatgMapping.objects.filter(user=user, fs_category=target, mapping_from=start)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors.setdefault("mapping_from", "This user already has this mapping from this date.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_user_name(self, obj):
         return f"{obj.user.user_name} ({obj.user.user_login_id})"
 
@@ -497,6 +756,23 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
         model = DocToSignMapping
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        if "doc_name" in attrs:
+            attrs["doc_name"] = (attrs["doc_name"] or "").strip()
+        _check_date_not_future(self, attrs, errors, "sign_from", "From date")
+        _check_to_after_from(self, attrs, errors, "sign_from", "sign_to", "To date")
+        name, emp, start = (_get(self, attrs, f) for f in ("doc_name", "employee", "sign_from"))
+        if name and emp and start and _changed(self, attrs, "doc_name", "employee", "sign_from"):
+            repeats = DocToSignMapping.objects.filter(doc_name__iexact=name, employee=emp, sign_from=start)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors.setdefault("sign_from", "This employee already signs this document from this date.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def get_display_name(self, obj):
         return f"{obj.doc_name} — {obj.employee}"
@@ -515,6 +791,13 @@ class MstInterviewerSerializer(serializers.ModelSerializer):
         model = MstInterviewer
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_active(self, attrs, errors, "active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def get_user_name(self, obj):
         return f"{obj.user.user_name} ({obj.user.user_login_id})"
@@ -542,6 +825,20 @@ class FsCatgToRigTypeMappingSerializer(serializers.ModelSerializer):
         model = FsCatgToRigTypeMapping
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        category, rig_type = _get(self, attrs, "fs_category"), _get(self, attrs, "rig_type")
+        if category and rig_type and _changed(self, attrs, "fs_category", "rig_type"):
+            repeats = FsCatgToRigTypeMapping.objects.filter(fs_category=category, rig_type=rig_type)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["rig_type"] = "This category already has this rig type."
+        _check_active(self, attrs, errors, "mapping_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class RankClassificationSerializer(serializers.ModelSerializer):
@@ -587,6 +884,20 @@ class NationalityToEmpTypeMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        category, nationality, emp_type = (_get(self, attrs, f) for f in ("fs_category", "nationality", "emp_type"))
+        if category and nationality and emp_type and _changed(self, attrs, "fs_category", "nationality", "emp_type"):
+            repeats = NationalityToEmpTypeMapping.objects.filter(fs_category=category, nationality=nationality, emp_type=emp_type)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["emp_type"] = "This category, nationality and employee type are already mapped."
+        _check_active(self, attrs, errors, "active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_display_name(self, obj):
         return f"{obj.fs_category.fs_category_name} — {obj.nationality} — {obj.emp_type.emp_type_name}"
 
@@ -626,6 +937,16 @@ class WkgrpIndicatorTypeMappingSerializer(serializers.ModelSerializer):
         model = WkgrpIndicatorTypeMapping
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        workgroup, indicator = _get(self, attrs, "workgroup"), _get(self, attrs, "indicator_type")
+        if workgroup and indicator and _changed(self, attrs, "workgroup", "indicator_type"):
+            repeats = WkgrpIndicatorTypeMapping.objects.filter(workgroup=workgroup, indicator_type=indicator)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"indicator_type": "This workgroup already has this indicator type."})
+        return attrs
 
     def get_display_name(self, obj):
         return f"{obj.workgroup.workgroup_name} — {obj.indicator_type.indicator_type_name}"
@@ -676,6 +997,21 @@ class CostCentreToCompanyMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_date_not_future(self, attrs, errors, "mapping_from", "From date")
+        _check_to_after_from(self, attrs, errors, "mapping_from", "mapping_to", "To date")
+        company, cost_centre, start = (_get(self, attrs, f) for f in ("company", "cost_centre", "mapping_from"))
+        if company and cost_centre and start and _changed(self, attrs, "company", "cost_centre", "mapping_from"):
+            repeats = CostCentreToCompanyMapping.objects.filter(company=company, cost_centre=cost_centre, mapping_from=start)
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors.setdefault("mapping_from", "This company and cost centre already have a mapping from this date.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_display_name(self, obj):
         return f"{obj.company.company_name} — {obj.cost_centre.cost_centre_name}"
 
@@ -707,6 +1043,33 @@ class RigSiteMappingSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        addr = (attrs.get("camp_office_addr") or "").strip() if "camp_office_addr" in attrs else None
+        if addr is not None:
+            attrs["camp_office_addr"] = addr
+            if addr and _changed(self, attrs, "camp_office_addr") and len(addr) < 10:
+                errors["camp_office_addr"] = "Enter the full camp office address (at least 10 characters)."
+        for n in ("1", "2"):
+            tel_field, person_field = f"contact_tel_no_{n}", f"contact_fs_emp_{n}"
+            tel = (attrs.get(tel_field) or "").strip() if tel_field in attrs else None
+            if tel is not None:
+                attrs[tel_field] = tel or None
+            tel = _get(self, attrs, tel_field) or ""
+            if tel and _changed(self, attrs, tel_field):
+                if not re.fullmatch(r"\d{7,10}", tel):
+                    errors[tel_field] = "Enter a valid telephone number (7 to 10 digits, digits only)."
+            if tel and _changed(self, attrs, tel_field, person_field) and _get(self, attrs, person_field) is None:
+                errors.setdefault(tel_field, f"Enter Contact Person {n} for this telephone number.")
+        first, second = _get(self, attrs, "contact_fs_emp_1"), _get(self, attrs, "contact_fs_emp_2")
+        if first and second and first == second and _changed(self, attrs, "contact_fs_emp_1", "contact_fs_emp_2"):
+            errors["contact_fs_emp_2"] = "Contact Person 2 must be a different person from Contact Person 1."
+        _check_date_not_future(self, attrs, errors, "site_from", "From date")
+        _check_to_after_from(self, attrs, errors, "site_from", "site_to", "To date")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_contact_fs_emp_1_name(self, obj):
         return str(obj.contact_fs_emp_1) if obj.contact_fs_emp_1_id else ""
 
@@ -731,6 +1094,25 @@ class RigCrewExceptionSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        who = ("emp_type", "rank", "fs_emp")
+        if all(_get(self, attrs, f) is None for f in who) and (self.instance is None or any(f in attrs for f in who)):
+            errors["fs_emp"] = "Choose an Emp Type, a Rank or an Employee for this exception."
+        _check_date_not_future(self, attrs, errors, "exception_from", "From date")
+        _check_to_after_from(self, attrs, errors, "exception_from", "exception_to", "To date")
+        category = _get(self, attrs, "fs_category")
+        keys = ("fs_category", "emp_type", "rank", "fs_emp", "exception_to")
+        if category and not errors and _changed(self, attrs, *keys):
+            repeats = RigCrewException.objects.filter(**{f: _get(self, attrs, f) for f in keys})
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["exception_to"] = "This exception already exists."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_fs_emp_name(self, obj):
         return str(obj.fs_emp) if obj.fs_emp_id else ""
 
@@ -752,6 +1134,25 @@ class CrewScheduleExceptionSerializer(serializers.ModelSerializer):
         model = CrewScheduleException
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        who = ("emp_type", "rank", "fs_emp")
+        if all(_get(self, attrs, f) is None for f in who) and (self.instance is None or any(f in attrs for f in who)):
+            errors["fs_emp"] = "Choose an Emp Type, a Rank or an Employee for this exception."
+        _check_date_not_future(self, attrs, errors, "exception_from", "From date")
+        _check_to_after_from(self, attrs, errors, "exception_from", "exception_to", "To date")
+        category = _get(self, attrs, "fs_category")
+        keys = ("fs_category", "emp_type", "rank", "fs_emp", "exception_to")
+        if category and not errors and _changed(self, attrs, *keys):
+            repeats = CrewScheduleException.objects.filter(**{f: _get(self, attrs, f) for f in keys})
+            if self.instance is not None:
+                repeats = repeats.exclude(pk=self.instance.pk)
+            if repeats.exists():
+                errors["exception_to"] = "This exception already exists."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def get_fs_emp_name(self, obj):
         return str(obj.fs_emp) if obj.fs_emp_id else ""
@@ -818,6 +1219,12 @@ class MstDrillingRateSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        # Active is Y or N. Judged only when it is changed, so the old rates with a blank Active still save.
+        if "rate_active" in attrs and fields_changed(self.instance, attrs, "rate_active") and attrs["rate_active"] not in ("Y", "N"):
+            raise serializers.ValidationError({"rate_active": "Choose Active or Inactive."})
+        return attrs
+
 
 class ProjectContractDtlSerializer(serializers.ModelSerializer):
     rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
@@ -839,6 +1246,36 @@ class ProjectContractSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        errors = {}
+        if "prj_contract_no" in attrs:
+            attrs["prj_contract_no"] = attrs["prj_contract_no"].strip()
+        no = get("prj_contract_no")
+        if no and fields_changed(inst, attrs, "prj_contract_no"):
+            others = ProjectContract.objects.filter(prj_contract_no__iexact=no)
+            if inst is not None:
+                others = others.exclude(pk=inst.pk)
+            if others.exists():
+                errors["prj_contract_no"] = f"A contract numbered {no} already exists."
+        # Short Name: required for a new contract; letters, digits and hyphens only (no spaces).
+        short = (attrs.get("prj_short_name") or "").strip() if "prj_short_name" in attrs else (getattr(inst, "prj_short_name", None) or "")
+        if "prj_short_name" in attrs:
+            attrs["prj_short_name"] = short or None
+        if inst is None and not short:
+            errors["prj_short_name"] = "Enter the Short Name."
+        elif short and fields_changed(inst, attrs, "prj_short_name") and not re.fullmatch(r"[A-Za-z0-9-]+", short):
+            errors["prj_short_name"] = "Short Name can have only letters, digits and hyphens."
+        start, end = get("prj_start_dt"), get("prj_end_dt")
+        if start and fields_changed(inst, attrs, "prj_start_dt") and start > timezone.now().date():
+            errors["prj_start_dt"] = "Start Date can't be in the future."
+        if start and end and fields_changed(inst, attrs, "prj_start_dt", "prj_end_dt") and end < start:
+            errors["prj_end_dt"] = "End Date can't be before the Start Date."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def get_display_name(self, obj):
         return f"{obj.prj_contract_no} — {obj.location.location_name}"
 
@@ -855,6 +1292,18 @@ class ProjectDrillingRateSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        contract, rig, rate = get("contract"), get("rig"), get("drilling_rate")
+        if contract and rig and rate and fields_changed(inst, attrs, "contract", "rig", "drilling_rate"):
+            repeats = ProjectDrillingRate.objects.filter(contract=contract, rig=rig, drilling_rate=rate)
+            if inst is not None:
+                repeats = repeats.exclude(pk=inst.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"drilling_rate": "This rig already has this rate type on this contract."})
+        return attrs
+
     def get_display_name(self, obj):
         return f"{obj.contract.prj_contract_no} — {obj.rig.rig_name} — {obj.drilling_rate.rate_code}"
 
@@ -864,6 +1313,17 @@ class MstDrillingOperationSerializer(serializers.ModelSerializer):
         model = MstDrillingOperation
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        inst = self.instance
+        if "drilling_ops_code_no" in attrs and fields_changed(inst, attrs, "drilling_ops_code_no"):
+            taken = MstDrillingOperation.objects.filter(drilling_ops_code_no=attrs["drilling_ops_code_no"])
+            if inst is not None:
+                taken = taken.exclude(pk=inst.pk)
+            if taken.exists():
+                raise serializers.ValidationError({"drilling_ops_code_no": f"Code No {attrs['drilling_ops_code_no']} is already used by another operation."})
+        _check_unique_name(self, attrs, "drilling_ops_name", "An operation")
+        return attrs
 
 
 class MstDrillingSectionSerializer(serializers.ModelSerializer):
@@ -882,6 +1342,13 @@ class MstDrillingWorkShiftSerializer(serializers.ModelSerializer):
         model = MstDrillingWorkShift
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    work_shift_active = serializers.ChoiceField(choices=("Y", "N"), required=False)
+
+    def validate(self, attrs):
+        if "work_shift_days" in attrs and attrs["work_shift_days"] not in (1, 2):
+            raise serializers.ValidationError({"work_shift_days": "Shift Days must be 1 or 2."})
+        return attrs
 
 
 class MstItAssetTypeSerializer(serializers.ModelSerializer):
@@ -1302,6 +1769,14 @@ class MstApprovalCodeSerializer(serializers.ModelSerializer):
         model = MstApprovalCode
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "approval_code", "An approval code {value} already exists.")
+        _check_active(self, attrs, errors, "approval_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class RigCertSerializer(serializers.ModelSerializer):
