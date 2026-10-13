@@ -1,11 +1,12 @@
 import csv
+import itertools
 import datetime
 from decimal import Decimal
 
 from django.db.models import DateTimeField, Prefetch, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
 from django.http import HttpResponse, StreamingHttpResponse
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -232,6 +233,11 @@ from .media_uploads import media_url, save_media_file
 from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
 
 
+
+def _join_names(*parts):
+    return " ".join(p for p in parts if p)
+
+
 class BaseMasterViewSet(viewsets.ModelViewSet):
     """
     Shared CRUD behaviour for the simple lookup-table masters: gated by the
@@ -283,6 +289,183 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     # refuses a second query on that connection.
     export_streaming = False
     EXPORT_CHUNK = 1000  # under SQL Server's 2,100-parameter limit
+    # Export only: fetch just the columns the serializer writes. A plain
+    # select_related() pulls every column of every joined table, which is most of
+    # what travels from the database when it sits on another server. Turned off
+    # automatically for a serializer whose output cannot be read from its field
+    # list (method fields, a custom to_representation).
+    export_slim = True
+    # For a serializer the fast path cannot read by itself, a viewset can spell the
+    # difference out: {field: (database paths, function of those values)} stands in
+    # for a method field, and {field: function of the raw value} for a value the
+    # serializer reshapes in to_representation.
+    export_computed = {}
+    export_value_fns = {}
+
+    def _slim_for_export(self, qs):
+        if not self.export_slim:
+            return qs
+        try:
+            ser_cls = self.get_serializer_class()
+            ser = ser_cls()
+            model = qs.model
+            if ser_cls.to_representation is not serializers.ModelSerializer.to_representation:
+                return qs
+            only, joins = set(), set()
+            for name, f in ser.fields.items():
+                if f.write_only:
+                    continue
+                if isinstance(f, serializers.SerializerMethodField) or f.source == "*":
+                    return qs
+                attrs = f.source.split(".")
+                last = attrs[-1]
+                if len(attrs) == 1 and last.startswith("get_") and last.endswith("_display"):
+                    attrs = [last[4:-8]]
+                m = model
+                for i, part in enumerate(attrs):
+                    fld = m._meta.get_field(part)  # raises for a property / unknown name -> bail out
+                    if i < len(attrs) - 1:
+                        if not fld.is_relation:
+                            return qs
+                        joins.add("__".join(attrs[: i + 1]))
+                        m = fld.related_model
+                only.add("__".join(attrs))
+            if not only:
+                return qs
+            qs = qs.select_related(None)
+            if joins:
+                qs = qs.select_related(*sorted(joins))
+            return qs.only(*only)
+        except Exception:
+            return qs
+
+    def _fast_export_rows(self, qs):
+        """(fieldnames, row iterator) read straight from the database as plain
+        values, skipping the model objects and the serializer run for every row —
+        the bulk of an export's time. Gives the same values the serializer would.
+        None when the serializer cannot be read that way (the caller then falls
+        back to the serializer)."""
+        if not self.export_slim:
+            return None
+        try:
+            ser_cls = self.get_serializer_class()
+            ser = ser_cls()
+            model = qs.model
+            if (ser_cls.to_representation is not serializers.ModelSerializer.to_representation
+                    and not (self.export_computed or self.export_value_fns)):
+                return None
+            exclude = set(self.export_exclude_fields)
+            plan = []  # (name, serializer field, value is already the raw id, choice labels, database path)
+            for name, f in ser.fields.items():
+                if f.write_only or name in exclude:
+                    continue
+                if isinstance(f, serializers.SerializerMethodField) and name in self.export_computed:
+                    paths_, fn_ = self.export_computed[name]
+                    plan.append((name, None, False, ("computed", fn_, len(paths_)), tuple(paths_)))
+                    continue
+                if isinstance(f, serializers.SerializerMethodField) or f.source == "*":
+                    return None
+                if isinstance(f, (serializers.BaseSerializer, serializers.ManyRelatedField, serializers.ListField,
+                                  serializers.DictField, serializers.JSONField)):
+                    return None
+                is_pk = isinstance(f, serializers.PrimaryKeyRelatedField)
+                if isinstance(f, serializers.RelatedField) and not is_pk:
+                    return None
+                attrs = f.source.split(".")
+                choices = None
+                if len(attrs) == 1 and attrs[0].startswith("get_") and attrs[0].endswith("_display"):
+                    attrs = [attrs[0][4:-8]]
+                    choices = dict(model._meta.get_field(attrs[0]).flatchoices)
+                m = model
+                for i, part in enumerate(attrs):
+                    fld = m._meta.get_field(part)  # raises for a property / unknown name
+                    if i < len(attrs) - 1:
+                        if not fld.is_relation:
+                            return None
+                        m = fld.related_model
+                plan.append((name, f, is_pk, choices, "__".join(attrs)))
+            if not plan:
+                return None
+            flat = []
+            for p in plan:
+                flat.extend(p[4] if isinstance(p[4], tuple) else (p[4],))
+            values = qs.select_related(None).values_list(*flat)
+            fns = self.export_value_fns
+
+            def rows():
+                for tup in values.iterator(chunk_size=2000):
+                    row = {}
+                    i = 0
+                    for (n, f, is_pk, ch, path) in plan:
+                        if isinstance(path, tuple):
+                            k = ch[2]
+                            row[n] = ch[1](*tup[i:i + k])
+                            i += k
+                            continue
+                        v = tup[i]
+                        i += 1
+                        if n in fns:
+                            row[n] = fns[n](v)
+                        elif v is None:
+                            row[n] = None
+                        elif is_pk:
+                            row[n] = v
+                        elif ch is not None:
+                            row[n] = ch.get(v, v)
+                        else:
+                            row[n] = f.to_representation(v)
+                    yield row
+
+            gen = rows()
+            first = next(gen, None)  # a field that cannot be read this way fails here, before anything is sent
+            return [p[0] for p in plan], (itertools.chain([first], gen) if first is not None else iter(()))
+        except Exception:
+            return None
+
+    def _export_fast(self, request, fast, filename, stream=False):
+        fieldnames, rows = fast
+        first = next(rows, None)
+
+        class _Echo:
+            def write(self, value):
+                return value
+
+        if first is None:
+            response = HttpResponse(content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+            response.write("\ufeff")
+            self._audit_export(request, 0)
+            return response
+        titles = {f: f.replace("_", " ").title() for f in fieldnames}
+        if stream:
+            writer = csv.DictWriter(_Echo(), fieldnames=fieldnames)
+
+            def body():
+                yield "\ufeff"
+                yield writer.writerow(titles)
+                count = 1
+                yield writer.writerow(first)
+                for row in rows:
+                    count += 1
+                    yield writer.writerow(row)
+                self._audit_export(request, count)
+
+            response = StreamingHttpResponse(body(), content_type="text/csv; charset=utf-8")
+            response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+            response["X-Accel-Buffering"] = "no"
+            return response
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
+        response.write("\ufeff")
+        writer = csv.DictWriter(response, fieldnames=fieldnames)
+        writer.writerow(titles)
+        writer.writerow(first)
+        count = 1
+        for row in rows:
+            count += 1
+            writer.writerow(row)
+        self._audit_export(request, count)
+        return response
 
     def _export_streamed(self, request, qs, filename):
         class _Echo:
@@ -299,6 +482,9 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             if buf:
                 yield buf
 
+        fast = self._fast_export_rows(qs)
+        if fast is not None:
+            return self._export_fast(request, fast, filename, stream=True)
         source = chunks()
         first = next(source, None)
         exclude = set(self.export_exclude_fields)
@@ -411,10 +597,13 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         screen. Columns are exactly the serializer's own fields — every
         master gets this for free, at the cost of raw field names rather
         than hand-picked friendly ones."""
-        qs = self.filter_queryset(self.get_queryset())
+        qs = self._slim_for_export(self.filter_queryset(self.get_queryset()))
         filename = (self.entity_key or "export").split(".")[-1]
         if self.export_streaming:
             return self._export_streamed(request, qs, filename)
+        fast = self._fast_export_rows(qs)
+        if fast is not None:
+            return self._export_fast(request, fast, filename)
         serializer = self.get_serializer(qs, many=True)
         rows = serializer.data
         response = HttpResponse(content_type="text/csv; charset=utf-8")
@@ -1438,6 +1627,10 @@ class MstFsEmployeeViewSet(BaseMasterViewSet):
     active_field = "fs_emp_active"
     filterable_fields = ["fs_category", "rank", "rig", "emp_type"]
     search_fields = ["fs_emp_fname", "fs_emp_mname", "fs_emp_lname", "fs_emp_staff_id", "rank__rank_name", "rig__rig_name"]
+    export_computed = {"full_name": (("fs_emp_fname", "fs_emp_mname", "fs_emp_lname"), _join_names)}
+    export_value_fns = {n: (lambda v: "Y" if v == "Y" else "N") for n in (
+        "fs_emp_temporary", "fs_emp_active", "pp_ecnr", "key_personnel",
+        "vfd_rig_exp", "scr_rig_exp", "hpht_exp", "erd_exp", "nov_exp", "canrig_exp")}
 
     def get_queryset(self):
         qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
@@ -1461,6 +1654,9 @@ class FsEmpCurStatusViewSet(BaseMasterViewSet):
     active_field = "fs_emp_active"
     filterable_fields = ["fs_category", "rank", "rig", "emp_type", "serv_type"]
     search_fields = ["fs_emp__fs_emp_fname", "fs_emp__fs_emp_lname", "rank__rank_name", "rig__rig_name"]
+    _fs_name = (("fs_emp__fs_emp_fname", "fs_emp__fs_emp_mname", "fs_emp__fs_emp_lname"), _join_names)
+    export_computed = {"full_name": _fs_name, "fs_emp_name": _fs_name}
+    export_value_fns = {"fs_emp_active": lambda v: "Y" if v == "Y" else "N"}
 
     def get_queryset(self):
         qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
@@ -2417,6 +2613,12 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         "company_loc__company_loc_name",
     ]
     entity_key = "it_asset.it_asset_holders"
+    export_computed = {
+        "emp_name": (("emp_id", "emp__emp_fname", "emp__emp_mname", "emp__emp_sname"),
+                     lambda eid, a, b, c: _join_names(a, b, c) if eid else ""),
+        "holder_user_name": (("holder_user_id", "holder_user__user_name"),
+                             lambda uid, name: (name or "").strip() if uid else ""),
+    }
     name_field = "it_asset_holder_id"
     reference_checks = []
     search_fields = [

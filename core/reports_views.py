@@ -280,34 +280,37 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
                 "Reported By", "Close Out Date", "Age (days)",
             ]
         )
-        # Only the columns this CSV writes: the table is wide and, when the database
-        # is on another server, every extra column travels the network for each row.
-        qs = qs.only(
+        # Only the columns this CSV writes, as plain values: no model object per row,
+        # and the table is wide, so every extra column would travel the network.
+        rows = qs.select_related(None).values_list(
             "haz_id_card_no", "event_dt", "close_out_dt", "haz_id_card_status", "timeout_for_safety", "hazard_desc",
-            "action_taken", "reported_by_name", "rig__rig_name", "haz_type__haz_type_name",
-            "work_location__work_location", "resp_dept__vessel_dept_name", "resp_rank__rank_name",
+            "action_taken", "reported_by_name", "rig_id", "rig__rig_name", "haz_type_id", "haz_type__haz_type_name",
+            "work_location_id", "work_location__work_location", "resp_dept_id", "resp_dept__vessel_dept_name",
+            "resp_rank_id", "resp_rank__rank_name",
         )
         row_count = 0
-        for h in qs.iterator():
+        today = datetime.date.today()
+        for (no, ev, close, status, tfs, desc, action, rep_by, rig_id, rig, type_id, htype, loc_id, loc,
+             dept_id, dept, rank_id, rank) in rows.iterator(chunk_size=2000):
             row_count += 1
-            close_out = h.close_out_dt.date().isoformat() if h.close_out_dt else ""
-            end = h.close_out_dt.date() if h.close_out_dt else datetime.date.today()
+            ev_day = ev.date()
+            end = close.date() if close else today
             writer.writerow(
                 [
-                    h.haz_id_card_no,
-                    h.event_dt.date().isoformat(),
-                    h.rig.rig_name if h.rig_id else "Unknown",
-                    h.haz_type.haz_type_name if h.haz_type_id else "",
-                    h.work_location.work_location if h.work_location_id else "",
-                    "Closed" if h.haz_id_card_status == "C" else "Open",
-                    "Yes" if h.timeout_for_safety == "Y" else "No",
-                    h.hazard_desc,
-                    h.action_taken or "",
-                    h.resp_dept.vessel_dept_name if h.resp_dept_id else "",
-                    h.resp_rank.rank_name if h.resp_rank_id else "",
-                    h.reported_by_name or "",
-                    close_out,
-                    (end - h.event_dt.date()).days,
+                    no,
+                    ev_day.isoformat(),
+                    rig if rig_id else "Unknown",
+                    htype if type_id else "",
+                    loc if loc_id else "",
+                    "Closed" if status == "C" else "Open",
+                    "Yes" if tfs == "Y" else "No",
+                    desc,
+                    action or "",
+                    dept if dept_id else "",
+                    rank if rank_id else "",
+                    rep_by or "",
+                    close.date().isoformat() if close else "",
+                    (end - ev_day).days,
                 ]
             )
         _audit_export(request, self.entity_key, "Hazard Cards export", row_count)
@@ -392,22 +395,52 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
                 "Location", "Holder Remark", "Vendor", "Purchase Date", "Warranty Date", "Active",
             ]
         )
+        # Plain values straight from the database: no model objects and no serializer
+        # per row, and only the columns written below. The current holder of every
+        # asset comes from one extra query instead of a prefetch per chunk.
+        holders = {}
+        for (aid, uid, uname, eid, e1, e2, e3, hname, loc, remark, comp) in (
+            ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
+            .order_by("-it_asset_holder_from", "-it_asset_holder_id")
+            .values_list(
+                "it_asset_id", "holder_user_id", "holder_user__user_name", "emp_id", "emp__emp_fname", "emp__emp_mname",
+                "emp__emp_sname", "holder_name", "company_loc__company_loc_name", "holder_remark",
+                "holder_company__company_abrv",
+            )
+            .iterator(chunk_size=2000)
+        ):
+            if aid in holders:
+                continue  # newest ongoing row wins, as before
+            if uid:
+                who = (uname or "").strip()
+            elif eid:
+                who = " ".join(p for p in (e1, e2, e3) if p)
+            else:
+                who = hname or ""
+            holders[aid] = (who, loc or "", remark or "", comp or "")
+        rows = (
+            qs.prefetch_related(None)
+            .select_related(None)
+            .values_list(
+                "it_asset_id", "it_asset_type__it_asset_type_name", "it_asset_sr_no", "it_asset_tag", "it_asset_sap_code",
+                "it_asset_mfg__it_asset_mfg_name", "it_asset_model__it_asset_model_name",
+                "it_asset_subtype__it_asset_subtype_name", "it_asset_ram", "it_asset_hdd", "it_asset_particulars",
+                "it_asset_product_no", "it_asset_mac_addr", "own_company__company_abrv", "vendor__vendor_name",
+                "it_asset_pur_dt", "it_asset_warranty_upto", "it_asset_active",
+            )
+        )
+        field_date = self.serializer_class().fields
+        pur_f, warr_f = field_date["it_asset_pur_dt"], field_date["it_asset_warranty_upto"]
         row_count = 0
-        # Each chunk costs an extra prefetch query, so use big chunks (kept under SQL Server's
-        # 2,100-parameter limit for the prefetch's IN list).
-        for r in qs.iterator(chunk_size=1000):
+        for (aid, typ, sr, tag, sap, mfg, model, sub, ram, hdd, part, prod, mac, own, vendor, pur, warr, active) in rows.iterator(chunk_size=2000):
             row_count += 1
-            ser = self.serializer_class(r)
-            d = ser.data
+            who, loc, remark, hcomp = holders.get(aid, ("", "", "", ""))
             writer.writerow(
                 [
-                    d["it_asset_type_name"], d["it_asset_sr_no"], d["it_asset_tag"] or "",
-                    d["it_asset_sap_code"] or "", d["it_asset_mfg_name"], d["it_asset_model_name"],
-                    d["it_asset_subtype_name"], d["it_asset_ram"] or "", d["it_asset_hdd"] or "",
-                    d["it_asset_particulars"] or "", d["it_asset_product_no"] or "", d["it_asset_mac_addr"] or "",
-                    d["own_company_abrv"], d["holding_company_abrv"], d["holder_name"], d["location_name"],
-                    d["holder_remark"], d["vendor_name"], d["it_asset_pur_dt"] or "",
-                    d["it_asset_warranty_upto"] or "", d["it_asset_active"],
+                    typ or "", sr, tag or "", sap or "", mfg or "", model or "", sub or "", ram or "", hdd or "",
+                    part or "", prod or "", mac or "", own or "", hcomp, who, loc, remark, vendor or "",
+                    pur_f.to_representation(pur) if pur else "", warr_f.to_representation(warr) if warr else "",
+                    active,
                 ]
             )
         _audit_export(request, self.entity_key, "IT Assets report export", row_count)

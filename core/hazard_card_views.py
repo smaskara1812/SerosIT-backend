@@ -121,6 +121,16 @@ class HazardCardViewSet(BaseMasterViewSet):
     entity_key = "qhse.hazard_id_card"
     permission_classes = [HasMenuPermission]
     search_fields = ["haz_id_card_no", "hazard_desc", "action_taken", "reported_by_name"]
+    export_computed = {
+        "contract_label": (
+            ("contract_id", "contract__prj_contract_no", "contract__operator__operator_name", "contract__location__location_name"),
+            lambda cid, no, op, loc: f"{no} ({op}) - {loc}" if cid else "",
+        ),
+        "reported_by_fs_emp_name": (
+            ("reported_by_fs_emp_id", "reported_by_fs_emp__emp_fname", "reported_by_fs_emp__emp_mname", "reported_by_fs_emp__emp_sname"),
+            lambda eid, a, b, c: " ".join(p for p in (a, b, c) if p) if eid else "",
+        ),
+    }
     export_streaming = True  # the largest export (31,000+ cards); see BaseMasterViewSet._export_streamed
 
     _ORDERINGS = {

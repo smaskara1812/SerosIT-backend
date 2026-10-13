@@ -206,7 +206,17 @@ class TrainingGroupDtlSerializer(serializers.ModelSerializer):
         validators = []
 
     def get_is_repeat(self, obj):
-        return HseTrainingGroupDtl.objects.filter(hdr_id=obj.hdr_id, fs_category_id=obj.fs_category_id, rank_id=obj.rank_id).count() > 1
+        # Legacy rows that repeat a rank in a group. The few repeated keys are read
+        # once per request, not counted again for every row of a list or export.
+        repeats = self.context.get("_repeat_keys")
+        if repeats is None:
+            dup = (
+                HseTrainingGroupDtl.objects.values("hdr_id", "fs_category_id", "rank_id")
+                .annotate(n=Count("pk"))
+                .filter(n__gt=1)
+            )
+            repeats = self.context["_repeat_keys"] = {(d["hdr_id"], d["fs_category_id"], d["rank_id"]) for d in dup}
+        return (obj.hdr_id, obj.fs_category_id, obj.rank_id) in repeats
 
     def validate(self, attrs):
         inst = self.instance
