@@ -39,6 +39,8 @@ filter on MstVesselDept itself.
 
 import datetime
 
+from django.core.cache import cache
+
 from django.db.models import Max
 from django.http import HttpResponse
 from django.utils import timezone
@@ -105,6 +107,9 @@ def _date_param(value):
         return datetime.date.fromisoformat(value) if value else None
     except ValueError:
         return None
+
+
+_META_CACHE_KEY = "hazard_card_meta_v1"
 
 
 class HazardCardViewSet(BaseMasterViewSet):
@@ -180,6 +185,11 @@ class HazardCardViewSet(BaseMasterViewSet):
 
     @action(detail=False, methods=["get"], url_path="meta")
     def meta(self, request):
+        # Filter options come from three DISTINCT scans of 31,000+ cards, so keep
+        # the answer for a few minutes; a new card's type/year shows up after that.
+        cached = cache.get(_META_CACHE_KEY)
+        if cached is not None:
+            return Response(cached)
         years = [d.year for d in self.queryset.dates("event_dt", "year", order="DESC")]
         hazard_types = list(
             self.queryset.exclude(haz_type__isnull=True)
@@ -203,7 +213,7 @@ class HazardCardViewSet(BaseMasterViewSet):
             .order_by("fs_category_name")
             .values("fs_category_id", "fs_category_name")
         )
-        return Response(
+        payload = (
             {
                 "years": years,
                 "reported_by_party_options": REPORTED_BY_PARTY_OPTIONS,
@@ -219,6 +229,8 @@ class HazardCardViewSet(BaseMasterViewSet):
                 ],
             }
         )
+        cache.set(_META_CACHE_KEY, payload, 300)
+        return Response(payload)
 
     @action(detail=False, methods=["get"], url_path="rig-context")
     def rig_context(self, request):

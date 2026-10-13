@@ -2,6 +2,8 @@ from collections import OrderedDict
 
 from rest_framework.permissions import BasePermission
 
+from django.core.cache import cache
+
 from .models import SysMenu, UserPermission, UserProfile
 
 
@@ -17,14 +19,30 @@ def get_menu_registry():
     return registry
 
 
+ACCESS_CACHE_SECONDS = 900  # same as the access-token life; a safety net, see invalidate_user_access
+
+
+def _access_key(login_id):
+    return "user_access:" + (login_id or "").strip().lower()
+
+
+def invalidate_user_access(login_id):
+    """Forget a person's cached rights so the next request reads them fresh.
+    Called when they sign in or out and when an admin changes their rights."""
+    cache.delete(_access_key(login_id))
+
+
 def get_user_access(request):
     """
     Returns {"is_admin": bool, "perms": {menu_key: {action: bool, ...}}} for
     the current authenticated user. is_admin=True bypasses all permission
     checks — true for Django superusers and for is_app_admin profiles alike.
 
-    Unlike the legacy version this isn't session-cached: JWT requests are
-    stateless here, so it's recomputed per request (fine at this scale).
+    Rights are read from the database when a person signs in (and when an
+    admin saves their rights) and then kept in the cache, so a page that makes
+    a dozen API calls does not repeat the same two lookups for each one.
+    ACCESS_CACHE_SECONDS bounds how stale an entry can get if a server process
+    missed an invalidation (several worker processes each have their own cache).
     """
     if not request.user.is_authenticated:
         return {"is_admin": False, "perms": {}}
@@ -33,6 +51,22 @@ def get_user_access(request):
         return {"is_admin": True, "perms": {}}
 
     login_id = request.user.username
+    held = getattr(request, "_user_access", None)
+    if held is not None:
+        return held
+    key = _access_key(login_id)
+    access = cache.get(key)
+    if access is None:
+        access = _load_user_access(login_id)
+        cache.set(key, access, ACCESS_CACHE_SECONDS)
+    try:
+        request._user_access = access
+    except Exception:
+        pass
+    return access
+
+
+def _load_user_access(login_id):
     try:
         profile = UserProfile.objects.get(user_login_id=login_id)
         is_admin = profile.is_app_admin

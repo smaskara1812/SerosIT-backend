@@ -22,7 +22,7 @@ from .models import (
     UserProfile,
     PermissionPreset,
 )
-from .permissions import IsAppAdmin, get_menu_registry, get_user_access
+from .permissions import IsAppAdmin, get_menu_registry, get_user_access, invalidate_user_access
 
 
 @api_view(["GET"])
@@ -49,6 +49,7 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
             _audit.log_auth("login_failed", username, request)
             raise
         _audit.log_auth("login", username, request)
+        invalidate_user_access(username)  # every sign-in reads the rights fresh
         # Cache the password just used — this is the only place it's ever
         # available server-side — so outgoing approval-notification mail
         # can later authenticate to SMTP as this same user. Overwritten on
@@ -67,6 +68,7 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
 @permission_classes([IsAuthenticated])
 def logout_api(request):
     _audit.log_auth("logout", request.user.username, request)
+    invalidate_user_access(request.user.username)
     try:
         uid = UserProfile.objects.get(user_login_id=request.user.username).user_id
         UserMailCredential.objects.filter(user_id=uid).delete()
@@ -268,6 +270,7 @@ def admin_user_perms_save_api(request, user_id):
             },
         )
 
+    invalidate_user_access(profile.user_login_id)  # after the rows are written
     new_perms = _perm_summary(user_id)
     changes = {}
     if old_admin != is_admin:
@@ -299,6 +302,7 @@ def admin_user_admin_toggle_api(request, user_id):
     was_admin = profile.is_app_admin
     profile.is_app_admin = not profile.is_app_admin
     profile.save()
+    invalidate_user_access(profile.user_login_id)
     _audit.record_action(
         request,
         "permission_change",

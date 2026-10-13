@@ -67,6 +67,23 @@ def _resolve_company_name(company_id, effective_date):
     return None, None
 
 
+def name_changes_index():
+    """{company_id: [CompanyNameChange, ...] newest first}: one query for a whole
+    list, so a serializer can resolve many rows without a query each."""
+    index = {}
+    for c in CompanyNameChange.objects.order_by("-from_date"):
+        index.setdefault(c.company_id, []).append(c)
+    return index
+
+
+def company_name_from_index(index, company_id, effective_date, fallback=None):
+    """Same answer as _resolve_company_name, using a prebuilt index."""
+    for c in index.get(company_id, []):
+        if c.from_date <= effective_date and (c.to_date is None or c.to_date >= effective_date):
+            return c.company_name
+    return fallback
+
+
 def resolve_rig_company_branding(rig_id, effective_date):
     """Returns a dict: company_id, company_name, company_short_name, and one
     *_path per IMAGE_FILES key (a path relative to MEDIA_ROOT, under

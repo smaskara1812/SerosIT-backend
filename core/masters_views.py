@@ -2645,7 +2645,7 @@ class RigCertViewSet(BaseMasterViewSet):
 
 
 class RigCertScheduleViewSet(BaseMasterViewSet):
-    queryset = RigCertSchedule.objects.select_related("rig_cert", "rig_cert__rig").all()
+    queryset = RigCertSchedule.objects.select_related("rig_cert", "rig_cert__rig", "rig_cert__buss_cert").all()
     serializer_class = RigCertScheduleSerializer
     entity_key = "qhse.rig_certificate_schedule"
     search_fields = ["rig_cert__rig__rig_name", "rig_cert__certificate_no"]

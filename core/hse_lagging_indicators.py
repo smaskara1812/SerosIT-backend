@@ -34,7 +34,7 @@ from rest_framework.response import Response
 from rest_framework.validators import UniqueValidator
 
 from . import audit as _audit
-from .company_branding import _resolve_company_name, resolve_rig_company_branding
+from .company_branding import _resolve_company_name, company_name_from_index, name_changes_index, resolve_rig_company_branding
 from .masters_views import BaseMasterViewSet
 from .models import LaggingIndicatorsDtl, LaggingIndicatorsHdr, MstIndicatorSubtype, WkgrpIndicatorTypeMapping
 from .permissions import HasMenuPermission
@@ -100,8 +100,10 @@ class LaggingIndicatorsHdrSerializer(serializers.ModelSerializer):
         read_only_fields = _AUDIT_READ_ONLY
 
     def get_company_name(self, obj):
-        name, _ = _resolve_company_name(obj.company_id, obj.period)
-        return name or obj.company.company_name
+        index = self.context.get("_name_changes")
+        if index is None:
+            index = self.context["_name_changes"] = name_changes_index()
+        return company_name_from_index(index, obj.company_id, obj.period) or obj.company.company_name
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -191,8 +193,9 @@ class LaggingIndicatorsViewSet(BaseMasterViewSet):
     def export(self, request):
         """Excel of the reports list as currently filtered/searched."""
         qs = self.filter_queryset(self.get_queryset())
+        _idx = name_changes_index()
         rows = [
-            [h.report_no, h.rig.rig_name, _resolve_company_name(h.company_id, h.period)[0] or h.company.company_name,
+            [h.report_no, h.rig.rig_name, company_name_from_index(_idx, h.company_id, h.period) or h.company.company_name,
              h.period.strftime("%m/%Y"), h.dtl_count]
             for h in qs
         ]

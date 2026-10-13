@@ -3051,6 +3051,12 @@ class HazardCard(models.Model):
 
     class Meta:
         db_table = "hazard_card"
+        indexes = [
+            # The list is newest-first (and can sort by card number); without these
+            # SQL Server sorts all 31,000+ cards on every page.
+            models.Index(fields=["event_dt"], name="hazard_card_event_dt_idx"),
+            models.Index(fields=["haz_id_card_no"], name="hazard_card_no_idx"),
+        ]
 
     def __str__(self):
         return f"{self.haz_id_card_no} — {self.event_dt:%Y-%m-%d}"
