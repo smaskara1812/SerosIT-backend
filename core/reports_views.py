@@ -401,7 +401,7 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
         holders = {}
         for (aid, uid, uname, eid, e1, e2, e3, hname, loc, remark, comp) in (
             ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
-            .order_by("-it_asset_holder_from", "-it_asset_holder_id")
+            .order_by("-it_asset_holder_from", "it_asset_holder_id")
             .values_list(
                 "it_asset_id", "holder_user_id", "holder_user__user_name", "emp_id", "emp__emp_fname", "emp__emp_mname",
                 "emp__emp_sname", "holder_name", "company_loc__company_loc_name", "holder_remark",

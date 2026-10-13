@@ -398,6 +398,42 @@ class Command(BaseCommand):
                 urls.append(f"/api/qhse/mis-hse-review/{suffix}?period_type={ptype}&filter_type=SEROS{extra}")
                 if project:
                     urls.append(f"/api/qhse/mis-hse-review/{suffix}?period_type={ptype}&filter_type=PROJECT&project={project.pk}{extra}")
+        # Routes that need a rig, an id or a few filters before they answer.
+        from core.models import (
+            ActivityMonitor, CertToRankMapping, HseTrainingGroupHdr, MisMonthlyHseReturnsHdr, MstActivity, MstFsCategory,
+            MstUser, MstVesselDept,
+        )
+
+        vdept = MstVesselDept.objects.order_by("pk").first()
+        ctr = CertToRankMapping.objects.order_by("pk").first()
+        grp = HseTrainingGroupHdr.objects.order_by("pk").first()
+        act = MstActivity.objects.order_by("pk").first()
+        fy_one = MstFinancialYear.objects.order_by("-pk").first()
+        urls.append(f"/api/qhse/hse-drill-report/export/?period=ANNUAL&year={year}&rigs={rid}")
+        urls.append(f"/api/qhse/hse-drill-record/rig-context/?rig={rid}")
+        urls.append(f"/api/qhse/hazard-id-card/rig-context/?rig={rid}")
+        if vdept:
+            urls.append(f"/api/qhse/hazard-id-card/ranks/?rig={rid}&vessel_dept={vdept.pk}")
+        urls.append(f"/api/qhse/leading-indicators/company-for/?rig={rid}&period={month}")
+        urls.append(f"/api/qhse/lagging-indicators/company-for/?rig={rid}&period={month}")
+        urls.append(f"/api/qhse/hse-weekly-drill/next-week/?rig={rid}&year={year}")
+        if ctr and grp:
+            urls.append(f"/api/qhse/cert-to-rank-mapping/candidates/?cert={ctr.cert_id}&group={grp.pk}&category={ctr.fs_category_id}")
+        if act:
+            urls.append(f"/api/qhse/activity-monitor/suggest/?activity={act.pk}&rig={rid}")
+        if fy_one:
+            for suffix in ("", "print/"):
+                urls.append(f"/api/dashboards/incident-dashboard/drilldown/{suffix}?dimension=rig_unit&mode=rigs&year={fy_one.pk}&row={rid}")
+        am = ActivityMonitor.objects.order_by("-pk").first()
+        if am:
+            urls.append(f"/api/qhse/activity-monitor/{am.pk}/")
+        mr = MisMonthlyHseReturnsHdr.objects.order_by("-pk").first()
+        if mr:
+            urls.append(f"/api/qhse/mis-hse-return/{mr.pk}/")
+        u0 = MstUser.objects.order_by("pk").first()
+        if u0:
+            urls.append(f"/api/admin/users/{u0.pk}/perms/")
+            urls.append(f"/api/admin/user-management/{u0.pk}/")
         self.say(f"Running {len(urls)} filtered report/dashboard requests...")
         for url in urls:
             res, resp = self.get(url, url)

@@ -20,7 +20,7 @@ Flat time    = "Drill actual" ops rows with rop_trip_mh <= 0 (hours spent
 
 from datetime import date
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import Abs, TruncMonth
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -90,21 +90,25 @@ class DrillingPerformanceDashboardView(APIView):
             repair_service_hrs=Sum("repair_service_hrs"),
             repair_rate_hrs=Sum("repair_rate_hrs"),
             zero_rate_hrs=Sum("zero_rate_hrs"),
+            total_metres=Sum("drilling_meterage"),
         )
 
-        total_metres = dtl_qs.aggregate(total=Sum("drilling_meterage"))["total"] or 0
+        total_metres = consumables["total_metres"] or 0
         # Avg() over Abs() needs the annotate-then-aggregate form, not a
         # bare expression inside aggregate().
+        # One query for the drill-actual totals (ROP, hours, count, flat hours).
         rop_row = drill_ops_qs.annotate(abs_rop=Abs("rop_trip_mh")).aggregate(
-            avg_rop=Sum("abs_rop"), n=Count("abs_rop")
+            avg_rop=Sum("abs_rop"),
+            n=Count("abs_rop"),
+            hours=Sum("duration"),
+            ops=Count("pk"),
+            flat=Sum("duration", filter=Q(rop_trip_mh__lte=0)),
         )
         avg_rop = round(float(rop_row["avg_rop"]) / rop_row["n"], 2) if rop_row["n"] else None
 
-        drill_hours = drill_ops_qs.aggregate(total=Sum("duration"))["total"] or 0
-        drill_ops_count = drill_ops_qs.count()
-        flat_hours = (
-            drill_ops_qs.filter(rop_trip_mh__lte=0).aggregate(total=Sum("duration"))["total"] or 0
-        )
+        drill_hours = rop_row["hours"] or 0
+        drill_ops_count = rop_row["ops"]
+        flat_hours = rop_row["flat"] or 0
 
         summary = {
             "avg_rop_m_hr": avg_rop,
@@ -204,32 +208,30 @@ class DrillingPerformanceDashboardView(APIView):
             for row in ops_rows
         ]
 
-        # Metres drilled by rig.
-        metres_rows = dtl_qs.values("rig_id").annotate(total=Sum("drilling_meterage"))
+        # Metres, diesel and water by rig: one grouped query for the three charts.
+        rig_rows = list(
+            dtl_qs.values("rig_id").annotate(
+                metres=Sum("drilling_meterage"), diesel=Sum("consumption_diesel"), water=Sum("consumption_water")
+            )
+        )
         metres_by_rig = sorted(
             (
-                {"rig_id": row["rig_id"], "rig_name": rig_names.get(row["rig_id"], ""), "metres": float(row["total"] or 0)}
-                for row in metres_rows
+                {"rig_id": r["rig_id"], "rig_name": rig_names.get(r["rig_id"], ""), "metres": float(r["metres"] or 0)}
+                for r in rig_rows
             ),
             key=lambda r: r["rig_name"],
         )
-
-        # Diesel/water consumption by rig — same shape as metres_by_rig, for
-        # the "Diesel Consumption by Rig" / "Water Consumption by Rig"
-        # charts.
-        diesel_rows = dtl_qs.values("rig_id").annotate(total=Sum("consumption_diesel"))
         diesel_by_rig = sorted(
             (
-                {"rig_id": row["rig_id"], "rig_name": rig_names.get(row["rig_id"], ""), "litres": float(row["total"] or 0)}
-                for row in diesel_rows
+                {"rig_id": r["rig_id"], "rig_name": rig_names.get(r["rig_id"], ""), "litres": float(r["diesel"] or 0)}
+                for r in rig_rows
             ),
             key=lambda r: r["rig_name"],
         )
-        water_rows = dtl_qs.values("rig_id").annotate(total=Sum("consumption_water"))
         water_by_rig = sorted(
             (
-                {"rig_id": row["rig_id"], "rig_name": rig_names.get(row["rig_id"], ""), "litres": float(row["total"] or 0)}
-                for row in water_rows
+                {"rig_id": r["rig_id"], "rig_name": rig_names.get(r["rig_id"], ""), "litres": float(r["water"] or 0)}
+                for r in rig_rows
             ),
             key=lambda r: r["rig_name"],
         )
@@ -255,52 +257,38 @@ class DrillingPerformanceDashboardView(APIView):
 
         # Same two metrics, month-by-month per rig — drill-down data for
         # "Metres Drilled by Rig" and "Flat Time by Rig" respectively.
-        metres_by_rig_month_rows = (
+        month_rows = list(
             dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
             .values("rig_id", "month")
-            .annotate(total=Sum("drilling_meterage"))
+            .annotate(metres=Sum("drilling_meterage"), diesel=Sum("consumption_diesel"), water=Sum("consumption_water"))
             .order_by("rig_id", "month")
         )
         metres_by_rig_month = [
             {
-                "rig_id": row["rig_id"],
-                "rig_name": rig_names.get(row["rig_id"], ""),
-                "month": row["month"].strftime("%Y-%m"),
-                "metres": float(row["total"] or 0),
+                "rig_id": r["rig_id"],
+                "rig_name": rig_names.get(r["rig_id"], ""),
+                "month": r["month"].strftime("%Y-%m"),
+                "metres": float(r["metres"] or 0),
             }
-            for row in metres_by_rig_month_rows
+            for r in month_rows
         ]
-
-        diesel_by_rig_month_rows = (
-            dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
-            .values("rig_id", "month")
-            .annotate(total=Sum("consumption_diesel"))
-            .order_by("rig_id", "month")
-        )
         diesel_by_rig_month = [
             {
-                "rig_id": row["rig_id"],
-                "rig_name": rig_names.get(row["rig_id"], ""),
-                "month": row["month"].strftime("%Y-%m"),
-                "litres": float(row["total"] or 0),
+                "rig_id": r["rig_id"],
+                "rig_name": rig_names.get(r["rig_id"], ""),
+                "month": r["month"].strftime("%Y-%m"),
+                "litres": float(r["diesel"] or 0),
             }
-            for row in diesel_by_rig_month_rows
+            for r in month_rows
         ]
-
-        water_by_rig_month_rows = (
-            dtl_qs.annotate(month=TruncMonth("drilling_dtl_dt"))
-            .values("rig_id", "month")
-            .annotate(total=Sum("consumption_water"))
-            .order_by("rig_id", "month")
-        )
         water_by_rig_month = [
             {
-                "rig_id": row["rig_id"],
-                "rig_name": rig_names.get(row["rig_id"], ""),
-                "month": row["month"].strftime("%Y-%m"),
-                "litres": float(row["total"] or 0),
+                "rig_id": r["rig_id"],
+                "rig_name": rig_names.get(r["rig_id"], ""),
+                "month": r["month"].strftime("%Y-%m"),
+                "litres": float(r["water"] or 0),
             }
-            for row in water_by_rig_month_rows
+            for r in month_rows
         ]
 
         flat_by_rig_month_rows = (
