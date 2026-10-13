@@ -30,7 +30,11 @@ from .hse_drill_record_children import (
 from .drilling_dashboard import PerformanceDashboardExportView, PerformanceDashboardView
 from .rig_utilisation_dashboard import RigUtilisationDashboardView
 from .drilling_performance_dashboard import DrillingPerformanceDashboardView
+from .compliance_radar import ComplianceDigestView, ComplianceRadarExportView, ComplianceRadarView
 from .fleet_operating_dashboard import FleetOperatingDashboardView
+from .fuel_water_dashboard import FuelWaterDashboardView
+from .rig_moves_dashboard import RigMovesDashboardView
+from .safety_performance_dashboard import SafetyPerformanceDashboardView
 from .contract_exposure_dashboard import ContractExposureDashboardView
 from .rig_health_dashboard import RigHealthDashboardView
 from .it_asset_dashboard import ItAssetDashboardView
@@ -382,6 +386,12 @@ urlpatterns = [
         DrillingPerformanceDashboardView.as_view(),
         name="dashboards_drilling_performance",
     ),
+    path("dashboards/compliance-radar/", ComplianceRadarView.as_view(), name="dashboards_compliance_radar"),
+    path("dashboards/compliance-radar/export/", ComplianceRadarExportView.as_view(), name="dashboards_compliance_radar_export"),
+    path("dashboard/digest/", ComplianceDigestView.as_view(), name="dashboard_digest"),
+    path("dashboards/safety-performance/", SafetyPerformanceDashboardView.as_view(), name="dashboards_safety_performance"),
+    path("dashboards/fuel-water/", FuelWaterDashboardView.as_view(), name="dashboards_fuel_water"),
+    path("dashboards/rig-moves/", RigMovesDashboardView.as_view(), name="dashboards_rig_moves"),
     path(
         "dashboards/fleet-operating-picture/",
         FleetOperatingDashboardView.as_view(),

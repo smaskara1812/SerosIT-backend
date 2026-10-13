@@ -61,6 +61,14 @@ def current_contract_by_rig(rig_ids, today):
 DASHBOARD_RIG_SCOPE_MODE = "strict"
 
 
+def same_day_in_year(year, today):
+    """Today's month and day in another year; 29 February becomes 28 February when that year has none."""
+    import calendar
+    from datetime import date
+
+    return date(year, today.month, min(today.day, calendar.monthrange(year, today.month)[1]))
+
+
 def get_accessible_rig_ids(request):
     """None means "no filter, show every rig". Otherwise a set of rig_ids
     to restrict a dashboard's queries to."""
