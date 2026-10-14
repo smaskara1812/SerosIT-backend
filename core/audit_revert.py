@@ -468,6 +468,10 @@ def _plan(entry_id, mode, request=None):
         _check_page_rules(request, entity, model, obj, {i["field"]: i["restore_to"] for i in plan["fields"]})
         # The change being undone is the first one after the chosen version.
         since = later[0].ts if later else None
+        if since is not None and since.tzinfo is not None:
+            # SQL Server hands dates back tagged as UTC even though the app stores plain local times
+            # (USE_TZ is off). Compared against the plain cr_dt columns, the tagged value matches nothing.
+            since = since.replace(tzinfo=None)
         if since is not None:
             problems = []
             plan["warnings"] = _dependents_since(model, obj, since, problems)
