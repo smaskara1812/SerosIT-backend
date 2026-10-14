@@ -2,7 +2,7 @@
 production data migration.
 
 Two sources, both authoritative, neither hand-maintained:
-  1. `SQL commands/import_*.sql` — the real INSERT INTO <new> (...) SELECT
+  1. `db_migration/sql/import_*.sql` — the real INSERT INTO <new> (...) SELECT
      ... FROM Seros_Data.<legacy> statements used to import each table.
      These carry the actual column-for-column mapping, including the
      transforms (IF(...)/NULLIF/etc.) applied during import.
@@ -14,7 +14,7 @@ Two sources, both authoritative, neither hand-maintained:
 Run it again any time new masters are added; it's a regeneration, not a
 document to edit by hand:
 
-    python manage.py build_migration_map > docs/migration_map.md
+    python manage.py build_migration_map > ../db_migration/reference/migration_map.md
 """
 
 import os
@@ -198,7 +198,7 @@ class Command(BaseCommand):
     help = "Regenerate the legacy->new schema migration map (writes Markdown to stdout)."
 
     def handle(self, *args, **options):
-        sql_dir = os.path.join(settings.BASE_DIR, "SQL commands")
+        sql_dir = os.path.join(os.path.dirname(settings.BASE_DIR), "db_migration", "sql")
         imported = parse_import_sql(sql_dir)
 
         models = sorted(
@@ -214,7 +214,7 @@ class Command(BaseCommand):
         )
         out("")
         out(
-            "Column mappings come from the real `SQL commands/import_*.sql` statements "
+            "Column mappings come from the real `db_migration/sql/import_*.sql` statements "
             "used at import time, so any transform applied then (dangling-FK nulling, "
             "dedup, etc.) is visible in the Legacy column."
         )
@@ -235,7 +235,7 @@ class Command(BaseCommand):
             info = imported[table]
             out(f"### `{table}`  ←  `Seros_Data.{info['legacy_table']}`")
             out("")
-            sources = ", ".join(f"`SQL commands/{f}`" for f in info["source_files"])
+            sources = ", ".join(f"`db_migration/sql/{f}`" for f in info["source_files"])
             out(f"_Source: {sources}_")
             out("")
             if info["warning"]:

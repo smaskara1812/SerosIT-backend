@@ -27,7 +27,7 @@ Card's Reported By).
 
 Child tables from the legacy page (Event/Observation/Improvement/
 Corrective Action/Photo Upload) are modeled (see models.py) and their
-legacy data is migrated — see SQL commands/import_hse_drill_record.sql.
+legacy data is migrated — see db_migration/sql/import_hse_drill_record.sql.
 The four description-only ones have add/edit UI in
 hse_drill_record_children.py; Photo Upload's add/delete lives here instead
 (the `photos` action below), same reasoning as Incident Photos living on
