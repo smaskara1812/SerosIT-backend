@@ -1270,11 +1270,26 @@ class SysAuditLog(models.Model):
     changes = PortableJSONField(null=True, blank=True)
     ip = models.CharField(max_length=45, blank=True)
     user_agent = models.CharField(max_length=300, blank=True)
+    # Record history / revert (see documents/audit_history_revert_plan.md).
+    # target_table + target_pk name the exact row an entry is about (entity is a menu key and
+    # record_id a free-text label, neither is reliable enough to revert from). batch_id ties together
+    # every entry written by one request. reverted_of points at the entry a revert undid.
+    # kind: "change" (a data edit, kept for good) or "event" (export/login/logout, purged after 6 months).
+    target_table = models.CharField(max_length=64, blank=True, default="")
+    target_pk = models.CharField(max_length=60, blank=True, default="")
+    batch_id = models.CharField(max_length=36, blank=True, default="")
+    reverted_of = models.BigIntegerField(null=True, blank=True)
+    source = models.CharField(max_length=20, blank=True, default="user")
+    kind = models.CharField(max_length=10, default="change")
+    note = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         db_table = "sys_audit_log"
         ordering = ["-ts"]
         indexes = [
+            models.Index(fields=["target_table", "target_pk"], name="audit_target_idx"),
+            models.Index(fields=["batch_id"], name="audit_batch_idx"),
+            models.Index(fields=["kind", "ts"], name="audit_kind_ts_idx"),
             models.Index(fields=["entity", "ts"]),
             models.Index(fields=["user_id", "ts"]),
             models.Index(fields=["action", "ts"]),

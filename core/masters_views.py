@@ -651,27 +651,9 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     _AUDIT_SKIP = {"cr_user_id", "cr_dt", "mod_user_id", "mod_dt"}
 
     def _snapshot(self, instance):
-        """{field_name: value} for every real field on the instance, skipping
-        the PK and audit bookkeeping columns. FK fields use the raw id
-        (attname) — a plain, always-available value, not a resolved label."""
-        snap = {}
-        for f in instance._meta.fields:
-            if f.name in self._AUDIT_SKIP or f.primary_key:
-                continue
-            val = getattr(instance, f.attname)
-            if hasattr(val, "isoformat"):
-                val = val.isoformat()
-            elif isinstance(val, Decimal):
-                # json.dumps() (PortableJSONField's own serialization,
-                # audit.py's _write -> SysAuditLog.changes) has no default
-                # encoding for Decimal and raises TypeError — silently
-                # caught by record_action's own try/except, so a model with
-                # any DecimalField (first hit: DrillingHdr's operating-hours
-                # columns) would just never get an audit entry at all, with
-                # no visible error anywhere.
-                val = str(val)
-            snap[f.name] = val
-        return snap
+        """{field_name: value} for every real field on the instance, skipping the PK and the
+        audit bookkeeping columns. FK fields use the raw id. See audit.snapshot."""
+        return _audit.snapshot(instance)
 
     def _diff(self, old, new):
         return {
@@ -687,7 +669,8 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
     def perform_update(self, serializer):
@@ -698,7 +681,8 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
         changes = self._diff(old_snapshot, self._snapshot(instance))
         _audit.record_action(
-            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
     def _references(self, instance):
@@ -729,6 +713,11 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
 
         label = self.label_for(instance)
         pk = instance.pk
+        table = instance._meta.db_table
+        # Taken before the delete: the full row (history shows it, revert puts it back), and every
+        # child row that will be deleted along with it (CASCADE relations).
+        before = _audit.snapshot(instance, full=True)
+        children = _audit.cascade_snapshots(instance)
         try:
             instance.delete()
         except ProtectedError:
@@ -737,7 +726,14 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
                 {"error": "This record is still referenced elsewhere and can't be deleted."},
                 status=400,
             )
-        _audit.record_action(request, "delete", self.entity_key, pk, label)
+        _audit.record_action(
+            request, "delete", self.entity_key, pk, label, _audit.as_delete_changes(before), target=(table, pk)
+        )
+        for child_table, child_pk, child_label, child_snap in children:
+            _audit.record_action(
+                request, "delete", self.entity_key, child_pk, child_label, _audit.as_delete_changes(child_snap),
+                target=(child_table, child_pk),
+            )
         return Response(status=204)
 
 

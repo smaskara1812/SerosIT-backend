@@ -460,7 +460,7 @@ class Command(BaseCommand):
                     break
             self.user = self.user or User.objects.filter(is_superuser=True, is_active=True).first()
         host = next((h for h in settings.ALLOWED_HOSTS if h and h not in ("*",) and not h.startswith(".")), "localhost")
-        self.client = APIClient(HTTP_HOST=host)
+        self.client = APIClient(HTTP_HOST=host, HTTP_X_AUDIT_SOURCE="selftest")
         self.codes = Counter()
         self.client_errors = []
         if self.user:

@@ -10,6 +10,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from . import audit as _audit
+from . import audit_revert as _audit_revert
 from .auth_backend import _fetch_mst_user, _sha256
 from .models import (
     EmailLog,
@@ -408,7 +409,9 @@ def admin_audit_facets_api(request):
         if key not in seen:
             seen[key] = label or key
     entities = sorted(({"key": k, "label": v} for k, v in seen.items()), key=lambda x: x["label"])
-    return Response({"actions": actions, "users": users, "entities": entities})
+    return Response(
+        {"actions": actions, "users": users, "entities": entities, "revertible": _audit_revert.revertible_entities()}
+    )
 
 
 @api_view(["GET"])
@@ -421,6 +424,9 @@ def admin_audit_list_api(request):
     q = request.GET.get("q", "").strip()
     dfrom = request.GET.get("from", "").strip()
     dto = request.GET.get("to", "").strip()
+    kind = request.GET.get("kind", "").strip()
+    if kind in ("change", "event"):
+        qs = qs.filter(kind=kind)
     if action:
         qs = qs.filter(action=action)
     if entity:
@@ -455,10 +461,19 @@ def admin_audit_list_api(request):
             "record_label",
             "changes",
             "ip",
+            "target_table",
+            "target_pk",
+            "reverted_of",
+            "note",
+            "kind",
+            "source",
         )
     )
+    revertible = set(_audit_revert.revertible_entities())
     for r in rows:
         r["ts"] = r["ts"].strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
+        # Offer History where there is a record to show it for and the page supports revert.
+        r["has_history"] = bool(r["entity"] in revertible and (r["target_pk"] or r["record_id"]) and r["kind"] == "change")
     return Response(
         {
             "results": rows,
@@ -468,6 +483,40 @@ def admin_audit_list_api(request):
             "pages": (total + size - 1) // size,
         }
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_audit_history_api(request):
+    """Every logged change of one record, oldest first, with before/after for each."""
+    entity = request.GET.get("entity", "").strip()
+    record_id = request.GET.get("record_id", "").strip()
+    if not entity or not record_id:
+        return Response({"error": "entity and record_id are required."}, status=400)
+    try:
+        return Response(_audit_revert.history(entity, record_id))
+    except _audit_revert.RevertRefused as exc:
+        return Response({"error": str(exc)}, status=400)
+
+
+@api_view(["POST"])
+@permission_classes([IsAppAdmin])
+def admin_audit_revert_preview_api(request, entry_id):
+    """What restoring to before/after this entry would change, with a plain reason if it can't be done."""
+    mode = request.data.get("mode", "after")
+    return Response(_audit_revert.preview(entry_id, mode, request))
+
+
+@api_view(["POST"])
+@permission_classes([IsAppAdmin])
+def admin_audit_revert_api(request, entry_id):
+    mode = request.data.get("mode", "after")
+    reason = str(request.data.get("reason", "") or "").strip()[:255]
+    try:
+        result = _audit_revert.apply(request, entry_id, mode, reason)
+    except _audit_revert.RevertRefused as exc:
+        return Response({"ok": False, "error": str(exc)}, status=400)
+    return Response({"ok": True, **result})
 
 
 # ── Email Log ─────────────────────────────────────────────────────────────
