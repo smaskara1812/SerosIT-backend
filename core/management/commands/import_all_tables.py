@@ -79,6 +79,35 @@ class Command(BaseCommand):
             help="Only parse and validate the sheets — no database writes at all",
         )
 
+    def _set_string_input_sizes(self, cur, row_tuples):
+        """Tell pyodbc the real width of every text parameter before a fast_executemany batch.
+
+        Without this, pyodbc sizes each string parameter's buffer from the first rows only, so a later,
+        longer value aborts the whole batch ("String data, right truncation: length 10 buffer 8"). The
+        export writes decimals (depth, duration, ...) as text, so those columns hit it constantly.
+        Sizes come from the longest value actually in the data. Best-effort: on any problem the batch
+        simply runs the way it did before.
+        """
+        try:
+            import pyodbc
+
+            width = len(row_tuples[0])
+            longest = [0] * width
+            is_text = [False] * width
+            for row in row_tuples:
+                for i, v in enumerate(row):
+                    if isinstance(v, str):
+                        is_text[i] = True
+                        if len(v) > longest[i]:
+                            longest[i] = len(v)
+            sizes = [
+                (pyodbc.SQL_WVARCHAR, 0 if longest[i] > 4000 else max(longest[i], 1), 0) if is_text[i] else None
+                for i in range(width)
+            ]
+            cur.cursor.cursor.setinputsizes(sizes)
+        except Exception:
+            pass
+
     def handle(self, *args, **options):
         path = options["input"]
         if not os.path.isfile(path):
@@ -269,6 +298,8 @@ class Command(BaseCommand):
                         # (seen on drilling_hdr). Rolling back to this point
                         # first makes the retry start from an empty table.
                         sid = transaction.savepoint()
+                        if vendor == "microsoft":
+                            self._set_string_input_sizes(cur, row_tuples)
                         try:
                             cur.executemany(sql, row_tuples)
                         except DatabaseError as exc:
@@ -295,7 +326,13 @@ class Command(BaseCommand):
                                     cur.cursor.cursor.fast_executemany = False
                                 except AttributeError:
                                     pass
-                                cur.executemany(sql, row_tuples)
+                                # one round trip per row: in chunks so progress shows and a long
+                                # table does not look hung
+                                for start in range(0, len(row_tuples), 2000):
+                                    cur.executemany(sql, row_tuples[start : start + 2000])
+                                    done = min(start + 2000, len(row_tuples))
+                                    self.stdout.write(f"    {table}: {done}/{len(row_tuples)} (slow path)")
+                                    self.stdout.flush()
                             else:
                                 raise
                         transaction.savepoint_commit(sid)
