@@ -35,6 +35,12 @@ def snapshot(instance, full=False):
             val = val.isoformat()
         elif isinstance(val, Decimal):
             val = str(val)
+        elif hasattr(val, "name") and hasattr(val, "storage"):
+            val = val.name or ""  # a file field: the stored path
+        elif isinstance(val, (bytes, bytearray)):
+            val = bytes(val).hex()
+        elif not isinstance(val, (str, int, float, bool, list, dict, type(None))):
+            val = str(val)
         snap[f.name] = val
     return snap
 

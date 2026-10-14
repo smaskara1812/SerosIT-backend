@@ -151,11 +151,45 @@ def run():
     code, res = revert(client, h["entries"][-1]["id"], "before")
     check("and that can be undone too (the rig type is back)", code == 200 and MstRigType.objects.filter(pk=tpk).exists(), str(res))
 
+    # --- an approval is a barrier: a record can't be reverted past one
+    r = client.post(CONTRACTORS, {"contractor_name": "ZZ Barrier"}, format="json")
+    bpk = r.json()["contractor_id"]
+    client.patch(f"{CONTRACTORS}{bpk}/", {"contractor_name": "ZZ Barrier Two"}, format="json")
+    first = history(client, ENTITY, bpk)["entries"][0]["id"]
+    SysAuditLog.objects.create(
+        username="zz_approver", action="approve", entity=ENTITY, record_id=str(bpk), target_table="mst_contractor", target_pk=str(bpk)
+    )
+    p = preview(client, first, "after")
+    check("restoring past an approval is refused", not p["allowed"] and "approved by zz_approver" in (p.get("reason") or ""), str(p))
+    code, res = revert(client, first, "after")
+    check("and nothing is changed", code == 400 and MstContractor.objects.get(pk=bpk).contractor_name == "ZZ Barrier Two", str(res))
+    client.patch(f"{CONTRACTORS}{bpk}/", {"contractor_name": "ZZ Barrier Three"}, format="json")
+    client.patch(f"{CONTRACTORS}{bpk}/", {"contractor_name": "ZZ Barrier Four"}, format="json")
+    after_approval = history(client, ENTITY, bpk)["entries"][2]["id"]
+    p = preview(client, after_approval, "after")
+    check("a version created after the approval can still be restored", p["allowed"], str(p))
+
+    # --- records created since the change are reported in the preview
+    r = client.post(RIG_TYPES, {"rig_type_name": "ZZ Warn"}, format="json")
+    wpk = r.json()["rig_type_id"]
+    client.patch(f"{RIG_TYPES}{wpk}/", {"rig_type_name": "ZZ Warn Two"}, format="json")
+    from datetime import timedelta
+    from django.utils import timezone as tz
+
+    MstRigSubtype.objects.create(rig_subtype_name="ZZ Old Sub", rig_type_id=wpk, cr_user_id=1, cr_dt=tz.now() - timedelta(days=2))
+    MstRigSubtype.objects.create(rig_subtype_name="ZZ New Sub", rig_type_id=wpk, cr_user_id=1, cr_dt=tz.now() + timedelta(seconds=1))
+    wh = history(client, "masters.rig_types", wpk)["entries"]
+    p = preview(client, wh[-1]["id"], "before")
+    check("the preview lists records created after the change", p["allowed"] and p["warnings"] == [{"label": "Rig Subtype", "count": 1}], str(p.get("warnings")))
+    check("the preview says since when", bool(p.get("since")))
+    p = preview(client, e_up1, "after")
+    check("a preview with nothing depending on it has no warnings", p.get("warnings") == [], str(p.get("warnings")))
+
     # --- pages that are not switched on, and non-admins
     p = client.post("/api/admin/audit/%d/revert/preview/" % e_create, {"mode": "bogus"}, format="json").json()
     check("an unknown mode is refused", not p["allowed"])
     other = SysAuditLog.objects.create(
-        username="zz", action="update", entity="masters.ranks", record_id="1", changes={"rank_name": {"old": "a", "new": "b"}}
+        username="zz", action="update", entity="qhse.hazard_id_card", record_id="1", changes={"hazard_desc": {"old": "a", "new": "b"}}
     )
     p = preview(client, other.id, "after")
     check("a page that is not switched on cannot be reverted", not p["allowed"] and "not available" in (p.get("reason") or ""), str(p))
