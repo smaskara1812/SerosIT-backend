@@ -180,7 +180,7 @@ def run():
     MstRigSubtype.objects.create(rig_subtype_name="ZZ New Sub", rig_type_id=wpk, cr_user_id=1, cr_dt=tz.now() + timedelta(seconds=1))
     wh = history(client, "masters.rig_types", wpk)["entries"]
     p = preview(client, wh[-1]["id"], "before")
-    check("the preview lists records created after the change", p["allowed"] and p["warnings"] == [{"label": "Rig Subtype", "count": 1}], str(p.get("warnings")))
+    check("the preview lists records created after the change", p["allowed"] and p["warnings"] == [{"label": "Rig Subtype", "count": 1}], f"warnings={p.get('warnings')} problems={p.get('warnings_problems')} since={p.get('since')}")
     check("the preview says since when", bool(p.get("since")))
     p = preview(client, e_up1, "after")
     check("a preview with nothing depending on it has no warnings", p.get("warnings") == [], str(p.get("warnings")))

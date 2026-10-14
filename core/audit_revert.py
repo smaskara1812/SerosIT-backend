@@ -345,7 +345,7 @@ def _model_label(model):
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
 
 
-def _dependents_since(model, obj, since):
+def _dependents_since(model, obj, since, errors=None):
     """Records that point at `obj` and were created after `since`, as [{"label", "count"}]. They were
     entered while the newer values were in force and will now see the older ones. Best-effort: a model
     with no creation date cannot be counted this way and is left out; a failure never blocks a preview."""
@@ -363,7 +363,10 @@ def _dependents_since(model, obj, since):
             break
         try:
             n = related._default_manager.filter(**{rel.field.name: obj}, cr_dt__gte=since).count()
-        except Exception:
+        except Exception as exc:
+            # Never block a preview over this, but say what went wrong instead of hiding it.
+            if errors is not None:
+                errors.append(f"{related.__name__}: {type(exc).__name__}: {str(exc)[:200]}")
             continue
         if n:
             out.append({"label": _model_label(related), "count": n})
@@ -466,7 +469,10 @@ def _plan(entry_id, mode, request=None):
         # The change being undone is the first one after the chosen version.
         since = later[0].ts if later else None
         if since is not None:
-            plan["warnings"] = _dependents_since(model, obj, since)
+            problems = []
+            plan["warnings"] = _dependents_since(model, obj, since, problems)
+            if problems:
+                plan["warnings_problems"] = problems
             plan["since"] = since.strftime("%Y-%m-%d %H:%M")
         plan["allowed"] = True
         return plan, obj
