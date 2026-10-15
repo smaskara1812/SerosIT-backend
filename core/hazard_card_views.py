@@ -312,7 +312,9 @@ class HazardCardViewSet(BaseMasterViewSet):
             cr_dt=timezone.now(),
         )
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         data = serializer.validated_data
@@ -338,7 +340,9 @@ class HazardCardViewSet(BaseMasterViewSet):
             save_kwargs["reported_by_name"] = data.get("reported_by_name") if party != "EOSIL" else None
         instance = serializer.save(**save_kwargs)
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Soft delete — matches clsHazard_ID_Card's DeleteMe (which sets
@@ -349,12 +353,18 @@ class HazardCardViewSet(BaseMasterViewSet):
         if len(remarks) < 10:
             return Response({"error": "A reason for delete of at least 10 characters is required."}, status=400)
         uid = self._current_user_id(request)
+        old_snapshot = self._snapshot(instance)
         instance.marked_as_deleted = "Y"
         instance.deleted_remarks = remarks[:100]
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
-        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
+        # The card stays in the table, so this is a change to it (marked deleted, with the reason), not a
+        # removal: logged as an edit with the changed fields, which also lets an admin un-delete it from History.
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, f"{self.label_for(instance)} (marked deleted)",
+            self._diff(old_snapshot, self._snapshot(instance)) or None, target=instance,
+        )
         return Response(status=204)
 
     def _filter_summary(self, request):

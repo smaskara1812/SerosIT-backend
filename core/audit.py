@@ -75,11 +75,33 @@ def cascade_snapshots(instance):
     return out
 
 
+def before_delete(instance):
+    """Everything a delete will lose, taken before it happens: the row as it was and the rows that go
+    with it. Pass the result to log_deleted() once the delete has succeeded."""
+    return {
+        "table": instance._meta.db_table,
+        "pk": str(instance.pk),
+        "snap": snapshot(instance, full=True),
+        "children": cascade_snapshots(instance),
+    }
+
+
+def log_deleted(request, entity, label, pre):
+    """Write the delete (and the rows deleted with it) to the audit trail with full contents, so the
+    record can be put back from its history."""
+    record_action(
+        request, "delete", entity, pre["pk"], label, as_delete_changes(pre["snap"]), target=(pre["table"], pre["pk"])
+    )
+    for table, pk, child_label, snap in pre["children"]:
+        record_action(request, "delete", entity, pk, child_label, as_delete_changes(snap), target=(table, pk))
+
+
 _EXTRA_LABELS = {
     "auth": "Authentication",
     "admin.user_rights": "User Rights",
     "admin.user_management": "User Management",
     "admin.audit_trail": "Audit Trail",
+    "admin.history_settings": "History and Revert",
 }
 
 

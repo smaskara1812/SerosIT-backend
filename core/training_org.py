@@ -96,12 +96,10 @@ class TrainingOrgHdrViewSet(BaseMasterViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        count = instance.dtl_count
-        label, pk = self.label_for(instance), instance.pk
+        label = self.label_for(instance)
+        pre = _audit.before_delete(instance)  # the organisation and its trainers, for the audit trail
         instance.delete()
-        _audit.record_action(
-            request, "delete", self.entity_key, pk, label, {"trainers_deleted": {"old": count, "new": 0}} if count else None
-        )
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)
 
     @action(detail=False, methods=["get"], url_path="export")

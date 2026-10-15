@@ -247,10 +247,13 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         hdr = resolve_drilling_hdr(rig_id, report_date) if rig_id and report_date else None
         instance = serializer.save(cr_user_id=uid or 1, cr_dt=timezone.now(), drilling_hdr=hdr)
         recompute_dtl_totals(instance, uid)
+        instance.refresh_from_db()  # the roll-up changes columns in the database; log what is really stored
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
         from . import audit as _audit
 
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         old_snapshot = self._snapshot(serializer.instance)
@@ -268,10 +271,13 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         # its tot_* totals forever, stale and un-recomputable from the UI.
         if old_hdr_id and old_hdr_id != instance.drilling_hdr_id:
             recompute_hdr_totals(old_hdr_id)
+        instance.refresh_from_db()  # the roll-up changes columns in the database; log what is really stored
         changes = self._diff(old_snapshot, self._snapshot(instance))
         from . import audit as _audit
 
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Same reasoning as the Rig/Date-change case in perform_update
@@ -406,7 +412,9 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         from . import audit as _audit
 
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(request, action_label, self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            request, action_label, self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
         if notify_event:
             transaction.on_commit(lambda: self._notify_mail(instance, uid, notify_event))
         return Response(self.get_serializer(instance).data)

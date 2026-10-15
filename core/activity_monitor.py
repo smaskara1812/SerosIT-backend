@@ -222,7 +222,8 @@ class ActivityMonitorView(APIView):
             cr_dt=timezone.now(),
         )
         instance = ActivityMonitor.objects.select_related("activity", "rig").get(pk=instance.pk)
-        _audit.record_action(request, "create", self.entity_key, instance.pk, str(instance), None)
+        changes = {k: {"old": None, "new": v} for k, v in _audit.snapshot(instance).items() if v not in (None, "")}
+        _audit.record_action(request, "create", self.entity_key, instance.pk, str(instance), changes or None, target=instance)
         return Response(_row_dict(instance), status=201)
 
 
@@ -338,12 +339,7 @@ class ActivityMonitorDetailView(APIView):
                 create_next = True
 
         uid = _current_user_id(request)
-        old_snapshot = {
-            "scheduled_dt": m.scheduled_dt,
-            "planning_remark": m.planning_remark,
-            "completion_dt": m.completion_dt,
-            "completion_remark": m.completion_remark,
-        }
+        old_snapshot = _audit.snapshot(m)  # every column, so a change to any of them is on the record
 
         next_row = None
         with transaction.atomic():
@@ -368,26 +364,14 @@ class ActivityMonitorDetailView(APIView):
                 )
                 next_row = ActivityMonitor.objects.select_related("activity", "rig").get(pk=next_row.pk)
 
-            new_snapshot = {
-                "scheduled_dt": m.scheduled_dt,
-                "planning_remark": m.planning_remark,
-                "completion_dt": m.completion_dt,
-                "completion_remark": m.completion_remark,
-            }
-            changes = {
-                k: {"old": str(old_snapshot[k]) if old_snapshot[k] is not None else None, "new": str(v) if v is not None else None}
-                for k, v in new_snapshot.items()
-                if old_snapshot[k] != v
-            }
-            _audit.record_action(request, "update", self.entity_key, m.pk, str(m), changes or None)
+            new_snapshot = _audit.snapshot(m)
+            changes = {k: {"old": old_snapshot.get(k), "new": v} for k, v in new_snapshot.items() if old_snapshot.get(k) != v}
+            _audit.record_action(request, "update", self.entity_key, m.pk, str(m), changes or None, target=m)
             if next_row:
                 _audit.record_action(
-                    request,
-                    "create",
-                    self.entity_key,
-                    next_row.pk,
-                    str(next_row),
-                    {"spawned_from_activity_monitor_id": {"old": None, "new": m.pk}},
+                    request, "create", self.entity_key, next_row.pk, f"{next_row} (scheduled next from #{m.pk})",
+                    {k: {"old": None, "new": v} for k, v in _audit.snapshot(next_row).items() if v not in (None, "")},
+                    target=next_row,
                 )
 
         result = _row_dict(m)

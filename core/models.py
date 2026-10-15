@@ -1228,6 +1228,10 @@ class SysMenu(models.Model):
     export_available = models.BooleanField(default=False)
     upload_available = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    # History and revert for this page (see core/audit_revert.py), switched on or off by an App Admin
+    # under Admin > History and Revert. One setting for the whole system, not per user. The database
+    # default means a menu row inserted by a plain SQL seed starts switched off.
+    history_enabled = models.BooleanField(default=False, db_default=False)
     cr_dt = models.DateTimeField(auto_now_add=True)
     mod_dt = models.DateTimeField(auto_now=True)
 

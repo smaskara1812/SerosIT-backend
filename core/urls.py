@@ -541,6 +541,7 @@ urlpatterns = [
     path("admin/audit/facets/", views.admin_audit_facets_api, name="admin_audit_facets"),
     path("admin/audit/", views.admin_audit_list_api, name="admin_audit_list"),
     path("admin/audit/history/", views.admin_audit_history_api, name="admin_audit_history"),
+    path("admin/history-settings/", views.admin_history_settings_api, name="admin_history_settings"),
     path("admin/audit/<int:entry_id>/revert/preview/", views.admin_audit_revert_preview_api, name="admin_audit_revert_preview"),
     path("admin/audit/<int:entry_id>/revert/", views.admin_audit_revert_api, name="admin_audit_revert"),
     path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),

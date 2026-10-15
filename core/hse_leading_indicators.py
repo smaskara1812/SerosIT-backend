@@ -179,17 +179,16 @@ class LeadingIndicatorsViewSet(BaseMasterViewSet):
             created = _create_detail_rows(instance, uid)
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
         changes["detail_rows_created"] = {"old": None, "new": created}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        count = instance.dtl_count
-        label, pk = self.label_for(instance), instance.pk
+        label = self.label_for(instance)
+        pre = _audit.before_delete(instance)  # the report and its detail rows, for the audit trail
         instance.delete()
-        _audit.record_action(
-            request, "delete", self.entity_key, pk, label,
-            {"detail_rows_deleted": {"old": count, "new": 0}} if count else None,
-        )
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)
 
     @action(detail=False, methods=["get"], url_path="export")
@@ -297,17 +296,21 @@ class LeadingIndicatorsViewSet(BaseMasterViewSet):
             return Response({"error": "Please fix:\n" + "\n".join(errors)}, status=400)
 
         uid = self._current_user_id(request)
-        changes, now = {}, timezone.now()
+        updated, now = 0, timezone.now()
         with transaction.atomic():
             for row, label, values in updates:
                 diff = {f: (getattr(row, f), v) for f, v in values.items() if getattr(row, f) != v}
                 if not diff:
                     continue
-                for f, (old, new) in diff.items():
-                    changes[f"{label} — {f}"] = {"old": old, "new": new}
+                for f, (_old, new) in diff.items():
                     setattr(row, f, new)
                 row.mod_user_id, row.mod_dt = uid, now
                 row.save()
-        if changes:
-            _audit.record_action(request, "update", self.entity_key, hdr.pk, self.label_for(hdr), changes)
-        return Response({"updated": len({k.rsplit(' — ', 1)[0] for k in changes})})
+                # One entry per changed row, in that row's own table and in the usual {field: {old, new}}
+                # form, so each cell of the grid has a history of its own and can be restored.
+                _audit.record_action(
+                    request, "update", self.entity_key, row.pk, f"{self.label_for(hdr)} — {label}",
+                    {f: {"old": old, "new": new} for f, (old, new) in diff.items()}, target=row,
+                )
+                updated += 1
+        return Response({"updated": updated})

@@ -175,20 +175,24 @@ class CertToRankMappingViewSet(viewsets.ViewSet):
 
         uid, now = _uid(request), timezone.now()
         with transaction.atomic():
+            # One entry per row, in the row's own table and in the usual {field: {old, new}} form, so each
+            # mapping has a history of its own and can be restored.
             for cat, rank, active in new_rows:
-                CertToRankMapping.objects.create(
+                row = CertToRankMapping.objects.create(
                     cert=cert, fs_category_id=cat, rank_id=rank, cert_to_rank_mapping_active=active, cr_user_id=uid or 1, cr_dt=now
+                )
+                _audit.record_action(
+                    request, "create", ENTITY_KEY, row.pk, f"{TITLE} — {cert.cert_name} / {row.rank.rank_name}",
+                    {k: {"old": None, "new": v} for k, v in _audit.snapshot(row).items() if v not in (None, "")}, target=row,
                 )
             for m, active in changed:
                 old = m.cert_to_rank_mapping_active
                 m.cert_to_rank_mapping_active, m.mod_user_id, m.mod_dt = active, uid, now
                 m.save(update_fields=["cert_to_rank_mapping_active", "mod_user_id", "mod_dt"])
-        changes = {}
-        if new_rows:
-            changes["ranks_added"] = {"old": None, "new": len(new_rows)}
-        for m, active in changed:
-            changes[f"active: {m.rank.rank_name}"] = {"old": "Y" if active == "N" else "N", "new": active}
-        _audit.record_action(request, "update" if existing else "create", ENTITY_KEY, cert.pk, f"{TITLE} — {cert.cert_name}", changes or None)
+                _audit.record_action(
+                    request, "update", ENTITY_KEY, m.pk, f"{TITLE} — {cert.cert_name} / {m.rank.rank_name}",
+                    {"cert_to_rank_mapping_active": {"old": old, "new": active}}, target=m,
+                )
         return Response(_detail(cert))
 
     @action(detail=False, methods=["delete"], url_path=r"row/(?P<row_id>\d+)")
@@ -197,8 +201,9 @@ class CertToRankMappingViewSet(viewsets.ViewSet):
         if not m:
             return Response({"detail": "Not found."}, status=404)
         label = f"{TITLE} — {m.cert.cert_name} / {m.rank.rank_name}"
+        pre = _audit.before_delete(m)
         m.delete()
-        _audit.record_action(request, "delete", ENTITY_KEY, int(row_id), label)
+        _audit.log_deleted(request, ENTITY_KEY, label, pre)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=["get"], url_path="export")

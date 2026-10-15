@@ -1,5 +1,6 @@
 import json
 
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone as dj_timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -288,6 +289,7 @@ def admin_user_perms_save_api(request, user_id):
         user_id,
         login_id or profile.user_login_id,
         changes or None,
+        target=("mst_user", str(user_id)),
     )
 
     return Response({"success": True})
@@ -311,6 +313,7 @@ def admin_user_admin_toggle_api(request, user_id):
         user_id,
         profile.user_login_id,
         {"is_app_admin": {"old": was_admin, "new": profile.is_app_admin}},
+        target=("mst_user", str(user_id)),
     )
     return Response({"is_app_admin": profile.is_app_admin})
 
@@ -378,7 +381,13 @@ def admin_permission_preset_create_api(request):
         "admin.permission_presets",
         preset.preset_id,
         name,
-        {"menu_count": {"old": None, "new": len(cleaned)}},
+        {
+            "name": {"old": None, "new": name},
+            "description": {"old": None, "new": description or None},
+            "menu_count": {"old": None, "new": len(cleaned)},
+            "menus": {"old": None, "new": cleaned},  # which pages and which actions the preset grants
+        },
+        target=preset,
     )
     return Response({"id": preset.preset_id, "name": preset.name}, status=201)
 
@@ -391,8 +400,17 @@ def admin_permission_preset_delete_api(request, preset_id):
     except PermissionPreset.DoesNotExist:
         return Response(status=204)
     name = preset.name
+    before = {
+        "name": name,
+        "description": preset.description,
+        "menus": json.loads(preset.menus_json),  # what the preset granted, so the entry says what was removed
+    }
+    table = preset._meta.db_table
     preset.delete()
-    _audit.record_action(request, "delete", "admin.permission_presets", preset_id, name, None)
+    _audit.record_action(
+        request, "delete", "admin.permission_presets", preset_id, name,
+        {k: {"old": v, "new": None} for k, v in before.items()}, target=(table, preset_id),
+    )
     return Response(status=204)
 
 
@@ -469,11 +487,14 @@ def admin_audit_list_api(request):
             "source",
         )
     )
-    revertible = set(_audit_revert.revertible_entities())
     for r in rows:
         r["ts"] = r["ts"].strftime("%Y-%m-%d %H:%M:%S") if r["ts"] else ""
         # Offer History where there is a record to show it for and the page supports revert.
-        r["has_history"] = bool(r["entity"] in revertible and (r["target_pk"] or r["record_id"]) and r["kind"] == "change")
+        r["has_history"] = bool(
+            (r["target_pk"] or r["record_id"])
+            and r["kind"] == "change"
+            and _audit_revert.can_show_history(r["entity"], r["target_table"])
+        )
     return Response(
         {
             "results": rows,
@@ -491,10 +512,11 @@ def admin_audit_history_api(request):
     """Every logged change of one record, oldest first, with before/after for each."""
     entity = request.GET.get("entity", "").strip()
     record_id = request.GET.get("record_id", "").strip()
+    table = request.GET.get("table", "").strip()
     if not entity or not record_id:
         return Response({"error": "entity and record_id are required."}, status=400)
     try:
-        return Response(_audit_revert.history(entity, record_id))
+        return Response(_audit_revert.history(entity, record_id, table))
     except _audit_revert.RevertRefused as exc:
         return Response({"error": str(exc)}, status=400)
 
@@ -517,6 +539,61 @@ def admin_audit_revert_api(request, entry_id):
     except _audit_revert.RevertRefused as exc:
         return Response({"ok": False, "error": str(exc)}, status=400)
     return Response({"ok": True, **result})
+
+
+def _history_settings_rows():
+    from .models import SysMenu
+
+    supported = set(_audit_revert.supported_entities())
+    rows = (
+        SysMenu.objects.filter(is_active=True)
+        .filter(Q(menu_key__in=supported) | Q(add_available=True) | Q(edit_available=True) | Q(delete_available=True))
+        .order_by("group_order", "menu_order", "menu_label")
+    )
+    return [
+        {
+            "menu_key": r.menu_key,
+            "label": r.menu_label,
+            "group": r.menu_group,
+            "group_order": r.group_order,
+            "supported": r.menu_key in supported,
+            "enabled": bool(r.history_enabled and r.menu_key in supported),
+        }
+        for r in rows
+    ]
+
+
+@api_view(["GET", "PUT"])
+@permission_classes([IsAppAdmin])
+def admin_history_settings_api(request):
+    """Which pages have History and revert switched on. One setting for the whole system (it lives on
+    the page's sys_menu row). GET lists the pages; PUT {menu_keys: [...], enabled: true|false} changes
+    them. Only pages the code supports can be switched on."""
+    from .models import SysMenu
+
+    if request.method == "PUT":
+        keys = request.data.get("menu_keys") or []
+        enabled = request.data.get("enabled")
+        if not isinstance(keys, list) or not keys or not isinstance(enabled, bool):
+            return Response({"error": "menu_keys (a list) and enabled (true or false) are required."}, status=400)
+        supported = set(_audit_revert.supported_entities())
+        unsupported = [k for k in keys if k not in supported]
+        if unsupported:
+            return Response(
+                {"error": "History and revert are not supported yet for: " + ", ".join(unsupported)}, status=400
+            )
+        with transaction.atomic():
+            for row in SysMenu.objects.filter(menu_key__in=keys):
+                if row.history_enabled == enabled:
+                    continue
+                row.history_enabled = enabled
+                row.save(update_fields=["history_enabled", "mod_dt"])
+                _audit.record_action(
+                    request, "history_setting", "admin.history_settings", row.menu_key, row.menu_label,
+                    {"history_enabled": {"old": not enabled, "new": enabled}},
+                )
+        _audit_revert.invalidate_enabled()
+    return Response({"pages": _history_settings_rows()})
 
 
 # ── Email Log ─────────────────────────────────────────────────────────────
@@ -756,7 +833,7 @@ def admin_user_management_update_api(request, user_id):
     }
     changes = {k: {"old": before[k], "new": after[k]} for k in before if before[k] != after[k]}
     _audit.record_action(
-        request, "update", "admin.user_management", u.user_id, u.user_login_id, changes or None
+        request, "update", "admin.user_management", u.user_id, u.user_login_id, changes or None, target=u
     )
 
     return Response({"success": True})
@@ -817,7 +894,9 @@ def admin_user_management_create_api(request):
         }.items()
         if v not in (None, "")
     }
-    _audit.record_action(request, "create", "admin.user_management", u.user_id, u.user_login_id, changes)
+    if password:
+        changes["local_password"] = {"old": None, "new": True}  # that one was set, never what it is
+    _audit.record_action(request, "create", "admin.user_management", u.user_id, u.user_login_id, changes, target=u)
 
     return Response({"success": True, "user_id": u.user_id})
 
@@ -837,7 +916,10 @@ def admin_user_management_set_password_api(request, user_id):
     MstUserPassword.objects.update_or_create(
         user=u, defaults={"password_hash": _sha256(password)}
     )
-    _audit.record_action(request, "password_change", "admin.user_management", u.user_id, u.user_login_id)
+    _audit.record_action(
+        request, "password_change", "admin.user_management", u.user_id, u.user_login_id,
+        {"local_password": {"old": None, "new": "changed"}}, target=u,
+    )
     return Response({"success": True, "auth_type": "local"})
 
 
@@ -849,7 +931,10 @@ def admin_user_management_remove_password_api(request, user_id):
     except MstUser.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
     MstUserPassword.objects.filter(user_id=user_id).delete()
-    _audit.record_action(request, "password_change", "admin.user_management", u.user_id, u.user_login_id)
+    _audit.record_action(
+        request, "password_change", "admin.user_management", u.user_id, u.user_login_id,
+        {"local_password": {"old": "set", "new": None}}, target=u,
+    )
     return Response({"success": True, "auth_type": "ad"})
 
 
@@ -870,5 +955,6 @@ def admin_user_management_toggle_active_api(request, user_id):
         u.user_id,
         u.user_login_id,
         {"user_active": {"old": was_active, "new": not was_active}},
+        target=u,
     )
     return Response({"success": True, "active": u.user_active == "Y"})

@@ -11,12 +11,15 @@ Definitions, all over the chosen calendar year and the chosen rigs:
   Per operating hour        diesel consumed / operating hours in the same reports
   Per metre drilled         diesel consumed / metres drilled in the same reports (all days, not
                             only drilling days, so it includes fuel burnt while not drilling)
-  Per day                   total divided by the days that carry a figure above zero, not by all days
+  Per day                   total divided by the rig-days that carry a figure above zero, not by all
+                            of them. A rig-day is one rig's daily report for one day, so five rigs
+                            working the same day are five rig-days: across several rigs this is the
+                            average per rig per day, and the counts shown with it are rig-days
   Days with use            share of a rig's reports with a diesel (or water) figure above zero. The
                             daily report requires the figure, so a zero is a real entry (none used)
                             and is not treated as missing. It describes how often a rig uses water or
                             diesel; it is not a data-quality score.
-  Outlier day               a day whose diesel (or water) is at least OUTLIER_FACTOR times that
+  Outlier day               a rig-day whose diesel (or water) is at least OUTLIER_FACTOR times that
                             rig's median day in the year, and at least the minimum below; usually a
                             mistyped number, so each one links to its daily report.
 

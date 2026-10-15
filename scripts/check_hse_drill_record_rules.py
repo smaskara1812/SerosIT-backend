@@ -46,11 +46,21 @@ def keys(resp):
 def run():
     client = APIClient(HTTP_HOST="localhost")
     client.force_authenticate(get_user_model().objects.filter(is_superuser=True).first())
-    src = HseDrillRecordHdr.objects.order_by("-drill_dt").first()
+    # A rig whose latest drill is a few days old, so the day after it leaves room for the checks' records
+    # (a new drill may not be dated before the rig's latest one, nor in the future).
+    from django.db.models import Max
+
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=3)
+    latest = {
+        r["rig"]: r["m"]
+        for r in HseDrillRecordHdr.objects.values("rig").annotate(m=Max("drill_dt")).filter(m__lt=cutoff).order_by("-m")
+    }
+    if not latest:
+        raise SystemExit("No rig has a drill record older than three days to build the checks on.")
+    rig_id, latest_dt = next(iter(latest.items()))
+    src = HseDrillRecordHdr.objects.filter(rig_id=rig_id).order_by("-drill_dt").first()
     other_drill = MstHseDrill.objects.exclude(pk=src.hse_drill_1_id).first()
-    # A fixed past day: after every existing record of the rig (a new drill may not be dated
-    # before the rig's latest one) and before now, however many records the checks add.
-    start = datetime.datetime(2026, 6, 1, 8, 0)
+    start = datetime.datetime.combine(latest_dt.date() + datetime.timedelta(days=1), datetime.time(8, 0))
 
     def payload(**over):
         base = {

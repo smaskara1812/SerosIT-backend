@@ -27,6 +27,7 @@ CONTRACTORS = "/api/masters/contractors/"
 RIG_TYPES = "/api/masters/rig-types/"
 ENTITY = "masters.contractors"
 FAILED = []
+HOST = "localhost"  # the self-test sets this to the host its other checks use
 
 
 def check(name, ok, detail=""):
@@ -50,9 +51,15 @@ def revert(client, entry_id, mode, reason=""):
 
 
 def run():
-    client = APIClient(HTTP_HOST="localhost")
+    client = APIClient(HTTP_HOST=HOST)
     admin = get_user_model().objects.filter(is_superuser=True).first()
     client.force_authenticate(admin)
+    # The pilot pages are switched on in the database (Admin > History and Revert); this run is rolled back.
+    from core import audit_revert as ar
+    from core.models import SysMenu
+
+    SysMenu.objects.filter(menu_key__in=[ENTITY, "masters.rig_types"]).update(history_enabled=True)
+    ar.invalidate_enabled()
 
     # --- build a record with a known history: create, then two edits
     r = client.post(CONTRACTORS, {"contractor_name": "ZZ Revert One"}, format="json")
@@ -185,11 +192,73 @@ def run():
     p = preview(client, e_up1, "after")
     check("a preview with nothing depending on it has no warnings", p.get("warnings") == [], str(p.get("warnings")))
 
+    # --- the admin switch: History and revert per page, one setting for the whole system
+    settings = client.get("/api/admin/history-settings/").json()["pages"]
+    mine = next((x for x in settings if x["menu_key"] == ENTITY), None)
+    check("the settings list shows the page as supported and switched on", mine is not None and mine["supported"] and mine["enabled"], str(mine))
+    check("pages the code does not support yet are listed but cannot be enabled", any(not x["supported"] for x in settings))
+    r = client.put("/api/admin/history-settings/", {"menu_keys": ["qhse.mis_hse_return"], "enabled": True}, format="json")
+    check("an unsupported page cannot be switched on", r.status_code == 400, r.content[:160])
+    r = client.put("/api/admin/history-settings/", {"menu_keys": [ENTITY], "enabled": False}, format="json")
+    check("a page can be switched off", r.status_code == 200 and not next(x for x in r.json()["pages"] if x["menu_key"] == ENTITY)["enabled"], r.content[:160])
+    logged = SysAuditLog.objects.filter(action="history_setting", record_id=ENTITY).order_by("-id").first()
+    check("the change is written to the audit trail", logged is not None and logged.changes["history_enabled"]["new"] is False, str(logged and logged.changes))
+    r = client.get("/api/admin/audit/history/", {"entity": ENTITY, "record_id": pk})
+    check("switched off: the history is refused with a clear reason", r.status_code == 400 and "switched off" in r.json().get("error", ""), r.content[:200])
+    p = preview(client, e_up1, "after")
+    check("switched off: a revert is refused", not p["allowed"] and "switched off" in (p.get("reason") or ""), str(p))
+    code, res = revert(client, e_up1, "after")
+    check("switched off: nothing is restored", code == 400)
+    check("switched off: the page is missing from the revertible list", ENTITY not in client.get("/api/admin/audit/facets/").json()["revertible"])
+    rows = client.get("/api/admin/audit/", {"entity": ENTITY}).json()["results"]
+    check("switched off: the Audit Trail offers no History link, but still lists the changes", rows and not any(x["has_history"] for x in rows))
+    r = client.put("/api/admin/history-settings/", {"menu_keys": [ENTITY], "enabled": True}, format="json")
+    check("switched back on", r.status_code == 200 and next(x for x in r.json()["pages"] if x["menu_key"] == ENTITY)["enabled"])
+    check("switched on again: the history is back", len(history(client, ENTITY, pk)["entries"]) > 0)
+    plain_admin_client = None
+
+    # --- logging on the pages that are logged but not revertible: admin pages and the MIS return
+    r = client.post("/api/admin/permission-presets/create/", {"name": "ZZ Log Preset", "description": "check", "menus": {"masters.rigs": {"view": True, "add": True}}}, format="json")
+    check("a preset can be created", r.status_code == 201, r.content[:160])
+    pid = r.json().get("id")
+    made = SysAuditLog.objects.filter(entity="admin.permission_presets", action="create", record_id=str(pid)).first()
+    check("creating a preset records what it grants", made is not None and (made.changes or {}).get("menus", {}).get("new", {}).get("masters.rigs", {}).get("add") is True, str(made and made.changes))
+    r = client.delete(f"/api/admin/permission-presets/{pid}/delete/")
+    gone = SysAuditLog.objects.filter(entity="admin.permission_presets", action="delete", record_id=str(pid)).first()
+    check("deleting a preset records what it held", r.status_code == 204 and gone is not None and (gone.changes or {}).get("menus", {}).get("old", {}).get("masters.rigs", {}).get("view") is True, str(gone and gone.changes))
+    r = client.post("/api/admin/user-management/create/", {"login_id": "zz_log_user", "name": "ZZ Log User", "password": "x1y2z3", "user_type": "N"}, format="json")
+    uid_new = r.json().get("user_id") if r.status_code == 200 else None
+    made = SysAuditLog.objects.filter(entity="admin.user_management", action="create", record_id=str(uid_new)).first() if uid_new else None
+    check("creating a user is logged with the user row and that a password was set, never the password", made is not None and made.target_table == "mst_user" and (made.changes or {}).get("local_password", {}).get("new") is True and "x1y2z3" not in str(made.changes), str(made and made.changes))
+    if uid_new:
+        client.post(f"/api/admin/user-management/{uid_new}/set-password/", {"password": "p4ssw0rd!"}, format="json")
+        pw = SysAuditLog.objects.filter(entity="admin.user_management", action="password_change", record_id=str(uid_new)).order_by("-id").first()
+        check("a password change is logged without the password", pw is not None and "p4ssw0rd" not in str(pw.changes), str(pw and pw.changes))
+
+    from core.models import MisMonthlyHseReturnsHdr, MstCostCentre
+
+    cc = next((c for c in MstCostCentre.objects.order_by("pk")[:80] if not MisMonthlyHseReturnsHdr.objects.filter(cost_centre=c, report_month="2001-01-01").exists()
+               and not (c.rig_id and MisMonthlyHseReturnsHdr.objects.filter(rig_id=c.rig_id, report_month="2001-01-01").exists())), None)
+    if cc is None:
+        check("MIS return logging (needs a free cost centre)", False, "no cost centre without a January 2001 return")
+    else:
+        r = client.post("/api/qhse/mis-hse-return/", {"cost_centre": cc.pk, "report_no": "ZZ", "report_month": "2001-01"}, format="json")
+        check("a MIS return can be created", r.status_code == 201, r.content[:160])
+        hid = r.json().get("monthly_hse_returns_hdr_id") or r.json().get("id")
+        made = SysAuditLog.objects.filter(entity="qhse.mis_hse_return", action="create", target_table="mis_monthly_hse_returns_hdr", target_pk=str(hid)).first()
+        check("creating a MIS return records its values", made is not None and made.changes, str(made and made.changes))
+        r = client.put(f"/api/qhse/mis-hse-return/{hid}/incidents/", {"lti_free_days": 7}, format="json")
+        e = SysAuditLog.objects.filter(entity="qhse.mis_hse_return", action="update", target_pk=str(hid)).order_by("-id").first()
+        check("changing LTI free days records before and after", r.status_code == 200 and e is not None and "lti_free_days" in (e.changes or {}), str(e and e.changes))
+        r = client.delete(f"/api/qhse/mis-hse-return/{hid}/")
+        d = SysAuditLog.objects.filter(entity="qhse.mis_hse_return", action="delete", target_pk=str(hid)).first()
+        check("deleting a MIS return records the whole return", r.status_code == 204 and d is not None and (d.changes or {}).get("report_no", {}).get("old") == "ZZ", str(d and d.changes))
+
     # --- pages that are not switched on, and non-admins
     p = client.post("/api/admin/audit/%d/revert/preview/" % e_create, {"mode": "bogus"}, format="json").json()
     check("an unknown mode is refused", not p["allowed"])
     other = SysAuditLog.objects.create(
-        username="zz", action="update", entity="qhse.hazard_id_card", record_id="1", changes={"hazard_desc": {"old": "a", "new": "b"}}
+        username="zz", action="update", entity="qhse.mis_hse_return", record_id="1", changes={"remarks": {"old": "a", "new": "b"}}
     )
     p = preview(client, other.id, "after")
     check("a page that is not switched on cannot be reverted", not p["allowed"] and "not available" in (p.get("reason") or ""), str(p))
@@ -197,10 +266,11 @@ def run():
     p = preview(client, export_row.id, "after")
     check("an export entry cannot be reverted", not p["allowed"], str(p))
     plain = get_user_model().objects.create_user("zz_plain_user", password="x")
-    c2 = APIClient(HTTP_HOST="localhost")
+    c2 = APIClient(HTTP_HOST=HOST)
     c2.force_authenticate(plain)
     check("a non-admin cannot see history", c2.get("/api/admin/audit/history/", {"entity": ENTITY, "record_id": pk}).status_code == 403)
     check("a non-admin cannot revert", c2.post(f"/api/admin/audit/{e_up1}/revert/", {"mode": "after"}, format="json").status_code == 403)
+    check("a non-admin cannot read or change the settings", c2.get("/api/admin/history-settings/").status_code == 403 and c2.put("/api/admin/history-settings/", {"menu_keys": [ENTITY], "enabled": False}, format="json").status_code == 403)
 
     # --- the audit list carries the new fields and offers history on switched-on pages
     rows = client.get("/api/admin/audit/", {"entity": ENTITY}).json()["results"]
@@ -210,7 +280,7 @@ def run():
     check("the facets list which pages support revert", ENTITY in facets.get("revertible", []))
 
     # --- source tag
-    r = APIClient(HTTP_HOST="localhost", HTTP_X_AUDIT_SOURCE="selftest")
+    r = APIClient(HTTP_HOST=HOST, HTTP_X_AUDIT_SOURCE="selftest")
     r.force_authenticate(admin)
     r.post(CONTRACTORS, {"contractor_name": "ZZ Tagged"}, format="json")
     tagged = SysAuditLog.objects.filter(entity=ENTITY, action="create").order_by("-id").first()
@@ -218,14 +288,25 @@ def run():
 
 
 def main():
+    crashed = False
     try:
         with transaction.atomic():
             run()
             transaction.set_rollback(True)
+    except Exception:  # a crash is a failure, never a pass
+        import traceback
+
+        traceback.print_exc()
+        crashed = True
     finally:
         print()
-        print("FAILED: " + ", ".join(FAILED) if FAILED else "All checks passed.")
-    sys.exit(1 if FAILED else 0)
+        if FAILED:
+            print("FAILED: " + ", ".join(FAILED))
+        elif crashed:
+            print("FAILED: the script stopped with an error (see above).")
+        else:
+            print("All checks passed.")
+    sys.exit(1 if (FAILED or crashed) else 0)
 
 
 if __name__ == "__main__":

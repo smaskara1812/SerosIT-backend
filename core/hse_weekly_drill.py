@@ -151,15 +151,11 @@ class HseWeeklyDrillHdrViewSet(BaseMasterViewSet):
         return Response({"first_time": prev is None, "last_conducted_dt": prev.isoformat() if prev else None})
 
     def destroy(self, request, *args, **kwargs):
-        # Same single-audit-entry-with-cascade-count approach as the HSE
-        # Drill Record header's destroy().
         instance = self.get_object()
-        count = instance.dtl_count
-        label, pk = self.label_for(instance), instance.pk
+        label = self.label_for(instance)
+        pre = _audit.before_delete(instance)  # the header and its drills, for the audit trail
         instance.delete()
-        _audit.record_action(
-            request, "delete", self.entity_key, pk, label, {"drills_deleted": {"old": count, "new": 0}} if count else None
-        )
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)
 
 

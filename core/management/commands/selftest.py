@@ -108,13 +108,18 @@ def api_routes():
 
 
 class Command(BaseCommand):
-    help = "Read-only self test of the environment, every table and every GET API route."
+    help = (
+        "Self test of the environment, every table, every GET API route, and History and revert on every page "
+        "that supports it. Nothing is saved: the revert checks run inside transactions that are rolled back."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--fast", action="store_true", help="Skip the extra query variants")
         parser.add_argument("--only", default="", help="Only API routes containing this text")
         parser.add_argument("--user", default="", help="Login to run as (default: first active app admin)")
         parser.add_argument("--no-tables", action="store_true", help="Skip the table sweep")
+        parser.add_argument("--no-revert", action="store_true", help="Skip the History and revert checks (the slowest part)")
+        parser.add_argument("--revert-only", action="store_true", help="Run only the History and revert checks")
 
     # ── output helpers ──────────────────────────────────────────────────────
     def say(self, text="", style=None):
@@ -444,6 +449,48 @@ class Command(BaseCommand):
             else:
                 self.results.append(res)
 
+    # ── part 5: history and revert ───────────────────────────────────────────
+    def revert(self):
+        """The History and revert checks: first the general ones (the log, the admin switch, the safety rules,
+        who may do what), then every page that supports it is put through create, edit, restore, delete,
+        restore and undo. All of it runs inside transactions that are rolled back, so nothing is saved.
+        The checks themselves live in scripts/check_audit_revert.py and scripts/check_revert_masters.py, so
+        the self-test and those scripts cannot drift apart."""
+        import importlib.util
+        import os
+
+        from django.db import transaction
+
+        def load(name):
+            spec = importlib.util.spec_from_file_location(name, os.path.join(settings.BASE_DIR, "scripts", f"{name}.py"))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        host = next((h for h in settings.ALLOWED_HOSTS if h and h not in ("*",) and not h.startswith(".")), "localhost")
+
+        general = load("check_audit_revert")
+        general.HOST = host
+        t0 = time.time()
+        general.check = lambda name, ok, detail="": self.record(Result("revert", name, "ok" if ok else "fail", detail))
+        try:
+            with transaction.atomic():
+                try:
+                    general.run()
+                finally:
+                    transaction.set_rollback(True)
+        except Exception:
+            tb = traceback.format_exc()
+            self.record(Result("revert", "general History and revert checks", "fail", "stopped with an error: " + _error_line(tb), time.time() - t0, tb))
+
+        pages = load("check_revert_masters")
+        pages.HOST = host
+        from core import audit_revert
+
+        for status, key, detail in pages.run_pages(list(audit_revert.REVERTIBLE_ENTITIES), self.client):
+            self.record(Result("revert", key, {"ok": "ok", "warn": "warn", "fail": "fail"}[status], detail))
+        audit_revert.invalidate_enabled()
+
     # ── entry point ─────────────────────────────────────────────────────────
     def handle(self, *args, **opts):
         self.results, self.id_cache, self.skipped = [], {}, []
@@ -468,24 +515,36 @@ class Command(BaseCommand):
 
         self.say("== 1. Environment ==")
         self.environment()
-        if not opts["no_tables"]:
-            self.say("\n== 2. Tables ==")
-            self.tables()
-        if self.user:
-            self.say("\n== 3. API routes ==")
-            self.api(opts["only"], opts["fast"])
-            if not opts["only"]:
-                self.say("\n== 4. Reports and dashboards with filters ==")
-                self.scenarios()
+        if not opts["revert_only"]:
+            if not opts["no_tables"]:
+                self.say("\n== 2. Tables ==")
+                self.tables()
+            if self.user:
+                self.say("\n== 3. API routes ==")
+                self.api(opts["only"], opts["fast"])
+                if not opts["only"]:
+                    self.say("\n== 4. Reports and dashboards with filters ==")
+                    self.scenarios()
+        if self.user and not opts["no_revert"] and (opts["revert_only"] or not opts["only"]):
+            self.say("\n== 5. History and revert ==")
+            self.say("(each supported page: create, edit, restore, delete, restore, undo; rolled back, nothing is saved)")
+            self.revert()
 
         # ── summary + report ──
         fails = [r for r in self.results if r.status == "fail"]
         warns = [r for r in self.results if r.status == "warn"]
         api = [r for r in self.results if r.area == "api"]
+        revert = [r for r in self.results if r.area == "revert"]
         self.say("\n== Summary ==")
         if self.codes:
             self.say("HTTP answers: " + ", ".join(f"{c} x{n}" for c, n in sorted(self.codes.items())))
         self.say(f"Checked: {len(self.results)}   ok: {len(self.results) - len(fails) - len(warns)}   warnings: {len(warns)}   failures: {len(fails)}")
+        if revert:
+            on_pages = [r for r in revert if "." in r.name and " " not in r.name]
+            self.say(
+                f"History and revert: {len(revert)} checks ({len(on_pages)} pages), "
+                f"{sum(r.status == 'fail' for r in revert)} failures, {sum(r.status == 'warn' for r in revert)} warnings."
+            )
         if self.skipped:
             self.say(f"Skipped {len(self.skipped)} routes (several ids needed or no sample record).")
         slow = sorted((r for r in api), key=lambda r: -r.seconds)[:5]
@@ -502,7 +561,13 @@ class Command(BaseCommand):
         path = f"selftest_report_{started:%Y%m%d_%H%M%S}.txt"
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"SerosIT self test - {started:%Y-%m-%d %H:%M:%S}\nDatabase: {connection.vendor} / {connection.settings_dict['NAME']}\n")
-            f.write(f"Checked {len(self.results)}; warnings {len(warns)}; failures {len(fails)}\n\n")
+            f.write(f"Checked {len(self.results)}; warnings {len(warns)}; failures {len(fails)}\n")
+            if revert:
+                f.write(
+                    f"History and revert: {len(revert)} checks, {sum(r.status == 'fail' for r in revert)} failures, "
+                    f"{sum(r.status == 'warn' for r in revert)} warnings\n"
+                )
+            f.write("\n")
             for title, items in (("FAILURES", fails), ("WARNINGS", warns)):
                 f.write(f"===== {title} =====\n")
                 for r in items:

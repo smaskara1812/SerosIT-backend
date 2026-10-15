@@ -1850,7 +1850,7 @@ class RigCertScheduleSerializer(serializers.ModelSerializer):
         errors = {}
         scheduled = attrs.get("scheduled_dt", getattr(inst, "scheduled_dt", None))
         completed = attrs.get("completion_dt", getattr(inst, "completion_dt", None))
-        if scheduled and fields_changed(inst, attrs, "scheduled_dt") and scheduled < today:
+        if scheduled and fields_changed(inst, attrs, "scheduled_dt") and scheduled < today and not self.context.get("restoring"):
             errors["scheduled_dt"] = "Scheduled Date can't be in the past."
         if completed and fields_changed(inst, attrs, "completion_dt") and completed > today:
             errors["completion_dt"] = "Completion Date can't be in the future."

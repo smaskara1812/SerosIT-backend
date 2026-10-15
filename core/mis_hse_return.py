@@ -68,6 +68,22 @@ def _month_bounds(report_month):
     return report_month.replace(day=1), report_month.replace(day=last_day)
 
 
+def _log_row_created(request, section, hdr, row):
+    """A line of a section was added: logged as that row's own entry with its values."""
+    _audit.record_action(
+        request, "create", ENTITY_KEY, row.pk, f"{_hdr_label(hdr)} — {section}",
+        {k: {"old": None, "new": v} for k, v in _audit.snapshot(row).items() if v not in (None, "")}, target=row,
+    )
+
+
+def _log_row_changed(request, section, hdr, row, before):
+    """A line of a section was changed: logged as that row's own entry with what changed."""
+    after = _audit.snapshot(row)
+    changes = {k: {"old": before.get(k), "new": v} for k, v in after.items() if before.get(k) != v}
+    if changes:
+        _audit.record_action(request, "update", ENTITY_KEY, row.pk, f"{_hdr_label(hdr)} — {section}", changes, target=row)
+
+
 def _hdr_label(hdr):
     where = hdr.rig.rig_name if hdr.rig_id else hdr.cost_centre.cost_centre_name
     return f"{where} — {hdr.report_month:%b %Y}"
@@ -318,7 +334,10 @@ class MisHseReturnView(APIView):
             cr_user_id=uid or 1,
             cr_dt=now,
         )
-        _audit.record_action(request, "create", ENTITY_KEY, hdr.pk, _hdr_label(hdr), None)
+        _audit.record_action(
+            request, "create", ENTITY_KEY, hdr.pk, _hdr_label(hdr),
+            {k: {"old": None, "new": v} for k, v in _audit.snapshot(hdr).items() if v not in (None, "")}, target=hdr,
+        )
         return Response(_header_dict(hdr), status=status.HTTP_201_CREATED)
 
 
@@ -435,8 +454,9 @@ class MisHseReturnDetailView(APIView):
     def delete(self, request, pk):
         hdr = get_object_or_404(MisMonthlyHseReturnsHdr, pk=pk)
         label = _hdr_label(hdr)
+        pre = _audit.before_delete(hdr)  # the return and its four sets of lines, for the audit trail
         hdr.delete()
-        _audit.record_action(request, "delete", ENTITY_KEY, pk, label, None)
+        _audit.log_deleted(request, ENTITY_KEY, label, pre)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -456,16 +476,18 @@ class MisHseReturnManhoursView(APIView):
         for party_id, no_of_personnel, hours_worked in clean:
             obj = MisMonthlyHseManhours.objects.filter(hdr=hdr, party_id=party_id).first()
             if obj:
+                before = _audit.snapshot(obj)
                 obj.no_of_personnel = no_of_personnel
                 obj.hours_worked = hours_worked
                 obj.mod_user_id = uid
                 obj.mod_dt = now
                 obj.save()
+                _log_row_changed(request, "Manhours", hdr, obj, before)
             else:
-                MisMonthlyHseManhours.objects.create(
+                obj = MisMonthlyHseManhours.objects.create(
                     hdr=hdr, party_id=party_id, no_of_personnel=no_of_personnel, hours_worked=hours_worked, cr_user_id=uid or 1, cr_dt=now
                 )
-        _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Manhours", None)
+                _log_row_created(request, "Manhours", hdr, obj)
         return Response({"saved": True})
 
 
@@ -482,11 +504,16 @@ class MisHseReturnIncidentsView(APIView):
         days = _whole(request.data.get("lti_free_days"), "LTI Free Days", e, "lti_free_days")
         if e:
             return Response(e, status=status.HTTP_400_BAD_REQUEST)
+        before = _audit.snapshot(hdr)
         hdr.lti_free_days = days
         hdr.mod_user_id = _current_user_id(request)
         hdr.mod_dt = timezone.now()
         hdr.save(update_fields=["lti_free_days", "mod_user_id", "mod_dt"])
-        _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Incidents", None)
+        after = _audit.snapshot(hdr)
+        changes = {k: {"old": before.get(k), "new": v} for k, v in after.items() if before.get(k) != v}
+        _audit.record_action(
+            request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Incidents", changes or None, target=hdr
+        )
         return Response({"saved": True, "lti_free_days": hdr.lti_free_days})
 
 
@@ -506,14 +533,16 @@ class MisHseReturnMeetingsView(APIView):
             values = {"total_meetings": meetings, "total_seros_employees": staff, "total_contractors": contractors}
             obj = MisMonthlyHseMeetings.objects.filter(hdr=hdr, meeting_id=meeting_id).first()
             if obj:
+                before = _audit.snapshot(obj)
                 for k, v in values.items():
                     setattr(obj, k, v)
                 obj.mod_user_id = uid
                 obj.mod_dt = now
                 obj.save()
+                _log_row_changed(request, "Meetings", hdr, obj, before)
             else:
-                MisMonthlyHseMeetings.objects.create(hdr=hdr, meeting_id=meeting_id, cr_user_id=uid or 1, cr_dt=now, **values)
-        _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Meetings", None)
+                obj = MisMonthlyHseMeetings.objects.create(hdr=hdr, meeting_id=meeting_id, cr_user_id=uid or 1, cr_dt=now, **values)
+                _log_row_created(request, "Meetings", hdr, obj)
         return Response({"saved": True})
 
 
@@ -533,14 +562,16 @@ class MisHseReturnActivitiesView(APIView):
             values = {"total_activities": total, "seros_emp_count": staff, "contractor_count": contractors}
             obj = MisMonthlyHseActivities.objects.filter(hdr=hdr, activity_id=activity_id).first()
             if obj:
+                before = _audit.snapshot(obj)
                 for k, v in values.items():
                     setattr(obj, k, v)
                 obj.mod_user_id = uid
                 obj.mod_dt = now
                 obj.save()
+                _log_row_changed(request, "Activities", hdr, obj, before)
             else:
-                MisMonthlyHseActivities.objects.create(hdr=hdr, activity_id=activity_id, cr_user_id=uid or 1, cr_dt=now, **values)
-        _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Activities", None)
+                obj = MisMonthlyHseActivities.objects.create(hdr=hdr, activity_id=activity_id, cr_user_id=uid or 1, cr_dt=now, **values)
+                _log_row_created(request, "Activities", hdr, obj)
         return Response({"saved": True})
 
 
@@ -559,14 +590,16 @@ class MisHseReturnEnvironmentView(APIView):
         for consumable_id, total_quantity, remarks in clean:
             obj = MisMonthlyHseEnvironment.objects.filter(hdr=hdr, consumable_id=consumable_id).first()
             if obj:
+                before = _audit.snapshot(obj)
                 obj.total_quantity = total_quantity
                 obj.remarks = remarks
                 obj.mod_user_id = uid
                 obj.mod_dt = now
                 obj.save()
+                _log_row_changed(request, "Environment Reporting", hdr, obj, before)
             else:
-                MisMonthlyHseEnvironment.objects.create(
+                obj = MisMonthlyHseEnvironment.objects.create(
                     hdr=hdr, consumable_id=consumable_id, total_quantity=total_quantity, remarks=remarks, cr_user_id=uid or 1, cr_dt=now
                 )
-        _audit.record_action(request, "update", ENTITY_KEY, hdr.pk, f"{_hdr_label(hdr)} — Environment Reporting", None)
+                _log_row_created(request, "Environment Reporting", hdr, obj)
         return Response({"saved": True})

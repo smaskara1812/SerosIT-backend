@@ -363,7 +363,7 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
         )
         _audit.record_action(
             request, "update", self.entity_key, instance.pk, self.label_for(instance),
-            {"photo_added": {"old": None, "new": rel_path}},
+            {"photo_added": {"old": None, "new": rel_path}}, target=instance,
         )
         return Response(HseDrillRecordPhotoUploadSerializer(photo, context={"request": request}).data, status=201)
 
@@ -383,7 +383,7 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
             os.remove(abs_path)
         _audit.record_action(
             request, "update", self.entity_key, instance.pk, self.label_for(instance),
-            {"photo_removed": {"old": rel_path, "new": None}},
+            {"photo_removed": {"old": rel_path, "new": None}}, target=instance,
         )
         return Response(status=204)
 
@@ -407,35 +407,25 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
             cr_dt=timezone.now(),
         )
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         old_snapshot = self._snapshot(serializer.instance)
         uid = self._current_user_id(self.request)
         instance = serializer.save(mod_user_id=uid or 1, mod_dt=timezone.now())
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
-        # Reimplements BaseMasterViewSet.destroy() (rather than calling
-        # super() then logging again) so there's exactly one audit entry
-        # per delete, carrying the cascade counts — deleting a header
-        # CASCADEs to its five child tables (see those models' own
-        # docstrings), and the audit trail should record what else went
-        # with it, not just the header row, matching the legacy delete
-        # confirmation's own warning ("It will delete multiple data from
-        # other forms").
+        # One delete, logged with the header's full contents and every child row that goes with it (its five
+        # child tables are CASCADE), so the record can be put back from its history.
         instance = self.get_object()
-        cascade_counts = {
-            "events_deleted": instance.events_count,
-            "observations_deleted": instance.observations_count,
-            "improvements_deleted": instance.improvements_count,
-            "corrective_actions_deleted": instance.corrective_actions_count,
-            "photo_uploads_deleted": instance.photo_uploads_count,
-        }
         label = self.label_for(instance)
-        pk = instance.pk
+        pre = _audit.before_delete(instance)
         instance.delete()
-        changes = {k: {"old": v, "new": 0} for k, v in cascade_counts.items() if v}
-        _audit.record_action(request, "delete", self.entity_key, pk, label, changes or None)
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)

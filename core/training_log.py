@@ -169,12 +169,12 @@ class TrainingLogHdrViewSet(BaseMasterViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        count = instance.dtl_count
-        label, pk = self.label_for(instance), instance.pk
+        label = self.label_for(instance)
+        pre = _audit.before_delete(instance)  # the log and its trainees, for the audit trail
         for path in instance.dtls.exclude(certificate_path__isnull=True).values_list("certificate_path", flat=True):
             _remove_file(path)
         instance.delete()
-        _audit.record_action(request, "delete", self.entity_key, pk, label, {"trainees_deleted": {"old": count, "new": 0}} if count else None)
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)
 
     # ── lookups the form needs ────────────────────────────────────────────
@@ -332,7 +332,11 @@ class TrainingLogDtlSerializer(serializers.ModelSerializer):
         else:
             if issued_on and valid < issued_on:
                 errors["cert_valid_upto"] = "Valid Upto can't be before the Certificate Date."
-            elif (inst is None or "cert_valid_upto" in attrs and valid != inst.cert_valid_upto) and valid <= _today():
+            elif (
+                (inst is None or "cert_valid_upto" in attrs and valid != inst.cert_valid_upto)
+                and valid <= _today()
+                and not self.context.get("restoring")  # a certificate that has since expired can still be put back
+            ):
                 errors["cert_valid_upto"] = "Valid Upto must be after today."
         if errors:
             raise serializers.ValidationError(errors)
@@ -358,10 +362,13 @@ class TrainingLogDtlSerializer(serializers.ModelSerializer):
             emp = attrs.get("fs_emp")
             if emp is None:
                 raise serializers.ValidationError({"fs_emp": "Select the employee."})
-            status = FsEmpCurStatus.objects.filter(fs_emp=emp).select_related("fs_emp", "rank", "rank__vessel_dept", "fs_category").first()
-            if not status or status.rig_id != hdr.rig_id or status.fs_emp_active != "Y":
-                raise serializers.ValidationError({"fs_emp": "This employee isn't active on this rig."})
-            attrs.update(_staff_profile(status, hdr.training_dt))
+            if not self.context.get("restoring"):
+                # Putting an old trainee back is not judged by who is active on the rig today (a leaver must
+                # not block restoring the whole log), so these two steps are for new entries and edits only.
+                status = FsEmpCurStatus.objects.filter(fs_emp=emp).select_related("fs_emp", "rank", "rank__vessel_dept", "fs_category").first()
+                if not status or status.rig_id != hdr.rig_id or status.fs_emp_active != "Y":
+                    raise serializers.ValidationError({"fs_emp": "This employee isn't active on this rig."})
+                attrs.update(_staff_profile(status, hdr.training_dt))
         else:
             attrs["fs_emp"] = None
             errors = {}
@@ -437,7 +444,7 @@ class TrainingLogDtlViewSet(BaseMasterViewSet):
         instance.certificate_path = rel
         instance.mod_user_id, instance.mod_dt = self._current_user_id(request), timezone.now()
         instance.save(update_fields=["certificate_path", "mod_user_id", "mod_dt"])
-        _audit.record_action(request, "update", self.entity_key, instance.pk, self.label_for(instance), {"certificate_file": {"old": None, "new": rel}})
+        _audit.record_action(request, "update", self.entity_key, instance.pk, self.label_for(instance), {"certificate_file": {"old": None, "new": rel}}, target=instance)
         return Response(self.get_serializer(instance).data)
 
     def delete_photo(self, request, pk=None):
@@ -449,5 +456,5 @@ class TrainingLogDtlViewSet(BaseMasterViewSet):
         instance.certificate_path = None
         instance.mod_user_id, instance.mod_dt = self._current_user_id(request), timezone.now()
         instance.save(update_fields=["certificate_path", "mod_user_id", "mod_dt"])
-        _audit.record_action(request, "update", self.entity_key, instance.pk, self.label_for(instance), {"certificate_file": {"old": old, "new": None}})
+        _audit.record_action(request, "update", self.entity_key, instance.pk, self.label_for(instance), {"certificate_file": {"old": old, "new": None}}, target=instance)
         return Response(self.get_serializer(instance).data)

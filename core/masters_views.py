@@ -712,12 +712,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             )
 
         label = self.label_for(instance)
-        pk = instance.pk
-        table = instance._meta.db_table
-        # Taken before the delete: the full row (history shows it, revert puts it back), and every
-        # child row that will be deleted along with it (CASCADE relations).
-        before = _audit.snapshot(instance, full=True)
-        children = _audit.cascade_snapshots(instance)
+        pre = _audit.before_delete(instance)  # the row and the rows that go with it, for the audit trail
         try:
             instance.delete()
         except ProtectedError:
@@ -726,14 +721,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
                 {"error": "This record is still referenced elsewhere and can't be deleted."},
                 status=400,
             )
-        _audit.record_action(
-            request, "delete", self.entity_key, pk, label, _audit.as_delete_changes(before), target=(table, pk)
-        )
-        for child_table, child_pk, child_label, child_snap in children:
-            _audit.record_action(
-                request, "delete", self.entity_key, child_pk, child_label, _audit.as_delete_changes(child_snap),
-                target=(child_table, child_pk),
-            )
+        _audit.log_deleted(request, self.entity_key, label, pre)
         return Response(status=204)
 
 
@@ -1200,7 +1188,8 @@ class JobDescriptionHdrViewSet(BaseMasterViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, instance.jd_hdr_description, changes or None
+            self.request, "create", self.entity_key, instance.pk, instance.jd_hdr_description, changes or None,
+            target=instance,
         )
 
 
@@ -1249,7 +1238,8 @@ class TravelEligibilityViewSet(BaseMasterViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
     def perform_update(self, serializer):
@@ -1263,7 +1253,8 @@ class TravelEligibilityViewSet(BaseMasterViewSet):
         )
         changes = self._diff(old_snapshot, self._snapshot(instance))
         _audit.record_action(
-            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
 
@@ -1323,7 +1314,8 @@ class MstIndicatorTypeViewSet(BaseMasterViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
 
@@ -1353,7 +1345,8 @@ class MstIndicatorSubtypeViewSet(BaseMasterViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
 
 
@@ -1666,7 +1659,9 @@ class FsEmpCurStatusViewSet(BaseMasterViewSet):
     def perform_create(self, serializer):
         instance = serializer.save()
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         from django.utils import timezone
@@ -1675,7 +1670,7 @@ class FsEmpCurStatusViewSet(BaseMasterViewSet):
         instance = serializer.save(mod_user_id=self._current_user_id(self.request), mod_dt=timezone.now().date())
         _audit.record_action(
             self.request, "update", self.entity_key, instance.pk, self.label_for(instance),
-            self._diff(old, self._snapshot(instance)) or None,
+            self._diff(old, self._snapshot(instance)) or None, target=instance,
         )
 
 
@@ -2688,7 +2683,8 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
             k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")
         }
         _audit.record_action(
-            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
         self._sync_allocated(instance.it_asset_id)
 
@@ -2700,7 +2696,8 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
         changes = self._diff(old_snapshot, self._snapshot(instance))
         _audit.record_action(
-            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None,
+            target=instance,
         )
         self._sync_allocated(instance.it_asset_id)
 
@@ -2761,9 +2758,17 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
                 {"error": "it_asset_holder_from is required and must be a valid date."}, status=400
             )
         with transaction.atomic():
-            ItAssetHolder.objects.filter(it_asset_id=it_asset_id, it_asset_holder_to__isnull=True).update(
-                it_asset_holder_to=_close_datetime_for(effective_date)
-            )
+            # Close the ongoing row(s) one by one, so each closure is in the audit trail and can be
+            # reverted (a bulk update would change them without leaving any record).
+            closing = _close_datetime_for(effective_date)
+            for ongoing in ItAssetHolder.objects.filter(it_asset_id=it_asset_id, it_asset_holder_to__isnull=True):
+                before = self._snapshot(ongoing)
+                ongoing.it_asset_holder_to = closing
+                ongoing.save(update_fields=["it_asset_holder_to"])
+                _audit.record_action(
+                    request, "update", self.entity_key, ongoing.pk, f"{self.label_for(ongoing)} (closed by reassignment)",
+                    self._diff(before, self._snapshot(ongoing)) or None, target=ongoing,
+                )
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             instance = serializer.save()

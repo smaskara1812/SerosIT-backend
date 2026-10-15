@@ -186,7 +186,9 @@ class IncidentDetailViewSet(BaseMasterViewSet):
             cr_dt=timezone.now(),
         )
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
         transaction.on_commit(lambda: self._notify_create(instance, uid))
 
     def _notify_create(self, instance, actor_user_id):
@@ -217,7 +219,9 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         uid = self._current_user_id(self.request)
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Legacy soft-deletes (marked_as_deleted='Y', cascade-hides
@@ -226,12 +230,18 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         which this app's base destroy() doesn't do by default."""
         instance = self.get_object()
         uid = self._current_user_id(request)
+        old_snapshot = self._snapshot(instance)
         instance.marked_as_deleted = "Y"
         instance.deleted_remarks = request.data.get("deleted_remarks") or None
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
-        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
+        # The row stays in the table, so this is a change to it (marked deleted, with the reason): logged as an
+        # edit with the changed fields, which lets an admin un-delete it from History.
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, f"{self.label_for(instance)} (marked deleted)",
+            self._diff(old_snapshot, self._snapshot(instance)) or None, target=instance,
+        )
         return Response(status=204)
 
     @action(detail=True, methods=["post"], url_path="photos")
@@ -257,7 +267,7 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         )
         _audit.record_action(
             request, "update", self.entity_key, instance.pk, self.label_for(instance),
-            {"photo_added": {"old": None, "new": rel_path}},
+            {"photo_added": {"old": None, "new": rel_path}}, target=instance,
         )
         return Response(
             {"incident_photo_id": photo.incident_photo_id, "incident_photo_path": rel_path, "url": media_url(request, rel_path)},
@@ -286,7 +296,7 @@ class IncidentDetailViewSet(BaseMasterViewSet):
             os.remove(abs_path)
         _audit.record_action(
             request, "update", self.entity_key, instance.pk, self.label_for(instance),
-            {"photo_removed": {"old": rel_path, "new": None}},
+            {"photo_removed": {"old": rel_path, "new": None}}, target=instance,
         )
         return Response(status=204)
 
@@ -336,26 +346,36 @@ class IncidentRootCauseViewSet(BaseMasterViewSet):
         uid = self._current_user_id(self.request)
         instance = serializer.save(cr_user_id=uid or 1, cr_dt=timezone.now())
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         old_snapshot = self._snapshot(serializer.instance)
         uid = self._current_user_id(self.request)
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now())
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Legacy soft-deletes (marked_as_deleted='Y') rather than a real
         DELETE — same reasoning as IncidentDetailViewSet.destroy above."""
         instance = self.get_object()
         uid = self._current_user_id(request)
+        old_snapshot = self._snapshot(instance)
         instance.marked_as_deleted = "Y"
         instance.deleted_remarks = _delete_reason(request)
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
-        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
+        # The row stays in the table, so this is a change to it (marked deleted, with the reason): logged as an
+        # edit with the changed fields, which lets an admin un-delete it from History.
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, f"{self.label_for(instance)} (marked deleted)",
+            self._diff(old_snapshot, self._snapshot(instance)) or None, target=instance,
+        )
         return Response(status=204)
 
 
@@ -386,7 +406,9 @@ class IncidentActionViewSet(BaseMasterViewSet):
         uid = self._current_user_id(self.request)
         instance = serializer.save(action_status="OP", cr_user_id=uid or 1, cr_dt=timezone.now())
         changes = {k: {"old": None, "new": v} for k, v in self._snapshot(instance).items() if v not in (None, "")}
-        _audit.record_action(self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "create", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def perform_update(self, serializer):
         old_snapshot = self._snapshot(serializer.instance)
@@ -398,19 +420,27 @@ class IncidentActionViewSet(BaseMasterViewSet):
         status_override = {"action_status": "CL"} if completion_dt else {}
         instance = serializer.save(mod_user_id=uid, mod_dt=timezone.now(), **status_override)
         changes = self._diff(old_snapshot, self._snapshot(instance))
-        _audit.record_action(self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None)
+        _audit.record_action(
+            self.request, "update", self.entity_key, instance.pk, self.label_for(instance), changes or None, target=instance
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Legacy soft-deletes (marked_as_deleted='Y') rather than a real
         DELETE — same reasoning as IncidentDetailViewSet.destroy above."""
         instance = self.get_object()
         uid = self._current_user_id(request)
+        old_snapshot = self._snapshot(instance)
         instance.marked_as_deleted = "Y"
         instance.deleted_remarks = _delete_reason(request)
         instance.mod_user_id = uid
         instance.mod_dt = timezone.now()
         instance.save()
-        _audit.record_action(request, "delete", self.entity_key, instance.pk, self.label_for(instance), None)
+        # The row stays in the table, so this is a change to it (marked deleted, with the reason): logged as an
+        # edit with the changed fields, which lets an admin un-delete it from History.
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, f"{self.label_for(instance)} (marked deleted)",
+            self._diff(old_snapshot, self._snapshot(instance)) or None, target=instance,
+        )
         return Response(status=204)
 
 
