@@ -71,9 +71,12 @@ def rig_options_api(request):
         # empty list, so admin/testing accounts aren't locked out.
         my_rig_ids = None
     else:
-        my_rig_ids = MstUserRigMapping.objects.filter(
-            user_id=profile_user_id, mapping_to__isnull=True
-        ).values_list("rig_id", flat=True)
+        # No mapping rows at all means no restriction, same as the dashboards.
+        my_rig_ids = set(
+            MstUserRigMapping.objects.filter(user_id=profile_user_id, mapping_to__isnull=True).values_list(
+                "rig_id", flat=True
+            )
+        ) or None
 
     rig_ids = set(project_rig_ids)
     if my_rig_ids is not None:

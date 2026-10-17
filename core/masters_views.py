@@ -230,7 +230,8 @@ from .masters_serializers import (
     MstActivitySerializer,
 )
 from .media_uploads import media_url, save_media_file
-from .permissions import HasMenuPermission, HasMenuPermissionOrOpenRead
+from .lookup_consumers import LOOKUP_CONSUMERS
+from .permissions import HasLookupAccess, HasMenuPermission, HasMenuPermissionOrLookup, get_user_access, holds_a_right_on
 
 
 
@@ -260,10 +261,26 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
     the real column), and ?active=Y/N filters on active_field when set.
     """
 
-    permission_classes = [HasMenuPermission]
+    permission_classes = [HasMenuPermissionOrLookup]
     entity_key = None
     name_field = None
     reference_checks = []
+    # Lookup reads: a person who holds View, Add or Edit on a page that picks from this list (the pages are generated
+    # from the frontend into core/lookup_consumers.py) may list/retrieve it as a dropdown source, getting only its lookup
+    # fields (see lookup_field_names), even without View on this master. Nobody else may: being signed in is not enough.
+    # Set lookup = False for a master whose rows must stay private (job descriptions, ...); lookup_fields adds extra
+    # plain columns a dropdown needs beyond the id, the name, the active flag, foreign-key ids and derived names.
+    lookup = True
+    lookup_fields = ()
+    # A master with no single name column (a mapping, a rate table) can still serve a dropdown: set lookup_force = True
+    # and list the plain columns the dropdown needs in lookup_fields (ids, derived names and foreign keys come free).
+    lookup_force = False
+    # Rows that are not a plain master, or that hold more than a dropdown needs (an incident, an IT asset, a mail alert):
+    # lookup_strict = True returns exactly the columns in lookup_fields and nothing derived. Page data (a viewset whose
+    # menu key does not start with "masters.") only serves lookups when it declares lookup_fields.
+    lookup_strict = False
+    # Extra menu keys allowed to pick from this list, for a need the frontend does not show (normally leave empty).
+    lookup_consumers = ()
     # Set ONE of these when the master has an Active concept: active_field
     # for a real Y/N column, date_active_field for masters where "active"
     # is really "no end date yet, or one still in the future" (mapping_to /
@@ -558,6 +575,61 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             qs = qs.order_by(self.name_field)
         return qs
 
+    @classmethod
+    def is_lookup_capable(cls):
+        """Can this list serve lookup reads at all? A master table can (unless it opts out); page data only if it
+        declares the columns a dropdown may read."""
+        if not cls.lookup:
+            return False
+        if str(cls.entity_key or "").startswith("masters."):
+            name = cls.name_field
+            return bool(cls.lookup_force or (name and not str(name).endswith("_id")) or cls.lookup_fields)
+        return bool(cls.lookup_fields)
+
+    def lookup_consumer_keys(self):
+        return tuple(LOOKUP_CONSUMERS.get(self.entity_key, ())) + tuple(self.lookup_consumers)
+
+    def lookup_allowed(self):
+        """True for someone who holds View, Add or Edit on a page that picks from this list (and on no page, nothing)."""
+        if not self.is_lookup_capable():
+            return False
+        return holds_a_right_on(self.request, self.lookup_consumer_keys())
+
+    def _lookup_only(self):
+        """True for a person who may read this master only as a dropdown source (no View right on it)."""
+        cached = getattr(self, "_lookup_only_cache", None)
+        if cached is None:
+            user = getattr(self.request, "user", None)
+            if not user or not user.is_authenticated:
+                cached = False
+            else:
+                access = get_user_access(self.request)
+                cached = not access["is_admin"] and not access["perms"].get(self.entity_key, {}).get("view")
+            self._lookup_only_cache = cached
+        return cached
+
+    def lookup_field_names(self, serializer_fields):
+        """The columns a lookup read may return: the id, the name, the active flag, foreign-key ids (they only point
+        at other lookup rows), names derived from a related row, and anything the master lists in lookup_fields."""
+        model = self.get_queryset().model
+        allowed = {model._meta.pk.name, *self.lookup_fields}
+        for attr in (self.name_field, self.active_field, self.date_active_field):
+            if attr:
+                allowed.add(attr)
+        if self.lookup_strict or not str(self.entity_key or "").startswith("masters."):
+            return allowed  # exactly the declared columns, nothing derived
+        for name, f in serializer_fields.items():
+            try:
+                if model._meta.get_field(name).is_relation:
+                    allowed.add(name)
+                    continue
+            except Exception:
+                pass
+            source = getattr(f, "source", "") or ""
+            if getattr(f, "read_only", False) and ("." in source or name.endswith("_name")):
+                allowed.add(name)
+        return allowed
+
     def get_serializer(self, *args, **kwargs):
         """?fields=a,b,c trims the response to just those fields — opt-in,
         so nothing changes for callers that don't pass it. Exists because a
@@ -580,6 +652,13 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             allowed = {f.strip() for f in fields_param.split(",") if f.strip()}
             target = getattr(serializer, "child", serializer)
             for name in set(target.fields) - allowed:
+                target.fields.pop(name)
+        # A person reading this master only as a dropdown source never gets more than its lookup fields, whatever
+        # ?fields= asks for (or omits).
+        if self.action in ("list", "retrieve") and self._lookup_only():
+            target = getattr(serializer, "child", serializer)
+            keep = self.lookup_field_names(target.fields)
+            for name in set(target.fields) - keep:
                 target.fields.pop(name)
         return serializer
 
@@ -755,7 +834,6 @@ class MstBussCertIssueAuthorityViewSet(BaseMasterViewSet):
     queryset = MstBussCertIssueAuthority.objects.all()
     serializer_class = MstBussCertIssueAuthoritySerializer
     entity_key = "masters.buss_cert_issue_authorities"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "buss_cert_issue_authority"
     search_fields = ["buss_cert_issue_authority", "buss_cert_issue_abrv"]
 
@@ -764,7 +842,6 @@ class MstBussCertTypeViewSet(BaseMasterViewSet):
     queryset = MstBussCertType.objects.all()
     serializer_class = MstBussCertTypeSerializer
     entity_key = "masters.buss_cert_types"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "buss_cert_type"
     search_fields = ["buss_cert_type", "buss_cert_type_abrv"]
 
@@ -924,6 +1001,9 @@ class MailAlertDtlViewSet(BaseMasterViewSet):
     queryset = MailAlertDtl.objects.all()
     serializer_class = MailAlertDtlSerializer
     entity_key = "masters.mail_alerts"
+    # Picked from in the recipient and trigger forms.
+    lookup_strict = True
+    lookup_fields = ('alert_id', 'alert_name')
     name_field = "alert_name"
     active_field = "alert_active"
     reference_checks = [("recipients", "Alert Recipients")]
@@ -934,6 +1014,9 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     queryset = MailAlertToUser.objects.select_related("alert", "emp").all()
     serializer_class = MailAlertToUserSerializer
     entity_key = "masters.mail_alert_to_users"
+    # Picked from in the Mail Recipient Mapping form.
+    lookup_strict = True
+    lookup_fields = ('mail_alert_to_user_id', 'display_label', 'mail_alert_to_user_label')
     name_field = "email_addr"
     search_fields = ["email_addr", "alert__alert_name"]
     # Powers the Alert Details page's "View recipients" deep link
@@ -988,6 +1071,9 @@ class MstApprovalCodeViewSet(BaseMasterViewSet):
     queryset = MstApprovalCode.objects.all()
     serializer_class = MstApprovalCodeSerializer
     entity_key = "masters.approval_codes"
+    # Picked from in the Mail Recipient Mapping and Approver Mapping forms.
+    lookup_strict = True
+    lookup_fields = ('approval_code_id', 'approval_code', 'approval_code_name')
     name_field = "approval_code"
     active_field = "approval_active"
     reference_checks = [
@@ -1067,7 +1153,7 @@ class MstCompetencyViewSet(BaseMasterViewSet):
 class MstDepartmentViewSet(BaseMasterViewSet):
     """Promoted from a read-only dropdown source to a real delegable master
     (General section) — reads stay open to any authenticated user via
-    HasMenuPermissionOrOpenRead so the many forms that use Department as a
+    the lookup rule (any page that picks from it, see core/lookup_consumers.py) so the many forms that use Department as a
     lookup (Competency, User, IT Asset Holder, ...) keep working for
     everyone; only add/edit/delete now go through the real permission grid.
     List shows every row (active and inactive) like any other real master —
@@ -1077,7 +1163,6 @@ class MstDepartmentViewSet(BaseMasterViewSet):
     queryset = MstDepartment.objects.all()
     serializer_class = MstDepartmentSerializer
     entity_key = "masters.departments"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "dept_name"
     active_field = "dept_active"
     reference_checks = [
@@ -1165,6 +1250,7 @@ class JobDescriptionHdrViewSet(BaseMasterViewSet):
     )
     serializer_class = JobDescriptionHdrSerializer
     entity_key = "masters.job_descriptions"
+    lookup = False  # private rows: never offered as a dropdown source to people without View rights on this master
     name_field = "jd_hdr_description"
 
     def get_queryset(self):
@@ -1199,6 +1285,7 @@ class JobDescriptionDtlViewSet(BaseMasterViewSet):
     queryset = JobDescriptionDtl.objects.select_related("header")
     serializer_class = JobDescriptionDtlSerializer
     entity_key = "masters.job_descriptions"
+    lookup = False  # private rows: never offered as a dropdown source to people without View rights on this master
     name_field = "jd_dtl_description"
 
     def get_queryset(self):
@@ -1421,7 +1508,36 @@ class MstHazardTypeViewSet(BaseMasterViewSet):
     search_fields = ["haz_type_name"]
 
 
-class MstUserViewSet(viewsets.ReadOnlyModelViewSet):
+class LookupOnlyReadMixin:
+    """For the small read-only lists that have no page of their own (users, employees, currencies, ...). They are
+    readable only by an app admin or by someone who holds View, Add or Edit on a page that picks from them (generated
+    into core/lookup_consumers.py from the frontend), and only the columns in lookup_fields come back (every column
+    when it is empty)."""
+
+    permission_classes = [HasLookupAccess]
+    lookup = True
+    lookup_entity = None
+    lookup_fields = ()
+    lookup_consumers = ()
+
+    @classmethod
+    def is_lookup_capable(cls):
+        return bool(cls.lookup and cls.lookup_entity)
+
+    def lookup_allowed(self):
+        keys = tuple(LOOKUP_CONSUMERS.get(self.lookup_entity, ())) + tuple(self.lookup_consumers)
+        return holds_a_right_on(self.request, keys)
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        if self.lookup_fields:
+            target = getattr(serializer, "child", serializer)
+            for name in set(target.fields) - set(self.lookup_fields):
+                target.fields.pop(name)
+        return serializer
+
+
+class MstUserViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only lookup for other masters' User dropdowns. Not its own
     delegable master (User Management owns the real CRUD for Mst_User).
 
@@ -1433,7 +1549,8 @@ class MstUserViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = MstUser.objects.filter(user_active="Y").order_by("user_name")
     serializer_class = MstUserSerializer
-    permission_classes = [IsAuthenticated]
+    lookup_entity = "lookup.users"
+    lookup_fields = ('user_id', 'user_name', 'display_name', 'emp_id', 'user_login_id')
     search_fields = ["user_name", "user_login_id"]
 
     def get_queryset(self):
@@ -1446,14 +1563,15 @@ class MstUserViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class MstEmployeeViewSet(viewsets.ReadOnlyModelViewSet):
+class MstEmployeeViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only lookup for Document To Sign Mapping's Employee field.
     Mst_Employee is a ~28k-row HR roster this app doesn't own — always
     paginated/searched, never fetched in full like the small lookups."""
 
     queryset = MstEmployee.objects.filter(emp_active="Y").order_by("emp_sname", "emp_fname")
     serializer_class = MstEmployeeSerializer
-    permission_classes = [IsAuthenticated]
+    lookup_entity = "lookup.employees"
+    lookup_fields = ('emp_id', 'display_name', 'emp_fname', 'emp_mname', 'emp_sname')
     search_fields = ["emp_fname", "emp_mname", "emp_sname"]
 
 
@@ -1613,6 +1731,9 @@ class MstFsEmployeeViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstFsEmployeeSerializer
     entity_key = "masters.fs_employees"
+    # Picked from in the Employee Current Status form.
+    lookup_strict = True
+    lookup_fields = ('fs_emp_id', 'full_name', 'fs_emp_name')
     active_field = "fs_emp_active"
     filterable_fields = ["fs_category", "rank", "rig", "emp_type"]
     search_fields = ["fs_emp_fname", "fs_emp_mname", "fs_emp_lname", "fs_emp_staff_id", "rank__rank_name", "rig__rig_name"]
@@ -1745,7 +1866,6 @@ class MstWorkgroupViewSet(BaseMasterViewSet):
     queryset = MstWorkgroup.objects.all()
     serializer_class = MstWorkgroupSerializer
     entity_key = "masters.workgroups"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "workgroup_name"
     reference_checks = [("indicator_type_mappings", "Workgroup To Indicator Type Mapping")]
     search_fields = ["workgroup_name"]
@@ -1771,7 +1891,6 @@ class MstOrganisationalGrpViewSet(BaseMasterViewSet):
     queryset = MstOrganisationalGrp.objects.all()
     serializer_class = MstOrganisationalGrpSerializer
     entity_key = "masters.organisational_grps"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "organisational_grp_name"
     reference_checks = [("companies", "Companies")]
     search_fields = ["organisational_grp_name"]
@@ -1781,7 +1900,6 @@ class MstFinancialYearViewSet(BaseMasterViewSet):
     queryset = MstFinancialYear.objects.all()
     serializer_class = MstFinancialYearSerializer
     entity_key = "masters.financial_years"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "fin_year_text"
     reference_checks = [("incidents", "Incidents")]
     search_fields = ["fin_year_text", "fin_year_subtext", "assessment_year"]
@@ -1801,7 +1919,6 @@ class MstBusinessGrpViewSet(BaseMasterViewSet):
     queryset = MstBusinessGrp.objects.select_related("parent_business_grp").all()
     serializer_class = MstBusinessGrpSerializer
     entity_key = "masters.business_grps"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "business_grp_name"
     active_field = "business_grp_active"
     reference_checks = [("companies", "Companies"), ("children", "Business Groups")]
@@ -1817,7 +1934,6 @@ class MstCompanyViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstCompanySerializer
     entity_key = "masters.companies"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_name"
     active_field = "company_active"
     reference_checks = [
@@ -1986,10 +2102,10 @@ class MstLocationViewSet(BaseMasterViewSet):
         return qs.order_by(f"-{self.name_field}" if ordering == "-name" else self.name_field)
 
 
-class MstCurrencyViewSet(viewsets.ReadOnlyModelViewSet):
+class MstCurrencyViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
     queryset = MstCurrency.objects.filter(currency_active="Y").order_by("currency_name")
     serializer_class = MstCurrencySerializer
-    permission_classes = [IsAuthenticated]
+    lookup_entity = "lookup.currencies"
     search_fields = ["currency_name", "currency_abrv"]
 
 
@@ -2054,6 +2170,7 @@ class ProjectContractDtlViewSet(BaseMasterViewSet):
     queryset = ProjectContractDtl.objects.select_related("rig", "contract")
     serializer_class = ProjectContractDtlSerializer
     entity_key = "masters.project_contract"
+    lookup = False  # private rows: never offered as a dropdown source to people without View rights on this master
     name_field = "rig_active_from"
 
     def get_queryset(self):
@@ -2075,6 +2192,9 @@ class ProjectDrillingRateViewSet(BaseMasterViewSet):
     queryset = ProjectDrillingRate.objects.select_related("drilling_rate", "contract", "rig", "currency")
     serializer_class = ProjectDrillingRateSerializer
     entity_key = "masters.project_drilling_rates"
+    # The Drilling Report form's Rate picker reads this by contract and rig. Anyone entering a report needs the rate
+    # codes, not the amounts, so lookups return ids, foreign keys and derived names only.
+    lookup_force = True
     search_fields = ["contract__prj_contract_no", "rig__rig_name", "drilling_rate__rate_code"]
 
     # "Hardcoded IDS" per Drilling Report's own legacy note (same two SQL
@@ -2176,7 +2296,6 @@ class MstItAssetTypeViewSet(BaseMasterViewSet):
     queryset = MstItAssetType.objects.all()
     serializer_class = MstItAssetTypeSerializer
     entity_key = "masters.it_asset_types"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_type_name"
     reference_checks = [("subtypes", "IT Asset Subtypes"), ("assets", "IT Assets")]
     search_fields = ["it_asset_type_name"]
@@ -2189,7 +2308,6 @@ class MstItAssetSubtypeViewSet(BaseMasterViewSet):
     queryset = MstItAssetSubtype.objects.select_related("it_asset_type").all()
     serializer_class = MstItAssetSubtypeSerializer
     entity_key = "masters.it_asset_subtypes"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_subtype_name"
     reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
     search_fields = ["it_asset_subtype_name"]
@@ -2202,7 +2320,6 @@ class MstItAssetMfgViewSet(BaseMasterViewSet):
     queryset = MstItAssetMfg.objects.all()
     serializer_class = MstItAssetMfgSerializer
     entity_key = "masters.it_asset_mfgs"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_mfg_name"
     active_field = "it_asset_mfg_active"
     reference_checks = [("models", "IT Asset Models"), ("assets", "IT Assets")]
@@ -2221,7 +2338,6 @@ class MstItAssetModelViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstItAssetModelSerializer
     entity_key = "masters.it_asset_models"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_asset_model_name"
     active_field = "it_asset_model_active"
     reference_checks = [("assets", "IT Assets")]
@@ -2248,7 +2364,6 @@ class MstxVendorViewSet(BaseMasterViewSet):
     queryset = MstxVendor.objects.select_related("vendor_type", "country", "currency").all()
     serializer_class = MstxVendorSerializer
     entity_key = "masters.vendors"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vendor_name"
     active_field = "vendor_active"
     reference_checks = [("it_assets", "IT Assets")]
@@ -2259,7 +2374,6 @@ class MstVendorTypeViewSet(BaseMasterViewSet):
     queryset = MstVendorType.objects.all()
     serializer_class = MstVendorTypeSerializer
     entity_key = "masters.vendor_types"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "vendor_type_name"
     reference_checks = [("vendors", "Vendors")]
     search_fields = ["vendor_type_name"]
@@ -2269,7 +2383,6 @@ class MstItAccessoryViewSet(BaseMasterViewSet):
     queryset = MstItAccessory.objects.all()
     serializer_class = MstItAccessorySerializer
     entity_key = "masters.it_accessories"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "it_accessory_name"
     active_field = "it_accessory_active"
     reference_checks = [("holders", "IT Accessory Holders")]
@@ -2360,6 +2473,9 @@ class MstItAssetViewSet(BaseMasterViewSet):
     ).all()
     serializer_class = MstItAssetSerializer
     entity_key = "it_asset.it_assets"
+    # Picked from in the IT Asset Holder form.
+    lookup_strict = True
+    lookup_fields = ('it_asset_id', 'it_asset_sr_no', 'it_asset_tag', 'it_asset_sap_code', 'it_asset_model_name', 'it_asset_subtype_name', 'it_asset_mfg_name', 'it_asset_active', 'own_company_name')
     name_field = "it_asset_sr_no"
     reference_checks = [("holders", "IT Asset Holders")]
     search_fields = ["it_asset_sr_no", "it_asset_tag", "it_asset_sap_code"]
@@ -2515,18 +2631,18 @@ class MstItAssetViewSet(BaseMasterViewSet):
         return self._unretire(request, "it_asset_lost_dt", "lost")
 
 
-class MstCompanyLocTypeViewSet(viewsets.ReadOnlyModelViewSet):
+class MstCompanyLocTypeViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only lookup for Company Location's Type dropdown — writes go
     through Django admin only (see MstCompanyLocType's docstring), so
     there's no BaseMasterViewSet CRUD here, same pattern as Department."""
 
     queryset = MstCompanyLocType.objects.filter(company_loc_type_active="Y").order_by("company_loc_type_order")
     serializer_class = MstCompanyLocTypeSerializer
-    permission_classes = [IsAuthenticated]
+    lookup_entity = "lookup.company_loc_types"
     search_fields = ["company_loc_type_name", "company_loc_type_code"]
 
 
-class MstCompanyLocOwnershipViewSet(viewsets.ReadOnlyModelViewSet):
+class MstCompanyLocOwnershipViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only lookup for Company Location's Ownership dropdown — same
     admin-only-writes pattern as MstCompanyLocTypeViewSet above."""
 
@@ -2534,21 +2650,20 @@ class MstCompanyLocOwnershipViewSet(viewsets.ReadOnlyModelViewSet):
         "company_loc_ownership_order"
     )
     serializer_class = MstCompanyLocOwnershipSerializer
-    permission_classes = [IsAuthenticated]
+    lookup_entity = "lookup.company_loc_ownerships"
     search_fields = ["company_loc_ownership_name", "company_loc_ownership_code"]
 
 
 class MstCompanyLocationViewSet(BaseMasterViewSet):
     """Promoted from a read-only dropdown source to a real delegable master
     (General section) — reads stay open to any authenticated user via
-    HasMenuPermissionOrOpenRead so the IT Assets/IT Assets Holder forms'
+    the lookup rule (any page that picks from it) so the IT Assets/IT Assets Holder forms'
     Location picker keeps working for everyone, same as before; only
     add/edit/delete now go through the real per-user permission grid."""
 
     queryset = MstCompanyLocation.objects.select_related("location", "country").all()
     serializer_class = MstCompanyLocationSerializer
     entity_key = "masters.company_locations"
-    permission_classes = [HasMenuPermissionOrOpenRead]
     name_field = "company_loc_name"
     active_field = "company_loc_active"
     reference_checks = [("it_assets", "IT Assets"), ("it_asset_holdings", "IT Asset Holders")]
@@ -2604,6 +2719,9 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         "company_loc__company_loc_name",
     ]
     entity_key = "it_asset.it_asset_holders"
+    # The IT Assets page shows who holds an asset when it is being scrapped or marked lost.
+    lookup_strict = True
+    lookup_fields = ('it_asset_holder_id', 'it_asset', 'holder_user_name', 'emp_name', 'holder_name', 'it_asset_holder_from')
     export_computed = {
         "emp_name": (("emp_id", "emp__emp_fname", "emp__emp_mname", "emp__emp_sname"),
                      lambda eid, a, b, c: _join_names(a, b, c) if eid else ""),
@@ -2805,6 +2923,9 @@ class RigCertViewSet(BaseMasterViewSet):
     queryset = RigCert.objects.select_related("rig", "buss_cert", "buss_cert_issue_authority").all()
     serializer_class = RigCertSerializer
     entity_key = "qhse.rig_certificates"
+    # Picked from in the Rig Certificate Schedule form.
+    lookup_strict = True
+    lookup_fields = ('rig_cert_id', 'display_name', 'rig_name', 'rig_cert_display')
     search_fields = ["rig__rig_name", "buss_cert__buss_cert_name", "certificate_no"]
     reference_checks = [("schedules", "Rig Certificate Schedule")]
 
@@ -2877,6 +2998,9 @@ class MstActivityViewSet(BaseMasterViewSet):
     queryset = MstActivity.objects.all()
     serializer_class = MstActivitySerializer
     entity_key = "qhse.activities"
+    # Picked from in the Activity Monitor.
+    lookup_strict = True
+    lookup_fields = ('activity_id', 'activity_name', 'activity_location', 'activity_active')
     name_field = "activity_name"
     active_field = "activity_active"
     search_fields = ["activity_name"]

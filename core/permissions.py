@@ -161,23 +161,41 @@ class HasMenuPermission(BasePermission):
         return any(entity_perms.get(flag) for flag in flags)
 
 
-class HasMenuPermissionOrOpenRead(HasMenuPermission):
-    """Same real per-action enforcement as HasMenuPermission for writes, but
-    list/retrieve/check-delete are open to any authenticated user.
+LOOKUP_ACTIONS = ("list", "retrieve")
 
-    Reserved for lookup-only masters that exist purely as a dropdown source
-    for some other page's form (Rig Type, Company, IT Asset Mfg, ...) and
-    have no dedicated nav page of their own — which means no sys_menu row,
-    which means a User Rights admin has no row in the grid to grant a
-    non-admin explicit view rights on. Gating reads the same way as a real
-    delegable master would silently make these permanently unreachable for
-    every non-admin, however legitimately they're permitted on the page
-    that needs the dropdown — this happened for real (an IT Asset page's
-    lookups 403'd for a user who had view rights on the page itself)."""
+
+def holds_a_right_on(request, keys, flags=("view", "add", "edit")):
+    """True for an app admin, or for someone who holds one of `flags` on at least one of the menu keys."""
+    access = get_user_access(request)
+    return bool(access["is_admin"] or any(access["perms"].get(k, {}).get(f) for k in keys for f in flags))
+
+
+class HasMenuPermissionOrLookup(HasMenuPermission):
+    """HasMenuPermission, plus one rule: a person may READ a list as a dropdown source if they hold View, Add or Edit
+    on a page that picks from it (see core/lookup_consumers.py), even without View on the list's own page. They get
+    only its lookup columns. Nobody else gets it: being signed in is not enough.
+
+    Why: a master's page rights say who may open and edit that master. They must not decide who can pick from it
+    inside another page: a person who may add incidents needs the Rig list in the incident form whether or not they
+    were ever given the Rigs master. But a person with no page that uses the Rig list must not be able to read it
+    by typing the address. Writes, exports and full rows always need the matching right. A list can opt out with
+    `lookup = False`."""
+
+    def has_permission(self, request, view):
+        if super().has_permission(request, view):
+            return True
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return getattr(view, "action", None) in LOOKUP_ACTIONS and bool(getattr(view, "lookup_allowed", lambda: False)())
+
+
+class HasLookupAccess(BasePermission):
+    """For the small read-only lists that have no page of their own (users, employees, currencies, ...): readable
+    only by an app admin or by someone who holds View, Add or Edit on a page that picks from the list."""
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        if getattr(view, "action", None) in ("list", "retrieve", "check_delete"):
-            return True
-        return super().has_permission(request, view)
+        if getattr(view, "action", None) not in LOOKUP_ACTIONS:
+            return False
+        return bool(getattr(view, "lookup_allowed", lambda: False)())

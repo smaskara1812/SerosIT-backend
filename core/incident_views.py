@@ -100,6 +100,9 @@ class IncidentDetailViewSet(BaseMasterViewSet):
     ).prefetch_related("photos").exclude(marked_as_deleted="Y")
     serializer_class = IncidentDetailSerializer
     entity_key = "qhse.incident_details"
+    # The Incident Root Cause and Incident Actions forms pick an incident from this list.
+    lookup_strict = True
+    lookup_fields = ('incident_id', 'rig_incident_no', 'rig_name', 'incident_date')
     search_fields = [
         "incident_descr", "rig_incident_no", "emp_name", "comments",
         "reported_by", "well_no", "drilling_superintendent", "safety_officer",

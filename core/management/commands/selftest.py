@@ -119,6 +119,7 @@ class Command(BaseCommand):
         parser.add_argument("--user", default="", help="Login to run as (default: first active app admin)")
         parser.add_argument("--no-tables", action="store_true", help="Skip the table sweep")
         parser.add_argument("--no-revert", action="store_true", help="Skip the History and revert checks (the slowest part)")
+        parser.add_argument("--no-lookup", action="store_true", help="Skip the dropdown access checks")
         parser.add_argument("--revert-only", action="store_true", help="Run only the History and revert checks")
 
     # ── output helpers ──────────────────────────────────────────────────────
@@ -491,6 +492,33 @@ class Command(BaseCommand):
             self.record(Result("revert", key, {"ok": "ok", "warn": "warn", "fail": "fail"}[status], detail))
         audit_revert.invalidate_enabled()
 
+    # ── part 6: dropdown access ─────────────────────────────────────────────
+    def lookups(self):
+        """Dropdowns must work for people who were never given the master behind them, and one page must not need
+        another page's rights. The checks live in scripts/check_lookup_access.py and run inside a transaction that
+        is rolled back, so nothing is saved."""
+        import importlib.util
+        import os
+
+        from django.db import transaction
+
+        spec = importlib.util.spec_from_file_location("check_lookup_access", os.path.join(settings.BASE_DIR, "scripts", "check_lookup_access.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.HOST = next((h for h in settings.ALLOWED_HOSTS if h and h not in ("*",) and not h.startswith(".")), "localhost")
+        module._users.clear()
+        t0 = time.time()
+        module.check = lambda name, ok, detail="": self.record(Result("lookup", name, "ok" if ok else "fail", detail))
+        try:
+            with transaction.atomic():
+                try:
+                    module.run()
+                finally:
+                    transaction.set_rollback(True)
+        except Exception:
+            tb = traceback.format_exc()
+            self.record(Result("lookup", "dropdown access checks", "fail", "stopped with an error: " + _error_line(tb), time.time() - t0, tb))
+
     # ── entry point ─────────────────────────────────────────────────────────
     def handle(self, *args, **opts):
         self.results, self.id_cache, self.skipped = [], {}, []
@@ -529,12 +557,17 @@ class Command(BaseCommand):
             self.say("\n== 5. History and revert ==")
             self.say("(each supported page: create, edit, restore, delete, restore, undo; rolled back, nothing is saved)")
             self.revert()
+        if self.user and not opts["no_lookup"] and not opts["only"] and not opts["revert_only"]:
+            self.say("\n== 6. Dropdown access ==")
+            self.say("(someone with no rights opens every dropdown; one page must not need another page's rights; rolled back)")
+            self.lookups()
 
         # ── summary + report ──
         fails = [r for r in self.results if r.status == "fail"]
         warns = [r for r in self.results if r.status == "warn"]
         api = [r for r in self.results if r.area == "api"]
         revert = [r for r in self.results if r.area == "revert"]
+        lookup = [r for r in self.results if r.area == "lookup"]
         self.say("\n== Summary ==")
         if self.codes:
             self.say("HTTP answers: " + ", ".join(f"{c} x{n}" for c, n in sorted(self.codes.items())))
@@ -545,6 +578,8 @@ class Command(BaseCommand):
                 f"History and revert: {len(revert)} checks ({len(on_pages)} pages), "
                 f"{sum(r.status == 'fail' for r in revert)} failures, {sum(r.status == 'warn' for r in revert)} warnings."
             )
+        if lookup:
+            self.say(f"Dropdown access: {len(lookup)} checks, {sum(r.status == 'fail' for r in lookup)} failures.")
         if self.skipped:
             self.say(f"Skipped {len(self.skipped)} routes (several ids needed or no sample record).")
         slow = sorted((r for r in api), key=lambda r: -r.seconds)[:5]

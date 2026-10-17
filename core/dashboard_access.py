@@ -71,7 +71,8 @@ def same_day_in_year(year, today):
 
 def get_accessible_rig_ids(request):
     """None means "no filter, show every rig". Otherwise a set of rig_ids
-    to restrict a dashboard's queries to."""
+    to restrict a dashboard's queries to. A user with no User -> Rig Mapping
+    rows at all is not restricted (None); one mapped row narrows them to it."""
     if DASHBOARD_RIG_SCOPE_MODE == "none":
         return None
     if request.user.is_superuser:
@@ -82,6 +83,9 @@ def get_accessible_rig_ids(request):
         uid = UserProfile.objects.get(user_login_id=request.user.username).user_id
     except UserProfile.DoesNotExist:
         return set()
-    return set(
+    mapped = set(
         MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list("rig_id", flat=True)
     )
+    # A user with no mapping rows at all is not restricted: they see every rig. Mapping a user to even one rig
+    # is what narrows them to that set.
+    return mapped or None

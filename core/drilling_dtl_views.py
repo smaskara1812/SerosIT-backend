@@ -34,13 +34,17 @@ def my_rigs_api(request):
             uid = UserProfile.objects.get(user_login_id=request.user.username).user_id
         except UserProfile.DoesNotExist:
             uid = None
-        if uid is None:
-            rigs = MstRig.objects.none()
-        else:
-            rig_ids = MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list(
-                "rig_id", flat=True
+        rig_ids = set()
+        if uid is not None:
+            rig_ids = set(
+                MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list("rig_id", flat=True)
             )
-            rigs = MstRig.objects.filter(rig_id__in=set(rig_ids)).order_by("rig_name")
+        if rig_ids:
+            rigs = MstRig.objects.filter(rig_id__in=rig_ids).order_by("rig_name")
+        elif uid is None:
+            rigs = MstRig.objects.none()
+        else:  # no mapping rows at all: not restricted
+            rigs = MstRig.objects.filter(rig_active="Y").order_by("rig_name")
     return Response([{"rig_id": r.rig_id, "rig_name": r.rig_name} for r in rigs])
 
 
@@ -144,6 +148,8 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         mapped_rig_ids = set(
             MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list("rig_id", flat=True)
         )
+        if not mapped_rig_ids:
+            return None  # no mapping rows at all: not restricted
         approver_rig_ids = set(
             ApproverMappingDtl.objects.filter(
                 approver_mapping__approval_code__approval_code=APPROVAL_CODE,
