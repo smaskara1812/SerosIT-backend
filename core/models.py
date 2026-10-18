@@ -4624,3 +4624,29 @@ class Notice(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class BannerEvent(models.Model):
+    """A custom look for the home page banner on chosen days (Admin > Banner Events). `design` is a small JSON document
+    (colours, words, layout, pattern, contour lines) validated by core/banner_events.py and drawn by the frontend; it is
+    never HTML. Dates are inclusive and naive IST like everything else; repeat_yearly makes it return every year."""
+
+    event_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=80)
+    starts_on = models.DateField()
+    ends_on = models.DateField()
+    repeat_yearly = models.CharField(max_length=1, default="N")
+    priority = models.IntegerField(default=0)  # the higher one wins when two events cover the same day
+    is_published = models.CharField(max_length=1, default="Y")  # N = a draft: saved, never shown to everyone
+    design = PortableJSONField(default=dict)
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "banner_event"
+
+    def __str__(self):
+        return self.name
