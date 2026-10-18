@@ -4592,3 +4592,35 @@ class HseTrainingLogDtl(models.Model):
 
     class Meta:
         db_table = "hse_training_log_dtl"
+
+
+class Notice(models.Model):
+    """A notice for the home page banner. Posted from Admin > Notice Board by anyone holding that page's rights, shown
+    to every signed-in user between starts_at and ends_at (naive IST like every other datetime here). The end is
+    required, so a notice can never sit there for ever."""
+
+    KIND_CHOICES = [("I", "Info"), ("A", "Important"), ("S", "Safety"), ("C", "Celebration")]
+
+    notice_id = models.AutoField(primary_key=True)
+    title = models.CharField(max_length=80)
+    message = models.CharField(max_length=300)
+    kind = models.CharField(max_length=1, choices=KIND_CHOICES, default="I")
+    link_label = models.CharField(max_length=30, null=True, blank=True)
+    link_url = models.CharField(max_length=300, null=True, blank=True)
+    is_pinned = models.CharField(max_length=1, default="N")
+    is_published = models.CharField(max_length=1, default="Y")  # N = a draft: saved, never shown
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    # Who posted it, as text. cr_user_id cannot say: a Django superuser has no user profile, and the shared create code
+    # then stamps user 1, which would show as someone else.
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "notice_board"
+
+    def __str__(self):
+        return self.title

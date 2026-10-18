@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from .notice_board import NoticeViewSet, live_notices_api
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
     IncidentActionViewSet,
@@ -71,6 +72,7 @@ from .mis_hse_return import (
 from .mis_hse_review import MisHseReviewMetaView, MisHseReviewPrintView, MisHseReviewView, ProjectRigsView
 
 router = DefaultRouter()
+router.register("admin/notices", NoticeViewSet, basename="admin-notice")
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
 router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident")
 router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename="qhse-incident-root-cause")
@@ -544,6 +546,7 @@ urlpatterns = [
     path("admin/history-settings/", views.admin_history_settings_api, name="admin_history_settings"),
     path("admin/audit/<int:entry_id>/revert/preview/", views.admin_audit_revert_preview_api, name="admin_audit_revert_preview"),
     path("admin/audit/<int:entry_id>/revert/", views.admin_audit_revert_api, name="admin_audit_revert"),
+    path("notices/live/", live_notices_api, name="notices_live"),
     path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),
     path("admin/email-log/", views.admin_email_log_list_api, name="admin_email_log_list"),
     # User Management

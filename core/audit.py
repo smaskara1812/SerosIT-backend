@@ -101,6 +101,7 @@ _EXTRA_LABELS = {
     "admin.user_rights": "User Rights",
     "admin.user_management": "User Management",
     "admin.audit_trail": "Audit Trail",
+    "admin.notice_board": "Notice Board",
     "admin.history_settings": "History and Revert",
 }
 
