@@ -40,12 +40,13 @@ SHAPES = (
 )
 TEXT_KEYS = ("text", "size", "bold", "font", "spacing")  # only on a text layer
 LAYER_KEYS = ("id", "type", "x", "y", "w", "h", "rot", "fill", "opacity", "n", "p", "fill2", "grad", "stroke", "sw") + TEXT_KEYS
-FONTS = ("sans", "serif")
+FONT_KEYS = ("default", "poppins", "montserrat", "lora", "playfair", "cinzel", "yatra", "bebas", "pacifico", "caveat", "baloo")
+FONTS = ("sans", "serif") + FONT_KEYS[1:]  # a text label's font: the two older ones plus the bundled fonts
 
 DEFAULT_DESIGN = {
     "v": 1,
     "layout": "standard",
-    "text": {"greeting": "", "message": "", "caption": "", "color": None},
+    "text": {"greeting": "", "message": "", "caption": "", "color": None, "titleFont": "default", "bodyFont": "default"},
     "background": {"type": "gradient", "colors": ["#1c448a", "#17356f", "#0f2650"], "angle": 118},
     "pattern": {"type": "none", "color": "#ffffff", "opacity": 0.12, "scale": 1.0},
     "contours": {"on": True, "color": "#ffffff", "opacity": 0.13, "density": 2},
@@ -126,12 +127,14 @@ def clean_design(raw):
     d["layout"] = layout
 
     t = raw.get("text", {})
-    _only_keys(t, ("greeting", "message", "caption", "color"), "text")
+    _only_keys(t, ("greeting", "message", "caption", "color", "titleFont", "bodyFont"), "text")
     d["text"] = {
         "greeting": _text(t.get("greeting"), "greeting", 80),
         "message": _text(t.get("message"), "message", 200),
         "caption": _text(t.get("caption"), "caption", 40),
         "color": _hex(t.get("color"), "text colour", allow_none=True),
+        "titleFont": _font_key(t.get("titleFont", "default"), "greeting font"),
+        "bodyFont": _font_key(t.get("bodyFont", "default"), "message font"),
     }
 
     b = raw.get("background", DEFAULT_DESIGN["background"])
@@ -189,6 +192,12 @@ def clean_design(raw):
         _err("layers", f"must be a list of at most {MAX_LAYERS} shapes")
     d["layers"] = [_layer(l, i) for i, l in enumerate(layers)]
     return d
+
+
+def _font_key(value, what):
+    if value not in FONT_KEYS:
+        _err("text", f"{what} must be one of " + ", ".join(FONT_KEYS))
+    return value
 
 
 def _edge(e, i):
@@ -249,7 +258,7 @@ def _layer(l, i):
             _err(path, "bold must be true or false")
         out["bold"] = l.get("bold", True)
         if l.get("font", "sans") not in FONTS:
-            _err(path, "font must be sans or serif")
+            _err(path, "font is not one of the available fonts")
         out["font"] = l.get("font", "sans")
         out["spacing"] = _num(l.get("spacing", 0), f"{path} letter spacing", 0, 30)
     elif any(k in l for k in TEXT_KEYS):
