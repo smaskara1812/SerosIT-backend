@@ -29,10 +29,12 @@ HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 LAYOUTS = ("standard", "mirrored", "centred")
 BACKGROUNDS = ("solid", "gradient")
 PATTERNS = ("none", "dots", "stripes", "waves", "grid", "chevrons", "sunburst", "topo")
-MAX_LAYERS = 60
+MAX_LAYERS = 120
+EDGE_TYPES = ("garland", "toran", "bunting", "lights", "lanterns", "pearls", "icicles", "zigzag", "scallop", "waves", "stars", "diamonds", "bands")
+MAX_EDGES = 2
 SHAPES = (
     "rect", "circle", "ring", "triangle", "diamond", "star", "sparkle", "heart", "moon", "drop", "leaf", "wave", "line", "rig", "ship",
-    "tree", "cloud", "sun", "snowflake", "helicopter", "hardhat", "drillbit", "wrench", "gear", "cone", "diya", "kite", "balloon", "flag", "spectacles",
+    "tree", "broadtree", "cloud", "sun", "snowflake", "helicopter", "hardhat", "arthat", "artcone", "artgear", "artclipboard", "artgoggles", "artwoman", "artlotus", "artdraft", "artcircuit", "artearth", "artplant", "artlabour", "artsite", "artskyline", "artcharkha", "artdiwali", "artgulalyellow", "artgulalteal", "artgulalpurple", "artgulalpink", "artgulalgreen", "artgulalred", "shield", "hardhatridge", "hardhatshade", "conebands", "coneshade", "drillbit", "wrench", "gear", "cone", "diya", "kite", "balloon", "flag", "spectacles",
     "chakra", "indiagate", "redfort", "tajmahal", "qutub", "jet", "swoosh", "book", "mosque", "lantern", "splash", "burst", "temple", "bauble", "holly", "flame", "bananaleaf", "ribbon", "bow", "modak", "flower", "bird", "hand",
     "text",
 )
@@ -49,6 +51,9 @@ DEFAULT_DESIGN = {
     "contours": {"on": True, "color": "#ffffff", "opacity": 0.13, "density": 2},
     "showLastSignIn": True,
     "search": {"tint": "#ffffff"},
+    "notice": {"x": None, "y": 0},
+    "frame": {"mode": "auto", "color": None},
+    "edges": [],
     "layers": [],
 }
 
@@ -154,6 +159,26 @@ def clean_design(raw):
     _only_keys(sr, ("tint",), "search")
     d["search"] = {"tint": _light_tint(sr.get("tint", "#ffffff"), "search box tint")}
 
+    nt = raw.get("notice", DEFAULT_DESIGN["notice"])
+    _only_keys(nt, ("x", "y", "at"), "notice")  # `at` is the older top / middle / bottom form, kept so saved designs still open
+    y = {"top": 0, "middle": 50, "bottom": 100}.get(nt.get("at"), 0) if "y" not in nt else nt["y"]
+    if "at" in nt and nt["at"] not in ("top", "middle", "bottom"):
+        _err("notice", "position must be top, middle or bottom")
+    x = nt.get("x")
+    d["notice"] = {"x": None if x is None else _num(x, "notice across", 0, 100), "y": _num(y, "notice up and down", 0, 100)}
+
+    fr = raw.get("frame", DEFAULT_DESIGN["frame"])
+    _only_keys(fr, ("mode", "color"), "frame")
+    if fr.get("mode", "auto") not in ("auto", "on", "off"):
+        _err("frame", "mode must be auto, on or off")
+    fc = fr.get("color")
+    d["frame"] = {"mode": fr.get("mode", "auto"), "color": None if fc is None else _hex(fc, "frame colour")}
+
+    edges = raw.get("edges", [])
+    if not isinstance(edges, list) or len(edges) > MAX_EDGES:
+        _err("edges", f"must be a list of at most {MAX_EDGES} border strips")
+    d["edges"] = [_edge(e, i) for i, e in enumerate(edges)]
+
     show = raw.get("showLastSignIn", True)
     if not isinstance(show, bool):
         _err("showLastSignIn", "must be true or false")
@@ -164,6 +189,26 @@ def clean_design(raw):
         _err("layers", f"must be a list of at most {MAX_LAYERS} shapes")
     d["layers"] = [_layer(l, i) for i, l in enumerate(layers)]
     return d
+
+
+def _edge(e, i):
+    path = f"border strip {i + 1}"
+    _only_keys(e, ("edge", "type", "size", "colors", "opacity", "spacing"), path)
+    if e.get("edge") not in ("top", "bottom"):
+        _err(path, "must sit on the top or the bottom")
+    if e.get("type") not in EDGE_TYPES:
+        _err(path, "is not one of the built-in kinds")
+    colors = e.get("colors")
+    if not isinstance(colors, list) or not 1 <= len(colors) <= 4:
+        _err(path, "needs one to four colours")
+    return {
+        "edge": e["edge"],
+        "type": e["type"],
+        "size": _num(e.get("size", 44), f"{path} thickness", 16, 90),
+        "colors": [_hex(c, f"{path} colour") for c in colors],
+        "opacity": _num(e.get("opacity", 1), f"{path} strength", 0, 1),
+        "spacing": _num(e.get("spacing", 1), f"{path} spacing", 0.6, 1.8),
+    }
 
 
 def _layer(l, i):
