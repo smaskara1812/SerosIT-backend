@@ -57,7 +57,6 @@ from .models import (
     MstCostCentreType,
     MstDepartment,
     MstEmailNotificationType,
-    MstEmployee,
     MstFsCategory,
     MstHazardType,
     MstHseActivity,
@@ -670,25 +669,11 @@ class MstUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MstUser
-        # emp_id exposed (the raw FK column, not a nested object) so the IT
-        # Asset Holder form's Employee picker can search this — real user
-        # accounts, not the whole 28k-row HR roster — while still writing
-        # to ItAssetHolder.emp_id, which targets Mst_Employee same as ever.
+        # emp_id is the legacy employee number this user came from (a plain number, nothing is linked to it any more).
         fields = ["user_id", "user_name", "user_login_id", "emp_id", "display_name", "user_email"]
 
     def get_display_name(self, obj):
         return f"{obj.user_name} ({obj.user_login_id})"
-
-
-class MstEmployeeSerializer(serializers.ModelSerializer):
-    display_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = MstEmployee
-        fields = ["emp_id", "emp_fname", "emp_mname", "emp_sname", "display_name"]
-
-    def get_display_name(self, obj):
-        return str(obj)
 
 
 class MstUserRigMappingSerializer(serializers.ModelSerializer):
@@ -779,14 +764,17 @@ class MstSignableDocSerializer(serializers.ModelSerializer):
 
 
 class DocToSignMappingSerializer(serializers.ModelSerializer):
-    employee_name = serializers.CharField(source="employee", read_only=True, default="")
+    user_name = serializers.SerializerMethodField()
+    user_label = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     sign_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DocToSignMapping
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
+        # a legacy row always has its user now, and a new one must pick one
+        extra_kwargs = {"user": {"required": True, "allow_null": False}}
 
     def validate(self, attrs):
         errors = {}
@@ -802,13 +790,13 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
             errors["sign_path"] = "Upload the signature image again."
         _check_date_not_future(self, attrs, errors, "sign_from", "From date")
         _check_to_after_from(self, attrs, errors, "sign_from", "sign_to", "To date")
-        name, emp, start = (_get(self, attrs, f) for f in ("doc_name", "employee", "sign_from"))
-        if name and emp and start and _changed(self, attrs, "doc_name", "employee", "sign_from"):
-            repeats = DocToSignMapping.objects.filter(doc_name__iexact=name, employee=emp, sign_from=start)
+        name, signer, start = (_get(self, attrs, f) for f in ("doc_name", "user", "sign_from"))
+        if name and signer and start and _changed(self, attrs, "doc_name", "user", "sign_from"):
+            repeats = DocToSignMapping.objects.filter(doc_name__iexact=name, user=signer, sign_from=start)
             if self.instance is not None:
                 repeats = repeats.exclude(pk=self.instance.pk)
             if repeats.exists():
-                errors.setdefault("sign_from", "This employee already signs this document from this date.")
+                errors.setdefault("sign_from", "This user already signs this document from this date.")
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
@@ -820,8 +808,15 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
             return None
         return media_url(self.context.get("request"), path)
 
+    def get_user_name(self, obj):
+        return obj.user.user_name.strip() if obj.user_id else ""
+
+    def get_user_label(self, obj):
+        """The user as the dropdown lists them ("Name (login id)"), so the saved value and the options read the same."""
+        return f"{obj.user.user_name.strip()} ({obj.user.user_login_id})" if obj.user_id else ""
+
     def get_display_name(self, obj):
-        return f"{obj.doc_name} — {obj.employee}"
+        return f"{obj.doc_name} — {self.get_user_name(obj)}"
 
 
 class MstInterviewerSerializer(serializers.ModelSerializer):
@@ -1628,15 +1623,10 @@ class MstLeavingReasonDtlSerializer(serializers.ModelSerializer):
 
 
 class MstBusinessSystemSerializer(serializers.ModelSerializer):
-    owner_emp_name = serializers.SerializerMethodField()
-
     class Meta:
         model = MstBusinessSystem
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
-
-    def get_owner_emp_name(self, obj):
-        return str(obj.owner_emp) if obj.owner_emp_id else ""
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_owner_emp_id"]
 
 
 class MailAlertDtlSerializer(serializers.ModelSerializer):
@@ -1670,16 +1660,35 @@ def _mail_alert_to_user_label(entry):
 
 class MailAlertToUserSerializer(serializers.ModelSerializer):
     alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
-    emp_name = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
+    user_label = serializers.SerializerMethodField()
     display_label = serializers.SerializerMethodField()
 
     class Meta:
         model = MailAlertToUser
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
 
-    def get_emp_name(self, obj):
-        return str(obj.emp) if obj.emp_id else ""
+    def get_user_name(self, obj):
+        """Who the recipient is: the user's name, or the name typed for someone who is not a user."""
+        return (obj.user.user_name.strip() if obj.user_id else (obj.recipient_name or "")) or ""
+
+    def get_user_label(self, obj):
+        """The user as the dropdown lists them ("Name (login id)"), so the saved value and the options read the same."""
+        return f"{obj.user.user_name.strip()} ({obj.user.user_login_id})" if obj.user_id else ""
+
+    def validate(self, attrs):
+        errors = {}
+        # Either a user is picked (their email is copied in, still editable) or a name is typed for someone who is not a user. Judged only
+        # when the person or the name is new or changed, so an old recipient with neither can still be edited for something else.
+        user, name = _get(self, attrs, "user"), (_get(self, attrs, "recipient_name") or "").strip()
+        if "recipient_name" in attrs:
+            attrs["recipient_name"] = name or None
+        if not user and not name and _changed(self, attrs, "user", "recipient_name"):
+            errors["recipient_name"] = "Pick a user, or type the recipient's name."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def get_display_label(self, obj):
         return _mail_alert_to_user_label(obj)
@@ -1714,7 +1723,6 @@ class ItAccessoryHolderSerializer(serializers.ModelSerializer):
     it_accessory_name = serializers.CharField(
         source="it_accessory.it_accessory_name", read_only=True, default=""
     )
-    emp_name = serializers.SerializerMethodField()
     it_asset_mfg_name = serializers.CharField(
         source="it_asset_mfg.it_asset_mfg_name", read_only=True, default=""
     )
@@ -1722,10 +1730,7 @@ class ItAccessoryHolderSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItAccessoryHolder
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
-
-    def get_emp_name(self, obj):
-        return str(obj.emp) if obj.emp_id else ""
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
 
 
 class MstItAssetSerializer(serializers.ModelSerializer):
@@ -1752,7 +1757,7 @@ class MstItAssetSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstItAsset
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
 
 
 class MstCompanyLocTypeSerializer(serializers.ModelSerializer):
@@ -1817,7 +1822,6 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
     holder_company_abrv = serializers.CharField(
         source="holder_company.company_abrv", read_only=True, default=""
     )
-    emp_name = serializers.SerializerMethodField()
     holder_user_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(
         source="department.dept_dispname", read_only=True, default=""
@@ -1830,10 +1834,7 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItAssetHolder
         fields = "__all__"
-        read_only_fields = ["mod_user_id", "mod_dt"]
-
-    def get_emp_name(self, obj):
-        return str(obj.emp) if obj.emp_id else ""
+        read_only_fields = ["mod_user_id", "mod_dt", "legacy_emp_id"]
 
     def get_holder_user_name(self, obj):
         return obj.holder_user.user_name.strip() if obj.holder_user_id else ""

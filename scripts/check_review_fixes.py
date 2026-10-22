@@ -54,9 +54,9 @@ def run():
     base = "/api/masters/"
 
     print("shared helpers")
-    for good in ("a@b.co", "vinita.singh@essar.com", "x_y+z@sub.domain.in"):
+    for good in ("a@b.co", "vinita.singh@essar.com", "x-y@sub.domain.in", "x_y@sub.domain.in", "a@x.co.in", "a@x.uk", "a@x.co.uk", "a&b@x.com", "A@X.IN"):
         check(f"email ok: {good}", is_valid_email(good))
-    for bad in ("test@inco", "vin#in.c", "sad", "a@b", "a@b.c", "a @b.com", "@b.com", "a@.com"):
+    for bad in ("test@inco", "vin#in.c", "sad", "a@b", "a@b.c", "a @b.com", "@b.com", "a@.com", "o'brien@x.com", "a+b@x.com", "a#b@x.com"):
         check(f"email refused: {bad}", not is_valid_email(bad))
     check("phone ok", phone_error("+91 22 2654 1234") == "")
     check("phone letters refused", phone_error("asdsa") != "")
@@ -142,16 +142,21 @@ def run():
     r = client.post(f"{base}mail-alert-to-users/", {"alert": some.pk, "email_addr": "x@seros.in", "addressee_type": "T", "mail_alert_order": 1, "mail_alert_from": "0012-12-12"}, format="json")
     check("Alert To Users: From in year 12 is refused", r.status_code == 400 and "mail_alert_from" in keys(r), r.content.decode())
     r = client.post(f"{base}mail-alert-to-users/", {"alert": some.pk, "email_addr": "x@seros.in", "addressee_type": "T", "mail_alert_order": 1, "mail_alert_from": "2026-01-01"}, format="json")
-    check("Alert To Users: a good row is accepted", r.status_code == 201, r.content.decode())
+    check("Alert To Users: neither a user nor a name is refused", r.status_code == 400 and "recipient_name" in keys(r), r.content.decode())
+    r = client.post(f"{base}mail-alert-to-users/", {"alert": some.pk, "email_addr": "x@seros.in", "recipient_name": "Not A User", "addressee_type": "T", "mail_alert_order": 1, "mail_alert_from": "2026-01-01"}, format="json")
+    check("Alert To Users: a name and an email (not a user) is accepted", r.status_code == 201 and r.json().get("user") is None and r.json().get("user_name") == "Not A User", r.content.decode())
+    some_user = MstUser.objects.exclude(emp_id=None).first()
+    r = client.post(f"{base}mail-alert-to-users/", {"alert": some.pk, "email_addr": "y@seros.in", "user": some_user.pk, "addressee_type": "T", "mail_alert_order": 1, "mail_alert_from": "2026-01-01"}, format="json")
+    check("Alert To Users: a user and an email is accepted", r.status_code == 201 and r.json().get("user") == some_user.pk, r.content.decode())
 
-    print("employee email for Alert To Users")
-    u = MstUser.objects.exclude(user_email__isnull=True).exclude(user_email="").exclude(emp_id=None).first()
-    r = client.get(f"{base}mail-alert-to-users/employee-email/?emp={u.emp_id}")
-    check("the employee's login email comes back", r.status_code == 200 and r.json().get("email"), r.content.decode())
-    r = client.get(f"{base}mail-alert-to-users/employee-email/?emp=abc")
+    print("user email for Alert To Users")
+    u = MstUser.objects.exclude(user_email__isnull=True).exclude(user_email="").first()
+    r = client.get(f"{base}mail-alert-to-users/user-email/?user={u.user_id}")
+    check("the user's email comes back", r.status_code == 200 and r.json().get("email") == u.user_email, r.content.decode())
+    r = client.get(f"{base}mail-alert-to-users/user-email/?user=abc")
     check("a bad id gives an empty email", r.status_code == 200 and r.json().get("email") == "", r.content.decode())
-    r = client.get(f"{base}mail-alert-to-users/employee-email/?emp=-1")
-    check("an unknown employee gives an empty email", r.status_code == 200 and r.json().get("email") == "", r.content.decode())
+    r = client.get(f"{base}mail-alert-to-users/user-email/?user=-1")
+    check("an unknown user gives an empty email", r.status_code == 200 and r.json().get("email") == "", r.content.decode())
 
     print("signable documents (the list Document To Sign picks from) and Document To Sign")
     from core.models import DocToSignMapping, MstSignableDoc
@@ -170,8 +175,8 @@ def run():
     check("an Active value other than Y or N is refused", r.status_code == 400 and "signable_doc_active" in keys(r), r.content.decode())
     listed = [d["signable_doc_name"] for d in client.get(sd + "?active=Y&page_size=100").json()["results"]]
     check("the active list offers the new name", "Zz_New_Letter_Onshore" in listed)
-    emp = MstUser.objects.exclude(emp_id=None).first().emp_id
-    d = {"employee": emp, "sign_from": "2026-01-01"}
+    emp = MstUser.objects.exclude(emp_id=None).first().user_id  # the signer, as a user
+    d = {"user": emp, "sign_from": "2026-01-01"}
     r = client.post(f"{base}doc-to-sign-mapping/", {**d, "doc_name": "My own document"}, format="json")
     check("a document name that is not in the table is refused", r.status_code == 400 and "doc_name" in keys(r), r.content.decode())
     r = client.post(f"{base}doc-to-sign-mapping/", {**d, "doc_name": "Zz_New_Letter_Onshore"}, format="json")
@@ -206,19 +211,19 @@ def run():
     from django.conf import settings
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 60
     up = "/api/masters/doc-to-sign-mapping/upload-sign/"
-    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
+    r = client.post(up, {"user_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
     check("a PNG signature is saved under signatures/", r.status_code == 200 and r.json().get("path", "").startswith(f"signatures/{emp}_"), r.content.decode())
     first = r.json().get("path")
-    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
+    r = client.post(up, {"user_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
     check("a second upload gets its own number, so the first is kept", r.status_code == 200 and r.json().get("path") != first and os.path.isfile(os.path.join(settings.MEDIA_ROOT, first)), r.content.decode())
     second = r.json().get("path")
-    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.gif", b"GIF89a" + b"0" * 20, content_type="image/gif")}, format="multipart")
+    r = client.post(up, {"user_id": str(emp), "file": SimpleUploadedFile("sig.gif", b"GIF89a" + b"0" * 20, content_type="image/gif")}, format="multipart")
     check("a GIF is refused", r.status_code == 400, r.content.decode())
-    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", b"not really a png", content_type="image/png")}, format="multipart")
+    r = client.post(up, {"user_id": str(emp), "file": SimpleUploadedFile("sig.png", b"not really a png", content_type="image/png")}, format="multipart")
     check("a file that is not really a PNG is refused", r.status_code == 400, r.content.decode())
     r = client.post(up, {"file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
-    check("an upload with no employee is refused", r.status_code == 400, r.content.decode())
-    d2 = {"employee": emp, "sign_from": "2026-01-02", "doc_name": "Offer_Ltr_Onshore"}
+    check("an upload with no user is refused", r.status_code == 400, r.content.decode())
+    d2 = {"user": emp, "sign_from": "2026-01-02", "doc_name": "Offer_Ltr_Onshore"}
     r = client.post(f"{base}doc-to-sign-mapping/", {**d2, "sign_path": "../../etc/passwd"}, format="json")
     check("a made-up signature path is refused", r.status_code == 400 and "sign_path" in keys(r), r.content.decode())
     r = client.post(f"{base}doc-to-sign-mapping/", {**d2, "sign_path": second}, format="json")

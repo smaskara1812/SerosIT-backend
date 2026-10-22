@@ -28,8 +28,10 @@ MIN_YEAR = 1900
 MAX_YEAR = 2100
 YEAR_MESSAGE = f"The year must be between {MIN_YEAR} and {MAX_YEAR}. Type it in full, like 2026."
 
-EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$")
-EMAIL_MESSAGE = "Enter a valid email address, like name@company.com."
+# name@domain with a real ending. Before the @: letters, digits, dot, underscore, hyphen and & (no apostrophe, +, # or other symbols; no leading,
+# trailing or doubled dot). After it: dotted domain parts, the last at least two letters (.com, .co, .in, .uk, .co.uk, .co.in ...).
+EMAIL_RE = re.compile(r"^(?!\.)(?!.*\.\.)[A-Za-z0-9._&-]+(?<!\.)@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$")
+EMAIL_MESSAGE = "Enter the full email address with its ending, like name@company.com, name@company.co or name@company.co.in."
 # The fields that hold an email address (a plain text column), by name.
 EMAIL_FIELD_NAMES = {
     "mail_from_address", "email_id", "rig_email_id", "user_email", "vendor_email", "fs_emp_email_official", "fs_emp_email_pers",

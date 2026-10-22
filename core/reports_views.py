@@ -332,7 +332,7 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
         Prefetch(
             "holders",
             queryset=ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
-            .select_related("emp", "holder_user", "holder_company", "company_loc")
+            .select_related("holder_user", "holder_company", "company_loc")
             .order_by("-it_asset_holder_from"),
             to_attr="current_holders",
         )
@@ -399,12 +399,11 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
         # per row, and only the columns written below. The current holder of every
         # asset comes from one extra query instead of a prefetch per chunk.
         holders = {}
-        for (aid, uid, uname, eid, e1, e2, e3, hname, loc, remark, comp) in (
+        for (aid, uid, uname, hname, loc, remark, comp) in (
             ItAssetHolder.objects.filter(it_asset_holder_to__isnull=True)
             .order_by("-it_asset_holder_from", "it_asset_holder_id")
             .values_list(
-                "it_asset_id", "holder_user_id", "holder_user__user_name", "emp_id", "emp__emp_fname", "emp__emp_mname",
-                "emp__emp_sname", "holder_name", "company_loc__company_loc_name", "holder_remark",
+                "it_asset_id", "holder_user_id", "holder_user__user_name", "holder_name", "company_loc__company_loc_name", "holder_remark",
                 "holder_company__company_abrv",
             )
             .iterator(chunk_size=2000)
@@ -413,8 +412,6 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
                 continue  # newest ongoing row wins, as before
             if uid:
                 who = (uname or "").strip()
-            elif eid:
-                who = " ".join(p for p in (e1, e2, e3) if p)
             else:
                 who = hname or ""
             holders[aid] = (who, loc or "", remark or "", comp or "")

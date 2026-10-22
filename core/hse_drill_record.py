@@ -19,11 +19,9 @@ every rig type) — correct for every rig, not just the one legacy
 hardcoded.
 
 Not implemented: legacy's "Initiated By"/"PIC-OIM" Fs Employee pickers are
-scoped to employees assigned to the selected rig — MstEmployee (this app's
-Fs Employee equivalent) carries no rig association at all, so that
-filtering has no equivalent data to drive it here. The picker is the same
-unfiltered employee search used elsewhere in this app (e.g. Hazard ID
-Card's Reported By).
+scoped to employees assigned to the selected rig. The picker here is the
+active FS employee search used elsewhere in this app (e.g. Hazard ID
+Card's Reported By), not narrowed by rig.
 
 Child tables from the legacy page (Event/Observation/Improvement/
 Corrective Action/Photo Upload) are modeled (see models.py) and their

@@ -336,14 +336,9 @@ class MstBusinessSystem(models.Model):
     mail_from_address = models.CharField(max_length=30, null=True, blank=True)
     mail_user_name = models.CharField(max_length=30, null=True, blank=True)
     mail_user_password = models.CharField(max_length=15, null=True, blank=True)
-    owner_emp = models.ForeignKey(
-        "MstEmployee",
-        db_column="owner_emp_id",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="owned_business_systems",
-    )
+    # Legacy employee id, no longer a link (mst_employee is being retired); the owner is the text below.
+    legacy_owner_emp_id = models.IntegerField(db_column="owner_emp_id", null=True, blank=True)
+    owner_name = models.CharField(max_length=100, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
@@ -418,14 +413,13 @@ class MailAlertToUser(models.Model):
     alert = models.ForeignKey(
         MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="recipients"
     )
-    emp = models.ForeignKey(
-        "MstEmployee",
-        db_column="emp_id",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="mail_alerts",
+    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
+    # The recipient as a user (nullable: someone who is not a user is added by name and email only). The email is stored on the row too,
+    # copied from the user and editable.
+    user = models.ForeignKey(
+        "MstUser", db_column="user_id", null=True, blank=True, on_delete=models.PROTECT, related_name="mail_alerts"
     )
+    recipient_name = models.CharField(max_length=100, null=True, blank=True)
     email_addr = models.CharField(max_length=45)
     # Checked stores 'Y', unchecked is NULL/blank.
     read_receipt = models.CharField(max_length=1, null=True, blank=True)
@@ -1064,6 +1058,26 @@ class MstHazardType(models.Model):
         return self.haz_type_name
 
 
+class MstWorkingDesignation(models.Model):
+    """Straight copy of legacy Mst_Working_Designation (a person's job title, ~240 rows). Used by the user's person details."""
+
+    working_designation_id = models.AutoField(primary_key=True)
+    working_designation = models.CharField(max_length=40)
+    critical_flag = models.CharField(max_length=1, default="N")
+    usage_filter = models.CharField(max_length=3, null=True, blank=True)
+    working_designation_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_working_designation"
+
+    def __str__(self):
+        return self.working_designation
+
+
 class MstUser(models.Model):
     """
     Straight copy of the legacy Mst_User table structure (smallint columns
@@ -1077,14 +1091,8 @@ class MstUser(models.Model):
 
     user_id = models.AutoField(primary_key=True)
     user_name = models.CharField(max_length=60)
-    emp = models.ForeignKey(
-        "MstEmployee",
-        db_column="emp_id",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="users",
-    )
+    # The legacy employee this user came from: a plain number kept for traceability and for re-imports (no table behind it any more).
+    emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)
     # Mst_NonEmployee lives in legacy's separate hr_ module (visa,
     # deficiency-tracking, etc.) that hasn't been brought over — left as a
     # plain id rather than pulling that whole subsystem in for one FK.
@@ -1109,6 +1117,21 @@ class MstUser(models.Model):
     user_from = models.DateField()
     user_to = models.DateField(null=True, blank=True)
     user_email = models.EmailField(max_length=40, null=True, blank=True)
+    # Person details that used to live only in legacy Mst_Employee (carried here so the app no longer needs that table). user_name,
+    # user_login_id, user_email, dept_id and user_from/user_to above already cover the rest of what Mst_Employee held.
+    first_name = models.CharField(max_length=26, null=True, blank=True)
+    middle_name = models.CharField(max_length=20, null=True, blank=True)
+    last_name = models.CharField(max_length=35, null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    company = models.ForeignKey(
+        "MstCompany", db_column="company_id", null=True, blank=True, on_delete=models.PROTECT, related_name="users"
+    )
+    mobile_no = models.CharField(max_length=16, null=True, blank=True)
+    work_designation = models.ForeignKey(
+        "MstWorkingDesignation", db_column="work_designation_id", null=True, blank=True, on_delete=models.PROTECT, related_name="users"
+    )
+    # Stored under MEDIA_ROOT/mst_employee_images/<user id>_<n>.<ext>
+    profile_picture_path = models.CharField(max_length=100, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
@@ -1383,7 +1406,10 @@ class MstSignableDoc(models.Model):
 class DocToSignMapping(models.Model):
     doc_to_sign_id = models.AutoField(primary_key=True)
     doc_name = models.CharField(max_length=50)
-    employee = models.ForeignKey(MstEmployee, db_column="emp_id", on_delete=models.PROTECT)
+    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
+    user = models.ForeignKey(
+        "MstUser", db_column="user_id", null=True, blank=True, on_delete=models.PROTECT, related_name="docs_to_sign"
+    )
     # Legacy stores this as a plain typed-in path (e.g. "/Images/Signatures/84.jpg"),
     # not an actual upload here — see DocToSignMapping's form.
     sign_path = models.CharField(max_length=100, null=True, blank=True)
@@ -1398,7 +1424,7 @@ class DocToSignMapping(models.Model):
         db_table = "doc_to_sign_mapping"
 
     def __str__(self):
-        return f"{self.doc_name} — {self.employee}"
+        return f"{self.doc_name} — {self.user}"
 
 
 class MstInterviewer(models.Model):
@@ -3409,9 +3435,8 @@ class MstItAsset(models.Model):
     cur_company = models.ForeignKey(
         MstCompany, db_column="cur_company_id", on_delete=models.PROTECT, related_name="held_it_assets"
     )
-    emp = models.ForeignKey(
-        MstEmployee, db_column="emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="it_assets"
-    )
+    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
+    cur_holder_name = models.CharField(max_length=100, null=True, blank=True)
     department = models.ForeignKey(
         MstDepartment,
         db_column="dept_id",
@@ -3478,14 +3503,7 @@ class ItAssetHolder(models.Model):
     holder_company = models.ForeignKey(
         MstCompany, db_column="holder_company_id", on_delete=models.PROTECT, related_name="it_asset_holdings"
     )
-    emp = models.ForeignKey(
-        MstEmployee,
-        db_column="emp_id",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="it_asset_holdings",
-    )
+    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     # Added alongside emp (not replacing it) — emp_id only resolves for
     # people with an HR record, but plenty of real system users who hold
     # assets don't have one (206 active users, e.g. Savita Bodake). The
@@ -3517,7 +3535,7 @@ class ItAssetHolder(models.Model):
         on_delete=models.PROTECT,
         related_name="it_asset_holdings",
     )
-    holder_name = models.CharField(max_length=40, null=True, blank=True)
+    holder_name = models.CharField(max_length=100, null=True, blank=True)
     holder_remark = models.CharField(max_length=150, null=True, blank=True)
     vessel_id = models.IntegerField(null=True, blank=True)
     # DateTimeField (not DateField) so a system-closed assignment (Remove
@@ -3535,7 +3553,7 @@ class ItAssetHolder(models.Model):
         db_table = "it_asset_holder"
 
     def __str__(self):
-        return f"{self.it_asset} — {self.holder_name or self.emp}"
+        return f"{self.it_asset} — {self.holder_name or 'Common'}"
 
 
 class ItAccessoryHolder(models.Model):
@@ -3546,15 +3564,8 @@ class ItAccessoryHolder(models.Model):
     it_accessory = models.ForeignKey(
         MstItAccessory, db_column="it_accessory_id", on_delete=models.PROTECT, related_name="holders"
     )
-    emp = models.ForeignKey(
-        MstEmployee,
-        db_column="emp_id",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="it_accessory_holdings",
-    )
-    it_accessory_holder_name = models.CharField(max_length=40, null=True, blank=True)
+    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
+    it_accessory_holder_name = models.CharField(max_length=100, null=True, blank=True)
     it_asset_mfg = models.ForeignKey(
         MstItAssetMfg,
         db_column="it_asset_mfg_id",
@@ -3578,7 +3589,7 @@ class ItAccessoryHolder(models.Model):
         db_table = "it_accessory_holder"
 
     def __str__(self):
-        return f"{self.it_accessory} — {self.it_accessory_holder_name or self.emp}"
+        return f"{self.it_accessory} — {self.it_accessory_holder_name or '—'}"
 
 
 class PermissionPreset(models.Model):

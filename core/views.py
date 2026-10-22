@@ -10,12 +10,18 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .validation_helpers import EMAIL_MESSAGE, is_valid_email, year_message
+import os
+
+from django.conf import settings
+
+from .media_uploads import IMAGE_EXTENSIONS, media_url, next_sequence, save_media_file
+from .validation_helpers import EMAIL_MESSAGE, is_valid_email, phone_error, year_message
 from . import audit as _audit
 from . import audit_revert as _audit_revert
 from .auth_backend import _fetch_mst_user, _sha256
 from .models import (
     EmailLog,
+    MailAlertToUser,
     SysAuditLog,
     SysMenu,
     MstUser,
@@ -746,11 +752,73 @@ def admin_user_management_list_api(request):
     )
 
 
+PERSON_FIELDS = ("first_name", "middle_name", "last_name", "date_of_birth", "mobile_no", "company_id", "work_designation_id")
+
+
+def _person_details(u, request):
+    """The person columns on a user (moved here from the legacy employee table) plus a link to the profile picture, when its file exists."""
+    def _d(v):
+        return v.strftime("%Y-%m-%d") if v else ""
+
+    path = (u.profile_picture_path or "").lstrip("/")
+    has_file = bool(path) and os.path.isfile(os.path.join(str(settings.MEDIA_ROOT), path))
+    return {
+        "first_name": u.first_name or "",
+        "middle_name": u.middle_name or "",
+        "last_name": u.last_name or "",
+        "date_of_birth": _d(u.date_of_birth),
+        "mobile_no": u.mobile_no or "",
+        "company_id": u.company_id,
+        "company_name": u.company.company_name if u.company_id else "",
+        "work_designation_id": u.work_designation_id,
+        "work_designation_name": u.work_designation.working_designation if u.work_designation_id else "",
+        "photo_url": media_url(request, path) if has_file else None,
+    }
+
+
+def _clean_person(data, u=None):
+    """The person details sent with a user (new or existing), cleaned and checked. Returns (values to set, error text). Only the fields
+    that were sent are returned; a value is judged when new or changed, so an old user can still be saved."""
+    from .models import MstCompany, MstWorkingDesignation
+
+    person = {}
+    for f in PERSON_FIELDS:
+        if f in data:
+            v = data.get(f)
+            person[f] = (v.strip() if isinstance(v, str) else v) or None
+    for f, limit in (("first_name", 26), ("middle_name", 20), ("last_name", 35)):
+        if person.get(f) and len(person[f]) > limit:
+            return None, f"{f.replace('_', ' ').capitalize()} can be at most {limit} characters."
+    if person.get("date_of_birth") and person["date_of_birth"] != str(getattr(u, "date_of_birth", "") or "")[:10] and year_message(person["date_of_birth"]):
+        return None, year_message(person["date_of_birth"])
+    if person.get("mobile_no") and person["mobile_no"] != (getattr(u, "mobile_no", "") or "") and phone_error(person["mobile_no"]):
+        return None, phone_error(person["mobile_no"])
+    for f, model, label in (("company_id", MstCompany, "company"), ("work_designation_id", MstWorkingDesignation, "working designation")):
+        if person.get(f) is not None:
+            try:
+                person[f] = int(person[f])
+            except (TypeError, ValueError):
+                return None, f"Choose a valid {label}."
+            if person[f] != getattr(u, f, None) and not model.objects.filter(pk=person[f]).exists():
+                return None, f"Choose a valid {label}."
+    return person, None
+
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_user_management_designations_api(request):
+    """The working designations to pick from on the user form (active ones, plus none else)."""
+    from .models import MstWorkingDesignation
+
+    rows = MstWorkingDesignation.objects.order_by("working_designation").values("working_designation_id", "working_designation", "working_designation_active")
+    return Response([{"id": r["working_designation_id"], "name": r["working_designation"], "active": r["working_designation_active"] == "Y"} for r in rows])
+
+
 @api_view(["GET"])
 @permission_classes([IsAppAdmin])
 def admin_user_management_get_api(request, user_id):
     try:
-        u = MstUser.objects.select_related("department").get(user_id=user_id)
+        u = MstUser.objects.select_related("department", "company", "work_designation").get(user_id=user_id)
     except MstUser.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
 
@@ -773,6 +841,7 @@ def admin_user_management_get_api(request, user_id):
             "user_to": _dt(u.user_to),
             "emp_id": u.emp_id,
             "nonemp_id": u.nonemp_id,
+            **_person_details(u, request),
             "created_at": _dt(u.cr_dt),
             "modified_at": _dt(u.mod_dt),
             "auth_type": "local" if has_local else "ad",
@@ -808,6 +877,24 @@ def admin_user_management_update_api(request, user_id):
         if text and text != str(was or "")[:10] and year_message(text):
             return Response({"error": year_message(text)}, status=400)
 
+    # Person details (optional: only the ones sent are touched).
+    person, problem = _clean_person(data, u)
+    if problem:
+        return Response({"error": problem}, status=400)
+
+    # Changing the email: alert recipients that are this user and still carry the old email can follow it. The person decides.
+    new_email = email or None
+    sync_rows = MailAlertToUser.objects.none()
+    if (u.user_email or "") != (new_email or "") and u.user_email:
+        sync_rows = MailAlertToUser.objects.filter(user_id=u.user_id, email_addr__iexact=u.user_email)
+    choice = (data.get("alert_email_sync") or "").strip()
+    if sync_rows.exists() and choice not in ("all", "user_only"):
+        return Response(
+            {"needs_choice": "alert_email", "alert_rows": sync_rows.count(), "old_email": u.user_email, "new_email": new_email,
+             "error": "This email is also used on alert recipients."},
+            status=409,
+        )
+
     try:
         mod_user_id = UserProfile.objects.get(user_login_id=request.user.username).user_id
     except UserProfile.DoesNotExist:
@@ -820,6 +907,7 @@ def admin_user_management_update_api(request, user_id):
         "user_type_id": u.user_type_id,
         "user_from": str(u.user_from) if u.user_from else None,
         "user_to": str(u.user_to) if u.user_to else None,
+        **{f: (str(getattr(u, f)) if getattr(u, f) is not None else None) for f in PERSON_FIELDS},
     }
 
     u.user_name = name
@@ -828,8 +916,13 @@ def admin_user_management_update_api(request, user_id):
     u.user_type_id = user_type
     u.user_from = user_from or u.user_from
     u.user_to = user_to
+    for f, v in person.items():
+        setattr(u, f, v)
     u.mod_user_id = mod_user_id
     u.save()
+    synced = 0
+    if choice == "all" and sync_rows.exists() and new_email:
+        synced = sync_rows.update(email_addr=new_email, mod_user_id=mod_user_id, mod_dt=dj_timezone.now())
 
     after = {
         "user_name": u.user_name,
@@ -838,13 +931,48 @@ def admin_user_management_update_api(request, user_id):
         "user_type_id": u.user_type_id,
         "user_from": str(u.user_from) if u.user_from else None,
         "user_to": str(u.user_to) if u.user_to else None,
+        **{f: (str(getattr(u, f)) if getattr(u, f) is not None else None) for f in PERSON_FIELDS},
     }
     changes = {k: {"old": before[k], "new": after[k]} for k in before if before[k] != after[k]}
     _audit.record_action(
         request, "update", "admin.user_management", u.user_id, u.user_login_id, changes or None, target=u
     )
 
-    return Response({"success": True})
+    return Response({"success": True, "alert_rows_updated": synced})
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAppAdmin])
+def admin_user_management_photo_api(request, user_id):
+    """POST a picture to set the user's profile picture (saved as mst_employee_images/<user id>_<n>.<ext>); DELETE clears it. Nothing is
+    ever deleted from disk: the old file stays and the history log records the old and the new name."""
+    try:
+        u = MstUser.objects.select_related("company").get(user_id=user_id)
+    except MstUser.DoesNotExist:
+        return Response({"error": "User not found"}, status=404)
+    old = u.profile_picture_path or ""
+    if request.method == "DELETE":
+        new = None
+    else:
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"error": "file is required"}, status=400)
+        seq = next_sequence("mst_employee_images", u.user_id)
+        new, error = save_media_file(f, "mst_employee_images", f"{u.user_id}_{seq}", allowed_extensions=IMAGE_EXTENSIONS, max_size_mb=5)
+        if error:
+            return Response({"error": error}, status=400)
+    try:
+        mod_user_id = UserProfile.objects.get(user_login_id=request.user.username).user_id
+    except UserProfile.DoesNotExist:
+        mod_user_id = None
+    u.profile_picture_path = new
+    u.mod_user_id, u.mod_dt = mod_user_id, dj_timezone.now()
+    u.save(update_fields=["profile_picture_path", "mod_user_id", "mod_dt"])
+    _audit.record_action(
+        request, "update", "admin.user_management", u.user_id, u.user_login_id,
+        {"profile_picture_path": {"old": old or None, "new": new}}, target=u,
+    )
+    return Response(_person_details(u, request))
 
 
 @api_view(["POST"])
@@ -871,6 +999,9 @@ def admin_user_management_create_api(request):
         return Response({"error": EMAIL_MESSAGE}, status=400)
     if year_message(user_from) or year_message(user_to):
         return Response({"error": year_message(user_from) or year_message(user_to)}, status=400)
+    person, problem = _clean_person(data)
+    if problem:
+        return Response({"error": problem}, status=400)
 
     try:
         cr_user_id = UserProfile.objects.get(user_login_id=request.user.username).user_id
@@ -890,6 +1021,7 @@ def admin_user_management_create_api(request):
         user_to=user_to,
         cr_user_id=cr_user_id,
         cr_dt=timezone.now(),
+        **person,
     )
 
     if password:
@@ -903,6 +1035,7 @@ def admin_user_management_create_api(request):
             "user_email": email or None,
             "user_type_id": user_type,
             "department_id": dept_id,
+            **person,
         }.items()
         if v not in (None, "")
     }

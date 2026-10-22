@@ -438,7 +438,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         if not (recipients["to"] or recipients["cc"] or recipients["bcc"]):
             return
 
-        actor = MstUser.objects.select_related("emp").filter(user_id=actor_user_id).first()
+        actor = MstUser.objects.filter(user_id=actor_user_id).first()
         cred = UserMailCredential.objects.filter(user_id=actor_user_id).first()
         label = dict(MailRecipientMapping.EVENT_CHOICES).get(event_type, event_type)
         subject, body = mail_templates.drilling_report_mail(instance, actor, event_type)

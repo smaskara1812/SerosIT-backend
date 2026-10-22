@@ -19,16 +19,12 @@ _EVENT_TEXT = {
 
 
 def _actor_name(user):
-    """Full name via the linked employee record (matches the legacy
-    sample's "Ranvir Singh", not a raw login id) — falls back to the login
-    id for a user with no employee record linked."""
+    """The user's full name (first and last name, else the name on the user; matches the legacy sample's "Ranvir Singh", not a raw login
+    id) — falls back to the login id for a user with no name."""
     if user is None:
         return ""
-    if user.emp_id:
-        name = " ".join(p for p in (user.emp.emp_fname, user.emp.emp_sname) if p)
-        if name:
-            return name
-    return user.user_login_id
+    name = " ".join(p for p in (user.first_name, user.last_name) if p) or (user.user_name or "").strip()
+    return " ".join(name.split()) or user.user_login_id
 
 
 def drilling_report_mail(instance, actor, event_type):

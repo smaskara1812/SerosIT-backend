@@ -32,7 +32,6 @@ from .models import (
     MstCostCentreType,
     MstDepartment,
     MstEmailNotificationType,
-    MstEmployee,
     MstFsCategory,
     MstHazardType,
     MstHseActivity,
@@ -161,7 +160,6 @@ from .masters_serializers import (
     MstCostCentreTypeSerializer,
     MstDepartmentSerializer,
     MstEmailNotificationTypeSerializer,
-    MstEmployeeSerializer,
     MstFsCategorySerializer,
     MstHazardTypeSerializer,
     MstHseActivitySerializer,
@@ -995,7 +993,7 @@ class MstLeavingReasonDtlViewSet(BaseMasterViewSet):
 
 
 class MstBusinessSystemViewSet(BaseMasterViewSet):
-    queryset = MstBusinessSystem.objects.select_related("owner_emp").all()
+    queryset = MstBusinessSystem.objects.all()
     serializer_class = MstBusinessSystemSerializer
     entity_key = "masters.business_systems"
     name_field = "buss_system_dtl"
@@ -1016,7 +1014,7 @@ class MailAlertDtlViewSet(BaseMasterViewSet):
 
 
 class MailAlertToUserViewSet(BaseMasterViewSet):
-    queryset = MailAlertToUser.objects.select_related("alert", "emp").all()
+    queryset = MailAlertToUser.objects.select_related("alert", "user").all()
     serializer_class = MailAlertToUserSerializer
     entity_key = "masters.mail_alert_to_users"
     # Picked from in the Mail Recipient Mapping form.
@@ -1028,17 +1026,14 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     # (?alert=<alert_id>) — filters this list down to just that alert's rows.
     filterable_fields = ["alert"]
 
-    @action(detail=False, methods=["get"], url_path="employee-email")
-    def employee_email(self, request):
-        """The email on the signed-in login of this employee (?emp=<id>), so choosing an employee on the Alert To Users form can fill the
-        Email field. Only for holders of this page, so it does not widen who can read employees' emails."""
-        emp = request.query_params.get("emp", "")
+    @action(detail=False, methods=["get"], url_path="user-email")
+    def user_email(self, request):
+        """The email of this user (?user=<id>), so choosing a user on the Alert To Users form fills the Email field. Only for holders of this
+        page, so it does not widen who can read users' emails."""
+        user = request.query_params.get("user", "")
         email = ""
-        if emp.isdigit():
-            email = (
-                MstUser.objects.filter(emp_id=int(emp)).exclude(user_email__isnull=True).exclude(user_email="")
-                .order_by("-user_active", "user_id").values_list("user_email", flat=True).first()
-            ) or ""
+        if user.isdigit():
+            email = MstUser.objects.filter(pk=int(user)).values_list("user_email", flat=True).first() or ""
         return Response({"email": email})
 
 
@@ -1577,20 +1572,13 @@ class MstUserViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
         # to a real emp_id (that's what actually gets saved) — a login
         # with no linked employee record isn't a valid pick there.
         if self.request.query_params.get("has_emp"):
-            qs = qs.filter(emp__isnull=False)
+            qs = qs.filter(emp_id__isnull=False)
+        # Alert To Users and Doc To Sign list every user, active or not (?include_inactive=1).
+        if self.request.query_params.get("include_inactive"):
+            qs = MstUser.objects.order_by("user_name")
+            if self.request.query_params.get("has_emp"):
+                qs = qs.filter(emp_id__isnull=False)
         return qs
-
-
-class MstEmployeeViewSet(LookupOnlyReadMixin, viewsets.ReadOnlyModelViewSet):
-    """Read-only lookup for Document To Sign Mapping's Employee field.
-    Mst_Employee is a ~28k-row HR roster this app doesn't own — always
-    paginated/searched, never fetched in full like the small lookups."""
-
-    queryset = MstEmployee.objects.filter(emp_active="Y").order_by("emp_sname", "emp_fname")
-    serializer_class = MstEmployeeSerializer
-    lookup_entity = "lookup.employees"
-    lookup_fields = ('emp_id', 'display_name', 'emp_fname', 'emp_mname', 'emp_sname')
-    search_fields = ["emp_fname", "emp_mname", "emp_sname"]
 
 
 class MstUserRigMappingViewSet(BaseMasterViewSet):
@@ -1641,11 +1629,11 @@ class MstSignableDocViewSet(BaseMasterViewSet):
 
 
 class DocToSignMappingViewSet(BaseMasterViewSet):
-    queryset = DocToSignMapping.objects.select_related("employee").all()
+    queryset = DocToSignMapping.objects.select_related("user").all()
     serializer_class = DocToSignMappingSerializer
     entity_key = "masters.doc_to_sign_mapping"
     date_active_field = "sign_to"
-    search_fields = ["doc_name", "employee__emp_fname", "employee__emp_sname"]
+    search_fields = ["doc_name", "user__user_name", "user__user_login_id"]
 
     def get_queryset(self):
         qs = self._apply_active_filter(self.queryset)
@@ -1653,19 +1641,18 @@ class DocToSignMappingViewSet(BaseMasterViewSet):
         return qs.order_by("-doc_name" if ordering == "-name" else "doc_name")
 
     def label_for(self, instance):
-        return f"{instance.doc_name} — {instance.employee}"
+        return f"{instance.doc_name} — {instance.user.user_name.strip() if instance.user_id else ''}"
 
     @action(detail=False, methods=["post"], url_path="upload-sign")
     def upload_sign(self, request):
-        """Save a signature image under MEDIA_ROOT/signatures, named <employee id>_<n> (the legacy convention was <employee id>.jpg; the number
-        keeps an earlier signature, which older mappings may still point at, from being overwritten)."""
-        emp_id = str(request.data.get("emp_id") or "")
+        """Save a signature image under MEDIA_ROOT/signatures, named <user id>_<n> (n = the next free number, so a user's earlier signature,
+        which older mappings may still point at, is never overwritten). Legacy files were named by employee id; the legacy media
+        migration renames those the same way."""
+        user_id = str(request.data.get("user_id") or "")
         f = request.FILES.get("file")
-        if not emp_id.isdigit() or not f:
-            return Response({"error": "emp_id and file are required"}, status=400)
-        folder = os.path.join(settings.MEDIA_ROOT, "signatures")
-        used = [int(m.group(1)) for n in (os.listdir(folder) if os.path.isdir(folder) else []) if (m := re.fullmatch(rf"{emp_id}_(\d+)\.\w+", n))]
-        rel_path, error = save_media_file(f, "signatures", f"{emp_id}_{max(used, default=0) + 1}", allowed_extensions=IMAGE_EXTENSIONS, max_size_mb=2)
+        if not user_id.isdigit() or not f:
+            return Response({"error": "user_id and file are required"}, status=400)
+        rel_path, error = save_media_file(f, "signatures", f"{user_id}_{next_sequence('signatures', user_id)}", allowed_extensions=IMAGE_EXTENSIONS, max_size_mb=2)
         if error:
             return Response({"error": error}, status=400)
         return Response({"path": rel_path, "url": media_url(request, rel_path)})
@@ -2468,14 +2455,14 @@ class ItAccessoryHolderViewSet(BaseMasterViewSet):
     """Standalone accessory holder record — not linked to a specific
     Mst_IT_Asset row, straight copy of legacy it_IT_Accessory_Holder."""
 
-    queryset = ItAccessoryHolder.objects.select_related("it_accessory", "emp", "it_asset_mfg")
+    queryset = ItAccessoryHolder.objects.select_related("it_accessory", "it_asset_mfg")
     serializer_class = ItAccessoryHolderSerializer
     entity_key = "it_asset.it_accessory_holders"
     name_field = "it_accessory_holder_id"
     date_active_field = "it_accessory_holder_to"
     reference_checks = []
     search_fields = [
-        "it_accessory__it_accessory_name", "it_accessory_holder_name", "emp__emp_fname", "emp__emp_sname",
+        "it_accessory__it_accessory_name", "it_accessory_holder_name",
         "it_accessory_sr_no",
     ]
 
@@ -2487,7 +2474,7 @@ class ItAccessoryHolderViewSet(BaseMasterViewSet):
         return qs.order_by("-it_accessory_holder_from")
 
     def label_for(self, instance):
-        return f"{instance.it_accessory} — {instance.it_accessory_holder_name or instance.emp}"
+        return f"{instance.it_accessory} — {instance.it_accessory_holder_name or '—'}"
 
 
 IT_ASSET_ORDERING_FIELDS = {
@@ -2760,7 +2747,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
 
     queryset = ItAssetHolder.objects.select_related(
         "it_asset", "it_asset__it_asset_model", "it_asset__it_asset_subtype", "it_asset__it_asset_mfg",
-        "it_asset__own_company", "holder_company", "emp", "holder_user", "department", "company_loc",
+        "it_asset__own_company", "holder_company", "holder_user", "department", "company_loc",
     ).all()
     serializer_class = ItAssetHolderSerializer
 
@@ -2779,7 +2766,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
     # of the one-time list win this is meant to be.
     _LIST_ONLY_FIELDS = [
         "it_asset_holder_id", "it_asset", "it_asset_holder_from", "holder_company",
-        "emp", "holder_user", "department", "company_loc", "holder_name",
+        "holder_user", "department", "company_loc", "holder_name",
         "holder_remark", "vessel_id", "it_asset_holder_to", "mod_user_id", "mod_dt",
         "it_asset__it_asset_sr_no", "it_asset__it_asset_tag", "it_asset__it_asset_sap_code",
         "it_asset__it_asset_active",
@@ -2788,7 +2775,6 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         "it_asset__it_asset_mfg__it_asset_mfg_name",
         "it_asset__own_company__company_name",
         "holder_company__company_name", "holder_company__company_abrv",
-        "emp__emp_fname", "emp__emp_mname", "emp__emp_sname",
         "holder_user__user_name",
         "department__dept_dispname", "department__dept_abrv",
         "company_loc__company_loc_name",
@@ -2796,10 +2782,8 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
     entity_key = "it_asset.it_asset_holders"
     # The IT Assets page shows who holds an asset when it is being scrapped or marked lost.
     lookup_strict = True
-    lookup_fields = ('it_asset_holder_id', 'it_asset', 'holder_user_name', 'emp_name', 'holder_name', 'it_asset_holder_from')
+    lookup_fields = ('it_asset_holder_id', 'it_asset', 'holder_user_name', 'holder_name', 'it_asset_holder_from')
     export_computed = {
-        "emp_name": (("emp_id", "emp__emp_fname", "emp__emp_mname", "emp__emp_sname"),
-                     lambda eid, a, b, c: _join_names(a, b, c) if eid else ""),
         "holder_user_name": (("holder_user_id", "holder_user__user_name"),
                              lambda uid, name: (name or "").strip() if uid else ""),
     }
@@ -2990,7 +2974,7 @@ class ItAssetHolderViewSet(BaseMasterViewSet):
         if instance.holder_user_id:
             who = instance.holder_user.user_name.strip()
         else:
-            who = instance.emp or instance.holder_name or "Common"
+            who = instance.holder_name or "Common"
         return f"{instance.it_asset.it_asset_sr_no} — {who}"
 
 

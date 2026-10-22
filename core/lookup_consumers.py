@@ -25,15 +25,11 @@ LOOKUP_CONSUMERS = {
         "masters.vendors",
         "qhse.incident_details",
     ),
-    "lookup.employees": (
-        "it_asset.it_accessory_holders",
-        "masters.business_systems",
-        "masters.doc_to_sign_mapping",
-        "masters.mail_alert_to_users",
-    ),
     "lookup.users": (
         "admin.approver_mapping",
+        "masters.doc_to_sign_mapping",
         "masters.interviewer_mapping",
+        "masters.mail_alert_to_users",
         "masters.user_category_mapping",
         "masters.user_rig_mapping",
     ),

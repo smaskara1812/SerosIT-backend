@@ -168,7 +168,6 @@ router.register("masters/hse-meetings", masters_views.MstHseMeetingViewSet, base
 router.register("masters/hse-drills", masters_views.MstHseDrillViewSet, basename="hse-drill")
 router.register("masters/hazard-types", masters_views.MstHazardTypeViewSet, basename="hazard-type")
 router.register("masters/users", masters_views.MstUserViewSet, basename="mst-user")
-router.register("masters/employees", masters_views.MstEmployeeViewSet, basename="mst-employee")
 router.register(
     "masters/user-rig-mapping",
     masters_views.MstUserRigMappingViewSet,
@@ -557,6 +556,8 @@ urlpatterns = [
     path("admin/user-management/",views.admin_user_management_list_api,name="admin_user_management_list"),
     path("admin/user-management/<int:user_id>/",views.admin_user_management_get_api,name="admin_user_management_get"),
     path("admin/user-management/<int:user_id>/update/",views.admin_user_management_update_api,name="admin_user_management_update"),
+    path("admin/user-management/<int:user_id>/photo/",views.admin_user_management_photo_api,name="admin_user_management_photo"),
+    path("admin/user-management/designations/",views.admin_user_management_designations_api,name="admin_user_management_designations"),
     path("admin/user-management/create/",views.admin_user_management_create_api,name="admin_user_management_create"),
     path("admin/user-management/<int:user_id>/set-password/",views.admin_user_management_set_password_api,name="admin_user_management_set_password"),
     path("admin/user-management/<int:user_id>/remove-password/",views.admin_user_management_remove_password_api,name="admin_user_management_remove_password"),

@@ -115,10 +115,10 @@ def run():
     print("Document To Sign Mapping")
     url = f"{base}doc-to-sign-mapping/"
     ref = DocToSignMapping.objects.first()
-    sb = lambda **o: {"doc_name": ref.doc_name, "employee": ref.employee_id, "sign_from": day(-4000), **o}
+    sb = lambda **o: {"doc_name": ref.doc_name, "user": ref.user_id, "sign_from": day(-4000), **o}
     r = client.post(url, sb(), format="json")
     check("a new signer is accepted", r.status_code == 201, r.content.decode())
-    refused(url, sb(doc_name=ref.doc_name.lower()), "sign_from", "a repeat of Document + Employee + From (other capitals)")
+    refused(url, sb(doc_name=ref.doc_name.lower()), "sign_from", "a repeat of Document + User + From (other capitals)")
     refused(url, sb(sign_from=day(1)), "sign_from", "a From date in the future")
     refused(url, sb(sign_from=day(-3900), sign_to=day(-3950)), "sign_to", "a To date before From")
     check("a planned future To date is accepted", client.post(url, sb(sign_from=day(-3700), sign_to=day(90)), format="json").status_code == 201)

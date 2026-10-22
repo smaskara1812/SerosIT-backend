@@ -27,7 +27,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from core.media_uploads import IMAGE_EXTENSIONS, check_existing_file, detect_extension
+from core.media_uploads import IMAGE_EXTENSIONS, check_existing_file, detect_extension, next_sequence
 from core.models import (
     DocToSignMapping,
     HseDrillRecordPhotoUpload,
@@ -61,7 +61,6 @@ TARGETS = [
     Target("Incident photos", "Incident_Photos", "incident_photos", IncidentPhoto, "incident_photo_path", "incident_photo_id", INCIDENT_EXTS),
     Target("HSE drill photos", "HSE_Drills_Photos", "HSE_Drills_photos", HseDrillRecordPhotoUpload, "drill_rec_photo_upload_path",
            "drill_rec_photo_upload_id", INCIDENT_EXTS),
-    Target("Doc To Sign signatures", "Signatures", "signatures", DocToSignMapping, "sign_path", "doc_to_sign_id", IMAGE_EXTS),
     Target("FS employee photos", "Fs_Emp_Photos", "fs_emp_photos", MstFsEmployee, "fs_emp_photo_path", "fs_emp_id", IMAGE_EXTS, _fs_name),
 ]
 
@@ -87,6 +86,7 @@ class Command(BaseCommand):
         for t in TARGETS:
             lines += self._run_target(t, source, apply)
         lines += self._run_interviewers(source, apply)
+        lines += self._run_signatures(source, apply)
         os.makedirs(os.path.dirname(report), exist_ok=True)
         with open(report, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
@@ -152,6 +152,51 @@ class Command(BaseCommand):
                 for row, new in updates:
                     t.model.objects.filter(**{t.pk: getattr(row, t.pk)}).update(**{t.field: new})
         self._summary(t.label, counts, len(updates), apply)
+        return out
+
+    def _run_signatures(self, source, apply):
+        """Doc To Sign signatures are filed by USER id: signatures/<user id>_<n>.<ext>. A row still pointing at a legacy path
+        ("/Images/Signatures/84.jpg") or at a file named by employee id (signatures/84.jpg, from the first migration) is copied to the new
+        name and re-pointed. Rows of one user that share a source file share the new file too (n counts that user's distinct files)."""
+        folder = os.path.join(source, "Signatures")
+        index = self._index(folder)
+        media_dir = os.path.join(str(settings.MEDIA_ROOT), "signatures")
+        out, counts, updates = [], {}, []
+        next_n, assigned = {}, {}
+        new_style = re.compile(r"^signatures/(\d+)_\d+\.\w+$")
+        for row in DocToSignMapping.objects.exclude(user__isnull=True).order_by("doc_to_sign_id"):
+            old = row.sign_path or ""
+            m = new_style.match(old)
+            if not old or (m and int(m.group(1)) == row.user_id):
+                continue
+            name = _file_name(old)
+            if old.startswith("signatures/") and os.path.isfile(os.path.join(media_dir, name)):
+                src = os.path.join(media_dir, name)
+            elif name.lower() in index:
+                src = os.path.join(folder, index[name.lower()])
+            else:
+                src = None
+            if not src:
+                result, new = "file missing, old text kept", ""
+            else:
+                key = (row.user_id, os.path.realpath(src))
+                if key not in assigned:
+                    n = next_n.get(row.user_id) or next_sequence("signatures", row.user_id)
+                    ext = os.path.splitext(name)[1].lower()
+                    assigned[key] = f"{row.user_id}_{n}{ext}"
+                    next_n[row.user_id] = n + 1
+                ok, why, dest_name = self._place(src, "signatures", assigned[key], IMAGE_EXTS, apply)
+                assigned[key] = dest_name
+                result, new = why, f"signatures/{dest_name}" if ok else ""
+                if ok:
+                    updates.append((row, new))
+            counts[result.split(":")[0]] = counts.get(result.split(":")[0], 0) + 1
+            out.append(("Doc To Sign signatures", row.doc_to_sign_id, old, new, result))
+        if apply and updates:
+            with transaction.atomic():
+                for row, new in updates:
+                    DocToSignMapping.objects.filter(doc_to_sign_id=row.doc_to_sign_id).update(sign_path=new)
+        self._summary("Doc To Sign signatures", counts, len(updates), apply)
         return out
 
     def _run_interviewers(self, source, apply):
