@@ -59,7 +59,7 @@ from rest_framework.response import Response
 from . import audit as _audit
 from .hse_drill_record_print import render_hse_drill_record_pdf
 from .masters_views import BaseMasterViewSet
-from .media_uploads import media_url, save_media_file
+from .media_uploads import IMAGE_EXTENSIONS, media_url, next_sequence, save_media_file
 from .models import (
     HseDrillRecordCorrectiveAction,
     HseDrillRecordEvent,
@@ -111,7 +111,7 @@ def _validate_mm_ss(attrs):
             raise ValidationError({field: "Seconds (the part after the decimal point) cannot be greater than 59."})
 
 
-PHOTO_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".png")
+PHOTO_ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS
 PHOTO_SUBFOLDER = "HSE_Drills_photos"
 
 
@@ -352,7 +352,7 @@ class HseDrillRecordHdrViewSet(BaseMasterViewSet):
         if not f:
             return Response({"error": "file is required"}, status=400)
 
-        next_seq = instance.photo_uploads.count() + 1
+        next_seq = next_sequence(PHOTO_SUBFOLDER, instance.pk)
         rel_path, error = save_media_file(f, PHOTO_SUBFOLDER, f"{instance.pk}_{next_seq}", allowed_extensions=PHOTO_ALLOWED_EXTENSIONS)
         if error:
             return Response({"error": error}, status=400)

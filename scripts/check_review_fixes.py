@@ -25,7 +25,7 @@ from django.db import transaction
 from rest_framework.test import APIClient
 
 from core.models import MstBusinessGrp, MstCompany, MstCompanyLocation, MstLeavingReason, MstLocation, MstCountry, MailAlertDtl, MstBusinessSystem, MstCertInstitute, MstUser
-from core.validation_helpers import DOC_TO_SIGN_NAMES, dms_error, is_valid_email, phone_error
+from core.validation_helpers import dms_error, is_valid_email, phone_error
 
 FAILED = []
 M_PK = MstBusinessSystem._meta.pk.name
@@ -153,19 +153,38 @@ def run():
     r = client.get(f"{base}mail-alert-to-users/employee-email/?emp=-1")
     check("an unknown employee gives an empty email", r.status_code == 200 and r.json().get("email") == "", r.content.decode())
 
-    print("document to sign: one of the 28 names")
+    print("signable documents (the list Document To Sign picks from) and Document To Sign")
+    from core.models import DocToSignMapping, MstSignableDoc
+    sd = f"{base}signable-docs/"
+    check("the 28 starting names are in the table", MstSignableDoc.objects.count() >= 28 and MstSignableDoc.objects.filter(signable_doc_name="Offer_Ltr_Onshore").exists())
+    names = set(DocToSignMapping.objects.values_list("doc_name", flat=True).distinct())
+    check("every document name already on a mapping is in the table", names <= set(MstSignableDoc.objects.values_list("signable_doc_name", flat=True)), sorted(names))
+    r = client.post(sd, {"signable_doc_name": "Zz_New_Letter_Onshore", "signable_doc_active": "Y"}, format="json")
+    check("a new document name can be added", r.status_code == 201, r.content.decode())
+    new_id = r.json().get("signable_doc_id")
+    r = client.post(sd, {"signable_doc_name": "zz_new_letter_onshore", "signable_doc_active": "Y"}, format="json")
+    check("the same name in other capitals is refused", r.status_code == 400 and "signable_doc_name" in keys(r), r.content.decode())
+    r = client.post(sd, {"signable_doc_name": "Has Spaces", "signable_doc_active": "Y"}, format="json")
+    check("a name with spaces is refused", r.status_code == 400 and "signable_doc_name" in keys(r), r.content.decode())
+    r = client.post(sd, {"signable_doc_name": "Zz_Other", "signable_doc_active": "X"}, format="json")
+    check("an Active value other than Y or N is refused", r.status_code == 400 and "signable_doc_active" in keys(r), r.content.decode())
+    listed = [d["signable_doc_name"] for d in client.get(sd + "?active=Y&page_size=100").json()["results"]]
+    check("the active list offers the new name", "Zz_New_Letter_Onshore" in listed)
     emp = MstUser.objects.exclude(emp_id=None).first().emp_id
     d = {"employee": emp, "sign_from": "2026-01-01"}
     r = client.post(f"{base}doc-to-sign-mapping/", {**d, "doc_name": "My own document"}, format="json")
-    check("a free-text document name is refused", r.status_code == 400 and "doc_name" in keys(r), r.content.decode())
-    r = client.post(f"{base}doc-to-sign-mapping/", {**d, "doc_name": DOC_TO_SIGN_NAMES[0]}, format="json")
-    check("a listed document name is accepted", r.status_code == 201, r.content.decode())
-    from core.models import DocToSignMapping
-    names = set(DocToSignMapping.objects.values_list("doc_name", flat=True).distinct())
-    check("every document name already in the data is on the list", names <= set(DOC_TO_SIGN_NAMES), sorted(names - set(DOC_TO_SIGN_NAMES)))
-    js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend/src/lib/mastersChecks.js")).read()
-    front = re.findall(r"'([A-Za-z_]+)'", js[js.index("export const DOC_TO_SIGN_NAMES"):js.index("]", js.index("export const DOC_TO_SIGN_NAMES"))])
-    check("the frontend list is the same as the server's", front == list(DOC_TO_SIGN_NAMES), front)
+    check("a document name that is not in the table is refused", r.status_code == 400 and "doc_name" in keys(r), r.content.decode())
+    r = client.post(f"{base}doc-to-sign-mapping/", {**d, "doc_name": "Zz_New_Letter_Onshore"}, format="json")
+    check("a name added to the table is accepted on a mapping", r.status_code == 201, r.content.decode())
+    map_id = r.json().get("doc_to_sign_id")
+    check("a name still used by a mapping can't be deleted", client.delete(f"{sd}{new_id}/").status_code == 400)
+    check("it can be switched off instead", client.patch(f"{sd}{new_id}/", {"signable_doc_active": "N"}, format="json").status_code == 200)
+    r = client.post(f"{base}doc-to-sign-mapping/", {**d, "sign_from": "2026-01-03", "doc_name": "Zz_New_Letter_Onshore"}, format="json")
+    check("a switched-off name is no longer accepted on a new mapping", r.status_code == 400 and "doc_name" in keys(r), r.content.decode())
+    r = client.patch(f"{base}doc-to-sign-mapping/{map_id}/", {"sign_from": "2026-01-01", "doc_name": "Zz_New_Letter_Onshore"}, format="json")
+    check("an old mapping keeping its (now switched-off) name can still be edited", r.status_code == 200, r.content.decode())
+    client.delete(f"{base}doc-to-sign-mapping/{map_id}/")
+    check("once no mapping uses it, the name can be deleted", client.delete(f"{sd}{new_id}/").status_code == 204)
 
     print("user management (its own views, not a serializer)")
     um = "/api/admin/user-management/create/"
@@ -180,6 +199,38 @@ def run():
     check("changing a user's email to test@inco is refused", r.status_code == 400, r.content.decode())
     r = client.post(f"/api/admin/user-management/{uid}/update/", {"name": "zz review", "email": "zz@seros.in", "user_to": "0027-01-01"}, format="json")
     check("changing a user's To to year 27 is refused", r.status_code == 400, r.content.decode())
+
+    print("document to sign: signature upload")
+    import io
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from django.conf import settings
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 60
+    up = "/api/masters/doc-to-sign-mapping/upload-sign/"
+    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
+    check("a PNG signature is saved under signatures/", r.status_code == 200 and r.json().get("path", "").startswith(f"signatures/{emp}_"), r.content.decode())
+    first = r.json().get("path")
+    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
+    check("a second upload gets its own number, so the first is kept", r.status_code == 200 and r.json().get("path") != first and os.path.isfile(os.path.join(settings.MEDIA_ROOT, first)), r.content.decode())
+    second = r.json().get("path")
+    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.gif", b"GIF89a" + b"0" * 20, content_type="image/gif")}, format="multipart")
+    check("a GIF is refused", r.status_code == 400, r.content.decode())
+    r = client.post(up, {"emp_id": str(emp), "file": SimpleUploadedFile("sig.png", b"not really a png", content_type="image/png")}, format="multipart")
+    check("a file that is not really a PNG is refused", r.status_code == 400, r.content.decode())
+    r = client.post(up, {"file": SimpleUploadedFile("sig.png", png, content_type="image/png")}, format="multipart")
+    check("an upload with no employee is refused", r.status_code == 400, r.content.decode())
+    d2 = {"employee": emp, "sign_from": "2026-01-02", "doc_name": "Offer_Ltr_Onshore"}
+    r = client.post(f"{base}doc-to-sign-mapping/", {**d2, "sign_path": "../../etc/passwd"}, format="json")
+    check("a made-up signature path is refused", r.status_code == 400 and "sign_path" in keys(r), r.content.decode())
+    r = client.post(f"{base}doc-to-sign-mapping/", {**d2, "sign_path": second}, format="json")
+    check("the uploaded path is accepted and comes back with a link", r.status_code == 201 and (r.json().get("sign_url") or "").split("?")[0].endswith(second), r.content.decode())
+    for p in (first, second):
+        try:
+            os.remove(os.path.join(settings.MEDIA_ROOT, p))
+        except OSError:
+            pass
+    old = DocToSignMapping.objects.exclude(sign_path__startswith="signatures/").exclude(sign_path=None).first()
+    r = client.patch(f"{base}doc-to-sign-mapping/{old.pk}/", {"sign_from": str(old.sign_from), "sign_path": old.sign_path}, format="json")
+    check("an old record with a legacy path can still be edited", r.status_code == 200, r.content.decode())
 
     print("leaving reason details")
     reason = MstLeavingReason.objects.get(leaving_reason="Non Reporting")

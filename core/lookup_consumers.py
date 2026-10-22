@@ -28,14 +28,8 @@ LOOKUP_CONSUMERS = {
     "lookup.employees": (
         "it_asset.it_accessory_holders",
         "masters.business_systems",
-        "masters.crew_schedule_exceptions",
         "masters.doc_to_sign_mapping",
         "masters.mail_alert_to_users",
-        "masters.rig_crew_exceptions",
-        "masters.rig_site_mapping",
-        "qhse.hazard_id_card",
-        "qhse.hse_drill_record",
-        "qhse.incident_details",
     ),
     "lookup.users": (
         "admin.approver_mapping",
@@ -153,7 +147,13 @@ LOOKUP_CONSUMERS = {
         "masters.user_category_mapping",
     ),
     "masters.fs_employees": (
+        "masters.crew_schedule_exceptions",
         "masters.fs_emp_cur_status",
+        "masters.rig_crew_exceptions",
+        "masters.rig_site_mapping",
+        "qhse.hazard_id_card",
+        "qhse.hse_drill_record",
+        "qhse.incident_details",
     ),
     "masters.hazard_types": (
         "qhse.hazard_id_card",
@@ -299,6 +299,9 @@ LOOKUP_CONSUMERS = {
     "masters.serv_types": (
         "masters.fs_catg_to_sstype",
         "masters.fs_emp_cur_status",
+    ),
+    "masters.signable_docs": (
+        "masters.doc_to_sign_mapping",
     ),
     "masters.vendor_types": (
         "masters.vendors",

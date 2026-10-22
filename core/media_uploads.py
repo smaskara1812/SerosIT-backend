@@ -30,10 +30,16 @@ Validated here, in order, before a single byte is written:
 """
 
 import os
+from urllib.parse import quote
 
 from django.conf import settings
+from django.core import signing
+from django.http import FileResponse, Http404
 
-DEFAULT_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".png", ".pdf")
+# The one list of picture types every upload point accepts (the frontend mirrors it in src/lib/mediaTypes.js). Add a type here, add its
+# leading bytes to _MAGIC_SIGNATURES below, and add it to the frontend list.
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
+DEFAULT_ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS + (".pdf",)
 DEFAULT_MAX_SIZE_MB = 10
 
 # Extensions that must never appear anywhere in an uploaded filename, even
@@ -43,7 +49,7 @@ DEFAULT_MAX_SIZE_MB = 10
 # the wrong Content-Type.
 _DANGEROUS_EXTENSIONS = {
     ".php", ".php3", ".php4", ".php5", ".phtml", ".pht",
-    ".asp", ".aspx", ".jsp", ".jspx",".exe",".ps1",".sql"
+    ".asp", ".aspx", ".jsp", ".jspx", ".sql",
     ".exe", ".dll", ".com", ".bat", ".cmd", ".sh", ".bash", ".ps1",
     ".py", ".pyc", ".rb", ".pl", ".cgi",
     ".js", ".mjs", ".html", ".htm", ".svg", ".xml",
@@ -62,6 +68,10 @@ _MAGIC_SIGNATURES = {
     ".gif": [b"GIF87a", b"GIF89a"],
     ".bmp": [b"BM"],
     ".tiff": [b"II*\x00", b"MM\x00*"],
+    ".tif": [b"II*\x00", b"MM\x00*"],
+    ".webp": [b"RIFF"],  # plus "WEBP" at byte 8, see _matches
+    ".heic": [b""],  # Apple photos: an "ftyp" box with a HEIF brand, see _matches
+    ".heif": [b""],
     ".pdf": [b"%PDF-"],
 }
 
@@ -74,13 +84,26 @@ def _has_dangerous_extension(name):
     return any(f".{p}" in _DANGEROUS_EXTENSIONS for p in parts[1:])
 
 
-def _sniff_mismatch(f, ext):
-    signatures = _MAGIC_SIGNATURES.get(ext)
-    if not signatures:
+_HEIF_BRANDS = (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1")
+
+
+def _matches(head, ext):
+    """Do a file's leading bytes fit what its extension claims?"""
+    if not any(head.startswith(sig) for sig in _MAGIC_SIGNATURES[ext]):
         return False
-    head = f.read(max(len(sig) for sig in signatures))
+    if ext == ".webp":
+        return head[8:12] == b"WEBP"
+    if ext in (".heic", ".heif"):
+        return head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS
+    return True
+
+
+def _sniff_mismatch(f, ext):
+    if ext not in _MAGIC_SIGNATURES:
+        return False
+    head = f.read(16)
     f.seek(0)
-    return not any(head.startswith(sig) for sig in signatures)
+    return not _matches(head, ext)
 
 
 def save_media_file(f, subfolder, filename, allowed_extensions=DEFAULT_ALLOWED_EXTENSIONS, max_size_mb=DEFAULT_MAX_SIZE_MB):
@@ -111,8 +134,74 @@ def save_media_file(f, subfolder, filename, allowed_extensions=DEFAULT_ALLOWED_E
     return f"{subfolder}/{full_filename}", None
 
 
+def check_existing_file(abs_path, allowed_extensions=DEFAULT_ALLOWED_EXTENSIONS, max_size_mb=DEFAULT_MAX_SIZE_MB):
+    """The same checks as save_media_file, for a file that is already on disk (the legacy media migration): returns an error string, or None
+    when the file passes. One set of rules for what may live in the media folder, whether it arrived by upload or by migration."""
+    name = os.path.basename(abs_path)
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in allowed_extensions:
+        return f"extension {ext or '(none)'} is not allowed"
+    if _has_dangerous_extension(name):
+        return "the file name is not allowed"
+    if os.path.getsize(abs_path) > max_size_mb * 1024 * 1024:
+        return f"larger than {max_size_mb} MB"
+    with open(abs_path, "rb") as f:
+        if _sniff_mismatch(f, ext):
+            return "the contents do not match the extension"
+    return None
+
+
+def next_sequence(subfolder, prefix):
+    """The next free number for files named <prefix>_<n>.<ext> in a media subfolder: one more than the highest number already on disk, so a
+    new upload can never take the name of an existing file (migrated legacy files are named this way too, with gaps and an empty
+    number, e.g. 109_.jpg)."""
+    folder = os.path.join(settings.MEDIA_ROOT, subfolder)
+    used = [0]
+    if os.path.isdir(folder):
+        for name in os.listdir(folder):
+            stem = os.path.splitext(name)[0]
+            head, sep, tail = stem.rpartition("_")
+            if sep and head == str(prefix) and tail.isdigit():
+                used.append(int(tail))
+    return max(used) + 1
+
+
+def detect_extension(abs_path):
+    """The extension a file's own leading bytes say it has (".png" for a PNG saved as "x.jpg"), or None when it matches no known type."""
+    with open(abs_path, "rb") as fh:
+        head = fh.read(16)
+    for ext in (".png", ".jpg", ".pdf"):
+        if _matches(head, ext):
+            return ext
+    return None
+
+
+MEDIA_LINK_MAX_AGE = 60 * 60  # seconds a signed media link stays valid
+_MEDIA_SALT = "seros.media"
+
+
 def media_url(request, rel_path):
+    """A signed, expiring link to a stored file. <img> tags cannot send the JWT header, so the API (which is authenticated) hands out
+    links carrying a signature of the path; the media view below only serves a path whose signature is valid and fresh."""
     if not rel_path:
         return None
-    url = settings.MEDIA_URL + rel_path
+    sig = signing.TimestampSigner(salt=_MEDIA_SALT).sign(rel_path)[len(rel_path) + 1:]  # "<timestamp>:<signature>"
+    url = "/" + settings.MEDIA_URL.lstrip("/") + rel_path + "?s=" + quote(sig, safe="")
     return request.build_absolute_uri(url) if request else url
+
+
+def serve_media(request, path):
+    """Serves a file under MEDIA_ROOT to anyone holding a valid signed link (whether DEBUG is on or off). Refuses path traversal."""
+    sig = request.GET.get("s", "")
+    try:
+        signing.TimestampSigner(salt=_MEDIA_SALT).unsign(f"{path}:{sig}", max_age=MEDIA_LINK_MAX_AGE)
+    except signing.BadSignature:
+        raise Http404
+    root = os.path.realpath(settings.MEDIA_ROOT)
+    full = os.path.realpath(os.path.join(root, path))
+    if not full.startswith(root + os.sep) or not os.path.isfile(full):
+        raise Http404
+    resp = FileResponse(open(full, "rb"))
+    resp["X-Content-Type-Options"] = "nosniff"
+    resp["Cache-Control"] = "private, max-age=300"
+    return resp

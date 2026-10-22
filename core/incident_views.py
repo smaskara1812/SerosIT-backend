@@ -43,7 +43,7 @@ from .incident_serializers import (
     IncidentRootCauseSerializer,
 )
 from .masters_views import BaseMasterViewSet
-from .media_uploads import media_url, save_media_file
+from .media_uploads import IMAGE_EXTENSIONS, media_url, next_sequence, save_media_file
 from .models import (
     FsCatgToRigTypeMapping,
     Incident,
@@ -60,7 +60,7 @@ from .validation_helpers import fields_changed
 from .xlsx_export import build_xlsx_response
 
 CONTRACTOR_REQUIRED_THIRD_PARTY = {"0", "1"}
-PHOTO_ALLOWED_EXTENSIONS = (".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".png")
+PHOTO_ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS
 
 
 def _resolve_financial_year(incident_date):
@@ -257,7 +257,7 @@ class IncidentDetailViewSet(BaseMasterViewSet):
         if not f:
             return Response({"error": "file is required"}, status=400)
 
-        next_seq = instance.photos.count() + 1
+        next_seq = next_sequence("incident_photos", instance.pk)
         rel_path, error = save_media_file(
             f, "incident_photos", f"{instance.pk}_{next_seq}", allowed_extensions=PHOTO_ALLOWED_EXTENSIONS
         )

@@ -588,7 +588,7 @@ class MstCostCentre(models.Model):
         related_name="cost_centres",
     )
     fs_emp = models.ForeignKey(
-        "MstEmployee",
+        "MstFsEmployee",
         db_column="fs_emp_id",
         null=True,
         blank=True,
@@ -1361,6 +1361,25 @@ class MstUserFsCatgMapping(models.Model):
         return f"{self.user.user_login_id} — {self.fs_category.fs_category_name}"
 
 
+class MstSignableDoc(models.Model):
+    """A document name that can be put on Document To Sign Mapping (the old system kept these as a fixed list in its code). The name is the
+    document's template name, with underscores, e.g. Offer_Ltr_Onshore; Document To Sign Mapping stores that name as text."""
+
+    signable_doc_id = models.AutoField(primary_key=True)
+    signable_doc_name = models.CharField(max_length=50)
+    signable_doc_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_signable_doc"
+
+    def __str__(self):
+        return self.signable_doc_name
+
+
 class DocToSignMapping(models.Model):
     doc_to_sign_id = models.AutoField(primary_key=True)
     doc_name = models.CharField(max_length=50)
@@ -1875,7 +1894,7 @@ class RigSiteMapping(models.Model):
     )
     camp_office_addr = models.CharField(max_length=150)
     contact_fs_emp_1 = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="contact_fs_emp_id_1",
         null=True,
         blank=True,
@@ -1884,7 +1903,7 @@ class RigSiteMapping(models.Model):
     )
     contact_tel_no_1 = models.CharField(max_length=10, null=True, blank=True)
     contact_fs_emp_2 = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="contact_fs_emp_id_2",
         null=True,
         blank=True,
@@ -1931,7 +1950,7 @@ class RigCrewException(models.Model):
         MstRank, db_column="rank_id", null=True, blank=True, on_delete=models.PROTECT, related_name="crew_exceptions"
     )
     fs_emp = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="fs_emp_id",
         null=True,
         blank=True,
@@ -1979,7 +1998,7 @@ class CrewScheduleException(models.Model):
         related_name="schedule_exceptions",
     )
     fs_emp = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="fs_emp_id",
         null=True,
         blank=True,
@@ -2822,7 +2841,7 @@ class Incident(models.Model):
     incident_reported_dt = models.DateTimeField(null=True, blank=True)
     person_injured = models.CharField(max_length=1, null=True, blank=True)
     fs_emp = models.ForeignKey(
-        MstEmployee, db_column="fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
+        "MstFsEmployee", db_column="fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="incidents"
     )
     emp_name = models.CharField(max_length=75, null=True, blank=True)
     rank = models.ForeignKey(
@@ -3026,7 +3045,7 @@ class HazardCard(models.Model):
     event_dt = models.DateTimeField()
     reported_by_party = models.CharField(max_length=15)
     reported_by_fs_emp = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="reported_by_fs_emp_id",
         null=True,
         blank=True,
@@ -4046,10 +4065,10 @@ class HseDrillRecordHdr(models.Model):
     )
     head_count = models.IntegerField()
     initiated_by_fs_emp_1 = models.ForeignKey(
-        MstEmployee, db_column="initiated_by_fs_emp_id_1", on_delete=models.PROTECT, related_name="drills_initiated_as_1"
+        "MstFsEmployee", db_column="initiated_by_fs_emp_id_1", on_delete=models.PROTECT, related_name="drills_initiated_as_1"
     )
     initiated_by_fs_emp_2 = models.ForeignKey(
-        MstEmployee,
+        "MstFsEmployee",
         db_column="initiated_by_fs_emp_id_2",
         null=True,
         blank=True,
@@ -4071,7 +4090,7 @@ class HseDrillRecordHdr(models.Model):
     abandon_muster_offshore = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
     total_time_of_drill = models.DecimalField(max_digits=4, decimal_places=2)
     approved_by_oim_fs_emp = models.ForeignKey(
-        MstEmployee, db_column="approved_by_oim_fs_emp_id", on_delete=models.PROTECT, related_name="drills_approved"
+        "MstFsEmployee", db_column="approved_by_oim_fs_emp_id", on_delete=models.PROTECT, related_name="drills_approved"
     )
     approved_by_companyman = models.CharField(max_length=20, null=True, blank=True)
     revision_value = models.IntegerField(default=0)

@@ -36,18 +36,6 @@ EMAIL_FIELD_NAMES = {
     "email_addr", "trainer_email_id", "training_org_email",
 }
 
-# Document To Sign Mapping's Document Name is one of these, as in the old system (frontend/src/lib/mastersChecks.js has the same list).
-DOC_TO_SIGN_NAMES = (
-    "Appreciation_Ltr_Offshore", "Appreciation_Ltr_Onshore", "Conformation_Ltr_Offshore", "Conformation_Ltr_Onshore",
-    "Contract_Extension_Ltr_Offshore", "Contract_Extension_Ltr_Onshore", "Experience_Ltr_Offshore", "Experience_Ltr_Onshore",
-    "Increment_Ltr_Offshore", "Increment_Ltr_Onshore", "Joining_Contracts_Offshore", "Joining_Contracts_Onshore",
-    "Material_Requisition", "Material_Requisition_Onshore", "Offer_Ltr_Offshore", "Offer_Ltr_Onshore",
-    "Promotion_Ltr_Offshore", "Promotion_Ltr_Onshore", "Salary_Correction_Ltr_Offshore", "Salary_Correction_Ltr_Onshore",
-    "Service_Requisition_Offshore", "Service_Requisition_Onshore", "Termination_Ltr_Offshore", "Termination_Ltr_Onshore",
-    "User_Defined_Resume_Offshore", "User_Defined_Resume_Onshore", "Warning_Ltr_Offshore", "Warning_Ltr_Onshore",
-)
-
-
 def year_message(text):
     """For a date given as text (YYYY-MM-DD...), the year message when its year is outside 1900-2100, else ''."""
     m = re.match(r"\s*(\d+)-\d{1,2}-\d{1,2}", str(text or ""))

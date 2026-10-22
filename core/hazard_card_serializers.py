@@ -77,7 +77,7 @@ class HazardCardDetailSerializer(serializers.ModelSerializer):
         if not obj.reported_by_fs_emp_id:
             return ""
         e = obj.reported_by_fs_emp
-        return " ".join(p for p in [e.emp_fname, e.emp_mname, e.emp_sname] if p)
+        return str(e)
 
     # ── legacy front-end / database rules (Hazard ID Card) ──
     # Each is checked only when the fields it involves are new or changed, so an old

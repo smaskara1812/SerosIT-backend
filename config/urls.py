@@ -1,15 +1,16 @@
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
+
+from core.media_uploads import serve_media
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("core.urls")),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Media is served by a signed-link view in every mode (dev and production), never open static serving.
+urlpatterns.append(re_path(r"^" + settings.MEDIA_URL.lstrip("/") + r"(?P<path>.+)$", serve_media))
 
 if settings.ENABLE_SILK:
     urlpatterns.append(path("silk/", include("silk.urls", namespace="silk")))

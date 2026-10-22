@@ -11,7 +11,7 @@ real business rules confirmed from that code rather than guessed:
     dashboard_access.current_contract_by_rig already does for Fleet
     Operating Picture / Contract Exposure.
   - "Reported by" splits on Reported By Party: party == 'EOSIL' resolves
-    to an MstEmployee FK (reported_by_fs_emp); every other party is plain
+    to an MstFsEmployee FK (reported_by_fs_emp); every other party is plain
     free text (reported_by_name), with the other field cleared.
 
 Two things have no legacy code to confirm against (the stored procedures
@@ -127,7 +127,7 @@ class HazardCardViewSet(BaseMasterViewSet):
             lambda cid, no, op, loc: f"{no} ({op}) - {loc}" if cid else "",
         ),
         "reported_by_fs_emp_name": (
-            ("reported_by_fs_emp_id", "reported_by_fs_emp__emp_fname", "reported_by_fs_emp__emp_mname", "reported_by_fs_emp__emp_sname"),
+            ("reported_by_fs_emp_id", "reported_by_fs_emp__fs_emp_fname", "reported_by_fs_emp__fs_emp_mname", "reported_by_fs_emp__fs_emp_lname"),
             lambda eid, a, b, c: " ".join(p for p in (a, b, c) if p) if eid else "",
         ),
     }

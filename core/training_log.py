@@ -307,6 +307,9 @@ class TrainingLogDtlSerializer(serializers.ModelSerializer):
         return str(obj.fs_emp) if obj.fs_emp_id else ""
 
     def get_certificate_url(self, obj):
+        path = (obj.certificate_path or "").lstrip("/")
+        if not path or not os.path.isfile(os.path.join(str(settings.MEDIA_ROOT), path)):
+            return None
         return media_url(self.context.get("request"), obj.certificate_path)
 
     # ── validation ────────────────────────────────────────────────────────

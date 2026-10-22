@@ -48,12 +48,12 @@ EDIT_OVERRIDES = {
     "masters.cost_centre_to_company_mapping": ("mapping_to", ["2090-01-01", "2090-01-02", "2090-01-03"]),
     "masters.crew_change_reliever_mapping": ("active", ["Y", "N", "Y"]),
     "masters.crew_schedule_exceptions": ("exception_to", ["2090-01-01", "2090-01-02", "2090-01-03"]),
-    "masters.doc_to_sign_mapping": ("sign_path", ["ZZ/a.png", "ZZ/b.png", "ZZ/c.png"]),
+    "masters.doc_to_sign_mapping": ("sign_path", ["signatures/zz_a.png", "signatures/zz_b.png", "signatures/zz_c.png"]),
     "masters.drilling_work_shift": ("work_shift_days", [1, 2, 1]),  # shift days must be 1 or 2
     "masters.fs_catg_to_rank_mapping": ("rank_order", [901, 902, 903]),
     "masters.fs_catg_to_rig_type_mapping": ("mapping_active", ["Y", "N", "Y"]),
     "masters.fs_catg_to_sstype": ("business_system_id_2", ["Y", "N", "Y"]),
-    "masters.interviewer_mapping": ("sign_path", ["ZZ/a.png", "ZZ/b.png", "ZZ/c.png"]),
+    "masters.interviewer_mapping": ("sign_path", ["signatures/zz_a.png", "signatures/zz_b.png", "signatures/zz_c.png"]),
     "masters.nationality_to_emp_type_mapping": ("active", ["Y", "N", "Y"]),
     "masters.project_drilling_rates": ("rate", ["101", "102", "103"]),
     "masters.rig_crew_exceptions": ("exception_to", ["2090-01-01", "2090-01-02", "2090-01-03"]),
@@ -89,6 +89,7 @@ CREATE_EXTRA = {
     "qhse.activities": {"intimate_vessel": "N"},
     "drilling.drilling_information": {"distance_covered_kms_knots": 5},
     "qhse.rig_certificate_schedule": {"scheduled_dt": "2090-01-01"},
+    "masters.doc_to_sign_mapping": {"sign_path": "signatures/zz_a.png"},
 }
 
 # Pages whose records cannot be created or deleted on their own (the record belongs to another one, so
@@ -248,6 +249,8 @@ def exercise_basic(client, entity):
     def uniq(n):
         if edit_values:
             return edit_values[n - 1]
+        if edit_field in EMAIL_FIELD_NAMES:  # an email field needs a real-looking address
+            return f"zz{os.getpid() % 1000}{n}@t.in"[:limit]
         return f"ZZ{os.getpid() % 1000}{n}"[:limit]
 
     detail = client.get(f"{url}{sample.pk}/")

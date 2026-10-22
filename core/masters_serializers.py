@@ -1,8 +1,11 @@
+import os
 import re
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import serializers
 
-from .validation_helpers import DOC_TO_SIGN_NAMES, dms_error, fields_changed, phone_error
+from .media_uploads import media_url
+from .validation_helpers import dms_error, fields_changed, phone_error
 
 
 def _check_unique_name(serializer, attrs, field, what):
@@ -22,6 +25,7 @@ def _check_unique_name(serializer, attrs, field, what):
 
 from .models import (
     DocToSignMapping,
+    MstSignableDoc,
     MstCert,
     MstCertInstitute,
     MstCertType,
@@ -756,9 +760,28 @@ class MstUserFsCatgMappingSerializer(serializers.ModelSerializer):
         return f"{obj.user.user_name} — {obj.fs_category.fs_category_name}"
 
 
+class MstSignableDocSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstSignableDoc
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "signable_doc_name", "A document named {value} already exists.")
+        name = attrs.get("signable_doc_name")
+        if name and _changed(self, attrs, "signable_doc_name") and not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            errors["signable_doc_name"] = "Use only letters, digits and underscores, like Offer_Ltr_Onshore (the document's template name)."
+        _check_active(self, attrs, errors, "signable_doc_active")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+
 class DocToSignMappingSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee", read_only=True, default="")
     display_name = serializers.SerializerMethodField()
+    sign_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DocToSignMapping
@@ -769,8 +792,14 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
         errors = {}
         if "doc_name" in attrs:
             attrs["doc_name"] = (attrs["doc_name"] or "").strip()
-        if attrs.get("doc_name") and _changed(self, attrs, "doc_name") and attrs["doc_name"] not in DOC_TO_SIGN_NAMES:
+        if attrs.get("doc_name") and _changed(self, attrs, "doc_name") and not MstSignableDoc.objects.filter(signable_doc_name=attrs["doc_name"], signable_doc_active="Y").exists():
             errors["doc_name"] = "Choose a document from the list."
+        # A new signature comes from the upload on the form (a file under signatures/); an old legacy path can stay as it is.
+        path = (attrs.get("sign_path") or "").strip()
+        if "sign_path" in attrs:
+            attrs["sign_path"] = path or None
+        if path and _changed(self, attrs, "sign_path") and not re.fullmatch(r"signatures/[A-Za-z0-9_.-]+", path):
+            errors["sign_path"] = "Upload the signature image again."
         _check_date_not_future(self, attrs, errors, "sign_from", "From date")
         _check_to_after_from(self, attrs, errors, "sign_from", "sign_to", "To date")
         name, emp, start = (_get(self, attrs, f) for f in ("doc_name", "employee", "sign_from"))
@@ -783,6 +812,13 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
+
+    def get_sign_url(self, obj):
+        # A migrated row can still hold a legacy "/Images/..." path that is not a file here; only a real file gets a link.
+        path = (obj.sign_path or "").lstrip("/")
+        if not path or not os.path.isfile(os.path.join(settings.MEDIA_ROOT, path)):
+            return None
+        return media_url(self.context.get("request"), path)
 
     def get_display_name(self, obj):
         return f"{obj.doc_name} — {obj.employee}"
@@ -813,13 +849,11 @@ class MstInterviewerSerializer(serializers.ModelSerializer):
         return f"{obj.user.user_name} ({obj.user.user_login_id})"
 
     def get_sign_url(self, obj):
-        if not obj.sign_path:
+        # only a real file gets a link (a legacy path whose file never came across shows no preview)
+        path = (obj.sign_path or "").lstrip("/")
+        if not path or not os.path.isfile(os.path.join(str(settings.MEDIA_ROOT), path)):
             return None
-        request = self.context.get("request")
-        from django.conf import settings
-
-        url = settings.MEDIA_URL + obj.sign_path
-        return request.build_absolute_uri("/" + url) if request else url
+        return media_url(self.context.get("request"), obj.sign_path)
 
     def get_display_name(self, obj):
         return f"{obj.department.dept_dispname} — {obj.user.user_name}"
@@ -1838,13 +1872,10 @@ class RigCertSerializer(serializers.ModelSerializer):
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
     def get_certificate_url(self, obj):
-        if not obj.certificate_path:
+        path = (obj.certificate_path or "").lstrip("/")
+        if not path or not os.path.isfile(os.path.join(str(settings.MEDIA_ROOT), path)):
             return None
-        from django.conf import settings
-
-        request = self.context.get("request")
-        url = settings.MEDIA_URL + obj.certificate_path
-        return request.build_absolute_uri("/" + url) if request else url
+        return media_url(self.context.get("request"), obj.certificate_path)
 
     def get_display_name(self, obj):
         return f"{obj.rig.rig_name} — {obj.buss_cert.buss_cert_name} ({obj.certificate_no})"
@@ -1967,14 +1998,24 @@ class MstFsEmployeeSerializer(serializers.ModelSerializer):
     rank_name = serializers.CharField(source="rank.rank_name", read_only=True)
     emp_type_name = serializers.CharField(source="emp_type.emp_type_name", read_only=True)
     rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = MstFsEmployee
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+        # the photo path is only ever set by the photo upload endpoint (guarded, named by the employee id), never typed in
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "fs_emp_photo_path"]
 
     def get_full_name(self, obj):
         return str(obj)
+
+    def get_photo_url(self, obj):
+        """A signed link to the photo, only when the file is really in the media folder (a path carried over from the legacy system
+        whose file never came across shows no photo; the old text stays in the record)."""
+        path = obj.fs_emp_photo_path
+        if not path or not os.path.isfile(os.path.join(str(settings.MEDIA_ROOT), path.lstrip("/"))):
+            return None
+        return media_url(self.context.get("request"), path)
 
     def validate(self, attrs):
         _check_flags(attrs, FS_FLAGS)

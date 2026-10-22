@@ -1,8 +1,11 @@
 import csv
 import itertools
 import datetime
+import os
+import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.db.models import DateTimeField, Prefetch, ProtectedError, Q, Value
 from django.db.models.functions import Cast, Coalesce
 from django.http import HttpResponse, StreamingHttpResponse
@@ -14,6 +17,7 @@ from rest_framework.response import Response
 from . import audit as _audit
 from .models import (
     DocToSignMapping,
+    MstSignableDoc,
     JobDescriptionDtl,
     JobDescriptionHdr,
     MstCertInstitute,
@@ -123,6 +127,7 @@ from .models import (
 )
 from .masters_serializers import (
     DocToSignMappingSerializer,
+    MstSignableDocSerializer,
     JobDescriptionDtlSerializer,
     JobDescriptionHdrSerializer,
     MstCertInstituteSerializer,
@@ -229,7 +234,7 @@ from .masters_serializers import (
     RigCertScheduleSerializer,
     MstActivitySerializer,
 )
-from .media_uploads import media_url, save_media_file
+from .media_uploads import IMAGE_EXTENSIONS, media_url, next_sequence, save_media_file
 from .lookup_consumers import LOOKUP_CONSUMERS
 from .permissions import HasLookupAccess, HasMenuPermission, HasMenuPermissionOrLookup, get_user_access, holds_a_right_on
 
@@ -1620,6 +1625,21 @@ class MstUserFsCatgMappingViewSet(BaseMasterViewSet):
         return f"{instance.user.user_name} — {instance.fs_category.fs_category_name}"
 
 
+class MstSignableDocViewSet(BaseMasterViewSet):
+    """The document names Document To Sign Mapping can use. A name still used by a mapping can't be deleted (switch it off instead)."""
+
+    queryset = MstSignableDoc.objects.all()
+    serializer_class = MstSignableDocSerializer
+    entity_key = "masters.signable_docs"
+    name_field = "signable_doc_name"
+    active_field = "signable_doc_active"
+    search_fields = ["signable_doc_name"]
+
+    def _references(self, instance):
+        count = DocToSignMapping.objects.filter(doc_name=instance.signable_doc_name).count()
+        return [{"label": "Document To Sign Mappings", "count": count}] if count else []
+
+
 class DocToSignMappingViewSet(BaseMasterViewSet):
     queryset = DocToSignMapping.objects.select_related("employee").all()
     serializer_class = DocToSignMappingSerializer
@@ -1634,6 +1654,21 @@ class DocToSignMappingViewSet(BaseMasterViewSet):
 
     def label_for(self, instance):
         return f"{instance.doc_name} — {instance.employee}"
+
+    @action(detail=False, methods=["post"], url_path="upload-sign")
+    def upload_sign(self, request):
+        """Save a signature image under MEDIA_ROOT/signatures, named <employee id>_<n> (the legacy convention was <employee id>.jpg; the number
+        keeps an earlier signature, which older mappings may still point at, from being overwritten)."""
+        emp_id = str(request.data.get("emp_id") or "")
+        f = request.FILES.get("file")
+        if not emp_id.isdigit() or not f:
+            return Response({"error": "emp_id and file are required"}, status=400)
+        folder = os.path.join(settings.MEDIA_ROOT, "signatures")
+        used = [int(m.group(1)) for n in (os.listdir(folder) if os.path.isdir(folder) else []) if (m := re.fullmatch(rf"{emp_id}_(\d+)\.\w+", n))]
+        rel_path, error = save_media_file(f, "signatures", f"{emp_id}_{max(used, default=0) + 1}", allowed_extensions=IMAGE_EXTENSIONS, max_size_mb=2)
+        if error:
+            return Response({"error": error}, status=400)
+        return Response({"path": rel_path, "url": media_url(request, rel_path)})
 
 
 class MstInterviewerViewSet(BaseMasterViewSet):
@@ -1746,7 +1781,7 @@ class MstFsEmployeeViewSet(BaseMasterViewSet):
     entity_key = "masters.fs_employees"
     # Picked from in the Employee Current Status form.
     lookup_strict = True
-    lookup_fields = ('fs_emp_id', 'full_name', 'fs_emp_name')
+    lookup_fields = ('fs_emp_id', 'full_name', 'fs_emp_name', 'rank', 'rank_name')
     active_field = "fs_emp_active"
     filterable_fields = ["fs_category", "rank", "rig", "emp_type"]
     search_fields = ["fs_emp_fname", "fs_emp_mname", "fs_emp_lname", "fs_emp_staff_id", "rank__rank_name", "rig__rig_name"]
@@ -1763,6 +1798,33 @@ class MstFsEmployeeViewSet(BaseMasterViewSet):
 
     def label_for(self, instance):
         return str(instance)
+
+    @action(detail=True, methods=["post", "delete"], url_path="photo")
+    def upload_photo(self, request, pk=None):
+        """POST a picture to set the employee's photo; DELETE clears it. Nothing is ever deleted from disk: every photo is kept as
+        fs_emp_photos/<employee id>_<n>.<ext> (n = next free number), and the history log records the old and the new file name."""
+        from django.utils import timezone
+
+        instance = self.get_object()
+        old = instance.fs_emp_photo_path or ""
+        if request.method == "DELETE":
+            new = None
+        else:
+            f = request.FILES.get("file")
+            if not f:
+                return Response({"error": "file is required"}, status=400)
+            seq = next_sequence("fs_emp_photos", instance.pk)
+            new, error = save_media_file(f, "fs_emp_photos", f"{instance.pk}_{seq}", allowed_extensions=IMAGE_EXTENSIONS, max_size_mb=5)
+            if error:
+                return Response({"error": error}, status=400)
+        instance.fs_emp_photo_path = new
+        instance.mod_user_id, instance.mod_dt = self._current_user_id(request), timezone.now()
+        instance.save(update_fields=["fs_emp_photo_path", "mod_user_id", "mod_dt"])
+        _audit.record_action(
+            request, "update", self.entity_key, instance.pk, self.label_for(instance),
+            {"fs_emp_photo_path": {"old": old or None, "new": new}}, target=instance,
+        )
+        return Response(self.get_serializer(instance).data)
 
 
 class FsEmpCurStatusViewSet(BaseMasterViewSet):

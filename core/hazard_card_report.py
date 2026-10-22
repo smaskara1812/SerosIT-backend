@@ -48,7 +48,7 @@ def _fmt_naive(dt):
 
 
 def _emp_name(emp):
-    return " ".join(p for p in [emp.emp_fname, emp.emp_mname, emp.emp_sname] if p)
+    return str(emp)
 
 
 def _pie_chart(title, counts):

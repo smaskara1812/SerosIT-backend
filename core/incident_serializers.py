@@ -1,3 +1,6 @@
+import os
+
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -57,7 +60,11 @@ class IncidentPhotoSerializer(serializers.ModelSerializer):
         fields = ["incident_photo_id", "incident_photo_path", "url"]
 
     def get_url(self, obj):
-        return media_url(self.context.get("request"), obj.incident_photo_path)
+        # a photo whose file never came across from the legacy system has no link (the old text stays in the record)
+        path = obj.incident_photo_path
+        if not path or not os.path.isfile(os.path.join(settings.MEDIA_ROOT, path.lstrip("/"))):
+            return None
+        return media_url(self.context.get("request"), path)
 
 
 class IncidentDetailSerializer(serializers.ModelSerializer):
