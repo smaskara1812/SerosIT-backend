@@ -1023,6 +1023,19 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     # (?alert=<alert_id>) — filters this list down to just that alert's rows.
     filterable_fields = ["alert"]
 
+    @action(detail=False, methods=["get"], url_path="employee-email")
+    def employee_email(self, request):
+        """The email on the signed-in login of this employee (?emp=<id>), so choosing an employee on the Alert To Users form can fill the
+        Email field. Only for holders of this page, so it does not widen who can read employees' emails."""
+        emp = request.query_params.get("emp", "")
+        email = ""
+        if emp.isdigit():
+            email = (
+                MstUser.objects.filter(emp_id=int(emp)).exclude(user_email__isnull=True).exclude(user_email="")
+                .order_by("-user_active", "user_id").values_list("user_email", flat=True).first()
+            ) or ""
+        return Response({"email": email})
+
 
 class MailRecipientMappingViewSet(BaseMasterViewSet):
     queryset = MailRecipientMapping.objects.select_related("approval_code", "mail_alert_to_user", "mail_alert_to_user__alert").all()

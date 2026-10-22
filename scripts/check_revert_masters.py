@@ -22,6 +22,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 import django
 
 django.setup()
+from core.validation_helpers import EMAIL_FIELD_NAMES  # noqa: E402
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -287,6 +288,8 @@ def exercise_basic(client, entity):
             if isinstance(value, str):
                 lim = getattr(model._meta.get_field(name), "max_length", None) or 40 if name in {f.name for f in model._meta.fields} else 40
                 payload[name] = f"Z{os.getpid() % 100}{attempt}"[:lim]
+                if name in EMAIL_FIELD_NAMES:  # an email field needs a real-looking address (see validation_helpers.EMAIL_FIELD_NAMES)
+                    payload[name] = f"z{os.getpid() % 100}{attempt}@t.in"[:lim]
                 changed = True
             elif isinstance(value, int) and not isinstance(value, bool):
                 payload[name] = 900000 + os.getpid() % 1000 + attempt

@@ -10,6 +10,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from .validation_helpers import EMAIL_MESSAGE, is_valid_email, year_message
 from . import audit as _audit
 from . import audit_revert as _audit_revert
 from .auth_backend import _fetch_mst_user, _sha256
@@ -800,6 +801,13 @@ def admin_user_management_update_api(request, user_id):
     except MstUser.DoesNotExist:
         return Response({"error": "User not found"}, status=404)
 
+    # An email must be a real address and a date's year a sensible one, judged when new or changed so an old user stays editable.
+    if email and email != (u.user_email or "") and not is_valid_email(email):
+        return Response({"error": EMAIL_MESSAGE}, status=400)
+    for text, was in ((user_from, u.user_from), (user_to, u.user_to)):
+        if text and text != str(was or "")[:10] and year_message(text):
+            return Response({"error": year_message(text)}, status=400)
+
     try:
         mod_user_id = UserProfile.objects.get(user_login_id=request.user.username).user_id
     except UserProfile.DoesNotExist:
@@ -859,6 +867,10 @@ def admin_user_management_create_api(request):
 
     if MstUser.objects.filter(user_login_id__iexact=login_id).exists():
         return Response({"error": "Login ID already exists"}, status=400)
+    if email and not is_valid_email(email):
+        return Response({"error": EMAIL_MESSAGE}, status=400)
+    if year_message(user_from) or year_message(user_to):
+        return Response({"error": year_message(user_from) or year_message(user_to)}, status=400)
 
     try:
         cr_user_id = UserProfile.objects.get(user_login_id=request.user.username).user_id

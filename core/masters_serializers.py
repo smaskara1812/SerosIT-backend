@@ -2,7 +2,7 @@ import re
 from django.utils import timezone
 from rest_framework import serializers
 
-from .validation_helpers import fields_changed
+from .validation_helpers import DOC_TO_SIGN_NAMES, dms_error, fields_changed, phone_error
 
 
 def _check_unique_name(serializer, attrs, field, what):
@@ -215,6 +215,14 @@ class MstCertInstituteSerializer(serializers.ModelSerializer):
         model = MstCertInstitute
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        tel = (attrs.get("tel_no") or "").strip()
+        if "tel_no" in attrs:
+            attrs["tel_no"] = tel
+        if tel and _changed(self, attrs, "tel_no") and phone_error(tel):
+            raise serializers.ValidationError({"tel_no": phone_error(tel)})
+        return attrs
 
 
 class MstEmailNotificationTypeSerializer(serializers.ModelSerializer):
@@ -761,6 +769,8 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
         errors = {}
         if "doc_name" in attrs:
             attrs["doc_name"] = (attrs["doc_name"] or "").strip()
+        if attrs.get("doc_name") and _changed(self, attrs, "doc_name") and attrs["doc_name"] not in DOC_TO_SIGN_NAMES:
+            errors["doc_name"] = "Choose a document from the list."
         _check_date_not_future(self, attrs, errors, "sign_from", "From date")
         _check_to_after_from(self, attrs, errors, "sign_from", "sign_to", "To date")
         name, emp, start = (_get(self, attrs, f) for f in ("doc_name", "employee", "sign_from"))
@@ -969,6 +979,12 @@ class MstBusinessGrpSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        parent = attrs.get("parent_business_grp")
+        if parent is not None and self.instance is not None and parent.pk == self.instance.pk:
+            raise serializers.ValidationError({"parent_business_grp": "A business group can't be its own parent."})
+        return attrs
+
 
 class MstCompanySerializer(serializers.ModelSerializer):
     organisational_grp_name = serializers.CharField(
@@ -985,6 +1001,12 @@ class MstCompanySerializer(serializers.ModelSerializer):
         model = MstCompany
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        parent = attrs.get("parent_company")
+        if parent is not None and self.instance is not None and parent.pk == self.instance.pk:
+            raise serializers.ValidationError({"parent_company": "A company can't be its own parent."})
+        return attrs
 
 
 class CostCentreToCompanyMappingSerializer(serializers.ModelSerializer):
@@ -1589,6 +1611,13 @@ class MailAlertDtlSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        # Next Mail must be filled for a new alert and can't be cleared on an old one; the many old alerts that have none can still be edited.
+        had = self.instance is not None and self.instance.next_mail_dt is not None
+        if (self.instance is None and not attrs.get("next_mail_dt")) or ("next_mail_dt" in attrs and not attrs["next_mail_dt"] and (self.instance is None or had)):
+            raise serializers.ValidationError({"next_mail_dt": "Enter the date of the next mail."})
+        return attrs
+
 
 _ADDRESSEE_TYPE_LABELS = {"T": "To", "C": "Cc", "B": "Bcc"}
 
@@ -1712,6 +1741,18 @@ class MstCompanyLocationSerializer(serializers.ModelSerializer):
         model = MstCompanyLocation
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        for field, axis in (("latitude", "lat"), ("longitude", "lon")):
+            value = (attrs.get(field) or "").strip()
+            if field in attrs:
+                attrs[field] = value
+            if value and _changed(self, attrs, field) and dms_error(value, axis):
+                errors[field] = dms_error(value, axis)
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class ItAssetHolderSerializer(serializers.ModelSerializer):
