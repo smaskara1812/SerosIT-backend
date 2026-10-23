@@ -772,7 +772,7 @@ class DocToSignMappingSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocToSignMapping
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
         # a legacy row always has its user now, and a new one must pick one
         extra_kwargs = {"user": {"required": True, "allow_null": False}}
 
@@ -1626,7 +1626,7 @@ class MstBusinessSystemSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstBusinessSystem
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_owner_emp_id"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
 class MailAlertDtlSerializer(serializers.ModelSerializer):
@@ -1667,7 +1667,7 @@ class MailAlertToUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = MailAlertToUser
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
     def get_user_name(self, obj):
         """Who the recipient is: the user's name, or the name typed for someone who is not a user."""
@@ -1730,7 +1730,7 @@ class ItAccessoryHolderSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItAccessoryHolder
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
 class MstItAssetSerializer(serializers.ModelSerializer):
@@ -1757,7 +1757,7 @@ class MstItAssetSerializer(serializers.ModelSerializer):
     class Meta:
         model = MstItAsset
         fields = "__all__"
-        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "legacy_emp_id"]
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
 
 class MstCompanyLocTypeSerializer(serializers.ModelSerializer):
@@ -1834,7 +1834,7 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItAssetHolder
         fields = "__all__"
-        read_only_fields = ["mod_user_id", "mod_dt", "legacy_emp_id"]
+        read_only_fields = ["mod_user_id", "mod_dt"]
 
     def get_holder_user_name(self, obj):
         return obj.holder_user.user_name.strip() if obj.holder_user_id else ""

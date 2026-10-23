@@ -5,8 +5,12 @@ What it does (dry run unless --apply; safe to run again, it only fills what is s
 
   1. mst_user: for every user that has a legacy employee id, fills first/middle/last name, date of birth, company, mobile, working
      designation (when that designation exists in mst_working_designation), the end date (the legacy "date of leaving" goes into To,
-     user_to, when To is empty) and the legacy photo text from the legacy employee row. Needs the legacy staging copy
-     (--legacy-db, default Seros_Data, MySQL only); without it only the names (taken from mst_employee) are filled.
+     user_to, when To is empty) and the legacy photo text from the legacy employee row.
+
+     Every employee detail (names included) is read from the legacy staging copy (--legacy-db, default Seros_Data, MySQL only), NEVER
+     from the app's own mst_employee table. The employee id of a row in the tables below is not stored in the app any more either:
+     the command reads it from the legacy source table of that row by primary key (the imports keep the legacy primary keys), see
+     ROW_SOURCES. Without the staging copy the command stops instead of silently leaving names empty.
   2. Doc To Sign Mapping: user = the user of the signer's employee id. A signer who has no user at all gets an inactive, no-login
      placeholder user (named like the employee) so every row points at a user.
   3. Alert To Users: user = the user of the employee id, left empty when there is none. A recipient with no user keeps the employee's
@@ -27,7 +31,9 @@ import os
 from collections import defaultdict
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from types import SimpleNamespace
+
+from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.utils import timezone
 
@@ -37,13 +43,23 @@ from core.models import (
     ItAssetHolder,
     MailAlertToUser,
     MstBusinessSystem,
-    MstEmployee,
     MstItAsset,
     MstUser,
     MstWorkingDesignation,
 )
 
 BATCH = 1000
+
+# Where the employee id of a row lives in the legacy staging copy: app table -> (legacy table, its primary key, its employee id column).
+# The imports keep the legacy primary keys, so a row here is the row with the same key there.
+ROW_SOURCES = {
+    "doc_to_sign_mapping": ("eos_Doc_To_Sign_Mapping", "Doc_To_Sign_Id", "Emp_Id"),
+    "mail_alert_to_user": ("Mail_Alert_To_User", "Mail_Alert_To_User_Id", "EMP_ID"),
+    "mst_business_system": ("Mst_Business_System", "Business_System_id", "Owner_Emp_Id"),
+    "it_asset_holder": ("it_IT_Asset_Holder", "IT_Asset_Holder_Id", "Emp_Id"),
+    "it_accessory_holder": ("it_IT_Accessory_Holder", "IT_Accessory_Holder_Id", "Emp_Id"),
+    "mst_it_asset": ("it_Mst_IT_Asset", "IT_Asset_Id", "Emp_Id"),
+}
 
 
 def _full_name(e):
@@ -76,20 +92,28 @@ class Command(BaseCommand):
         return chosen, ambiguous
 
     def _legacy_employees(self, db):
-        """emp_id -> dict of the legacy columns that mst_user takes (MySQL staging copy only)."""
+        """emp_id -> dict of the legacy employee columns (names and the ones mst_user takes) from the MySQL staging copy; {} when it is
+        not readable."""
         if not db or connection.vendor != "mysql":
             return {}
         with connection.cursor() as c:
             try:
                 c.execute(
-                    f"SELECT EMP_ID, COMPANY_ID, Emp_DOB, EMP_MOBILE_NO, Working_Designation_Id, EMP_TO, EMP_PHOTO_PATH, EMP_FROM "
-                    f"FROM `{db}`.Mst_Employee"
+                    f"SELECT EMP_ID, Emp_Fname, Emp_Mname, Emp_Sname, COMPANY_ID, Emp_DOB, EMP_MOBILE_NO, Working_Designation_Id, EMP_TO, "
+                    f"EMP_PHOTO_PATH, EMP_FROM FROM `{db}`.Mst_Employee"
                 )
-            except Exception as exc:  # staging copy absent: carry on with names only
-                self.stderr.write(f"Legacy staging table not readable ({exc}); filling names only.")
+            except Exception as exc:
+                self.stderr.write(f"Legacy staging table not readable ({exc}).")
                 return {}
-            keys = ("company_id", "dob", "mobile", "designation", "emp_to", "photo", "emp_from")
+            keys = ("fname", "mname", "sname", "company_id", "dob", "mobile", "designation", "emp_to", "photo", "emp_from")
             return {row[0]: dict(zip(keys, row[1:])) for row in c.fetchall()}
+
+    def _row_employees(self, db, table):
+        """primary key -> legacy employee id, for the rows of one app table, from the legacy staging copy."""
+        src, pk, emp = ROW_SOURCES[table]
+        with connection.cursor() as c:
+            c.execute(f"SELECT `{pk}`, `{emp}` FROM `{db}`.`{src}` WHERE `{emp}` IS NOT NULL")
+            return {r[0]: r[1] for r in c.fetchall()}
 
     def handle(self, *args, **opts):
         apply = opts["apply"]
@@ -98,9 +122,14 @@ class Command(BaseCommand):
         rows = []  # (table, row id, employee id, what, detail)
         counts = defaultdict(int)
 
-        emps = {e.emp_id: e for e in MstEmployee.objects.all()}
-        designations = set(MstWorkingDesignation.objects.values_list('pk', flat=True))
+        designations = set(MstWorkingDesignation.objects.values_list("pk", flat=True))
         legacy = self._legacy_employees(opts["legacy_db"])
+        if not legacy:
+            raise CommandError(
+                "The legacy staging copy is not readable (--legacy-db; MySQL only), and it is the only source of employee data. "
+                "Nothing was changed.")
+        emps = {i: SimpleNamespace(emp_fname=v["fname"], emp_mname=v["mname"], emp_sname=v["sname"]) for i, v in legacy.items()}
+        row_emp = {t: self._row_employees(opts["legacy_db"], t) for t in ROW_SOURCES}
         chosen, ambiguous = self._user_map()
         for emp_id, users in sorted(ambiguous.items()):
             rows.append(("mst_user", chosen[emp_id].user_id, emp_id, "several users share this employee", f"chose user {chosen[emp_id].user_id} of {[u.user_id for u in users]}"))
@@ -142,7 +171,8 @@ class Command(BaseCommand):
 
             # 2. Doc To Sign ---------------------------------------------------------------------------------------
             placeholders = {}
-            for emp_id in sorted(set(DocToSignMapping.objects.filter(user__isnull=True).values_list("legacy_emp_id", flat=True))):
+            unmapped = list(DocToSignMapping.objects.filter(user__isnull=True))
+            for emp_id in sorted({row_emp["doc_to_sign_mapping"].get(d.pk) for d in unmapped} - {None}):
                 if emp_id in chosen:
                     continue
                 e, lg = emps.get(emp_id), legacy.get(emp_id, {})
@@ -161,9 +191,9 @@ class Command(BaseCommand):
                     placeholders[emp_id] = u
             chosen.update(placeholders)
 
-            todo = list(DocToSignMapping.objects.filter(user__isnull=True))
+            todo = unmapped
             for d in todo:
-                u = chosen.get(d.legacy_emp_id)
+                u = chosen.get(row_emp["doc_to_sign_mapping"].get(d.pk))
                 if u:
                     d.user_id = u.user_id
                     counts["doc to sign rows -> user"] += 1
@@ -174,34 +204,37 @@ class Command(BaseCommand):
 
             # 3. Alert To Users ------------------------------------------------------------------------------------
             todo = []
-            for m in MailAlertToUser.objects.filter(user__isnull=True, recipient_name__isnull=True).exclude(legacy_emp_id__isnull=True):
-                u = chosen.get(m.legacy_emp_id)
+            for m in MailAlertToUser.objects.filter(user__isnull=True, recipient_name__isnull=True, pk__in=list(row_emp["mail_alert_to_user"])):
+                emp_of_row = row_emp["mail_alert_to_user"][m.pk]
+                u = chosen.get(emp_of_row)
                 if u:
                     m.user_id = u.user_id
                     counts["alert rows -> user"] += 1
                 else:
-                    e = emps.get(m.legacy_emp_id)
+                    e = emps.get(emp_of_row)
                     m.recipient_name = _full_name(e)[:100] if e else None
                     counts["alert rows with no user (name kept as text)"] += 1
-                    rows.append(("mail_alert_to_user", m.mail_alert_to_user_id, m.legacy_emp_id, "no user for this employee", f"{m.recipient_name} <{m.email_addr}>"))
+                    rows.append(("mail_alert_to_user", m.mail_alert_to_user_id, emp_of_row, "no user for this employee", f"{m.recipient_name} <{m.email_addr}>"))
                 todo.append(m)
             if apply:
                 MailAlertToUser.objects.bulk_update(todo, ["user", "recipient_name"], batch_size=BATCH)
 
             # 4. plain names ---------------------------------------------------------------------------------------
-            for label, model, emp_field, name_field in (
-                ("business system owner names", MstBusinessSystem, "legacy_owner_emp_id", "owner_name"),
-                ("asset holder names", ItAssetHolder, "legacy_emp_id", "holder_name"),
-                ("accessory holder names", ItAccessoryHolder, "legacy_emp_id", "it_accessory_holder_name"),
-                ("asset current holder names", MstItAsset, "legacy_emp_id", "cur_holder_name"),
+            for label, model, name_field in (
+                ("business system owner names", MstBusinessSystem, "owner_name"),
+                ("asset holder names", ItAssetHolder, "holder_name"),
+                ("accessory holder names", ItAccessoryHolder, "it_accessory_holder_name"),
+                ("asset current holder names", MstItAsset, "cur_holder_name"),
             ):
+                table = model._meta.db_table
                 todo = []
-                for obj in model.objects.exclude(**{f"{emp_field}__isnull": True}):
+                for obj in model.objects.filter(pk__in=list(row_emp[table])):
                     if not _blank(getattr(obj, name_field)):
                         continue
-                    e = emps.get(getattr(obj, emp_field))
+                    emp_of_row = row_emp[table][obj.pk]
+                    e = emps.get(emp_of_row)
                     if not e:
-                        rows.append((model._meta.db_table, obj.pk, getattr(obj, emp_field), "employee not found, name left empty", ""))
+                        rows.append((table, obj.pk, emp_of_row, "employee not found, name left empty", ""))
                         continue
                     setattr(obj, name_field, _full_name(e)[:100])
                     todo.append(obj)

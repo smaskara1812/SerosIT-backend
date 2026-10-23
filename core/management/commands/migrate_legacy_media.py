@@ -19,6 +19,7 @@ overwritten (reported as a conflict).
 """
 
 import csv
+import filecmp
 import os
 import re
 import shutil
@@ -181,10 +182,16 @@ class Command(BaseCommand):
             else:
                 key = (row.user_id, os.path.realpath(src))
                 if key not in assigned:
-                    n = next_n.get(row.user_id) or next_sequence("signatures", row.user_id)
-                    ext = os.path.splitext(name)[1].lower()
-                    assigned[key] = f"{row.user_id}_{n}{ext}"
-                    next_n[row.user_id] = n + 1
+                    # the same picture may already be filed for this user from an earlier run: reuse that file instead of copying it again
+                    same = next((f for f in sorted(os.listdir(media_dir) if os.path.isdir(media_dir) else [])
+                                 if re.fullmatch(rf"{row.user_id}_\d+\.\w+", f) and filecmp.cmp(os.path.join(media_dir, f), src, shallow=False)), None)
+                    if same:
+                        assigned[key] = same
+                    else:
+                        n = next_n.get(row.user_id) or next_sequence("signatures", row.user_id)
+                        ext = os.path.splitext(name)[1].lower()
+                        assigned[key] = f"{row.user_id}_{n}{ext}"
+                        next_n[row.user_id] = n + 1
                 ok, why, dest_name = self._place(src, "signatures", assigned[key], IMAGE_EXTS, apply)
                 assigned[key] = dest_name
                 result, new = why, f"signatures/{dest_name}" if ok else ""

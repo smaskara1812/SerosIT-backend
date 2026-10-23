@@ -336,8 +336,6 @@ class MstBusinessSystem(models.Model):
     mail_from_address = models.CharField(max_length=30, null=True, blank=True)
     mail_user_name = models.CharField(max_length=30, null=True, blank=True)
     mail_user_password = models.CharField(max_length=15, null=True, blank=True)
-    # Legacy employee id, no longer a link (mst_employee is being retired); the owner is the text below.
-    legacy_owner_emp_id = models.IntegerField(db_column="owner_emp_id", null=True, blank=True)
     owner_name = models.CharField(max_length=100, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -413,7 +411,6 @@ class MailAlertToUser(models.Model):
     alert = models.ForeignKey(
         MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="recipients"
     )
-    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     # The recipient as a user (nullable: someone who is not a user is added by name and email only). The email is stored on the row too,
     # copied from the user and editable.
     user = models.ForeignKey(
@@ -1326,26 +1323,6 @@ class SysAuditLog(models.Model):
         return f"{self.ts} {self.username} {self.action} {self.entity}"
 
 
-class MstEmployee(models.Model):
-    """Read-only lookup, not a delegable master — 27k+ rows is a real HR
-    employee roster the app doesn't own or edit, just enough columns to
-    resolve a name for Document To Sign Mapping's Employee field. emp_id
-    keeps its legacy value as a plain (non-auto) PK since we never insert
-    into this table ourselves."""
-
-    emp_id = models.IntegerField(primary_key=True)
-    emp_fname = models.CharField(max_length=26, null=True, blank=True)
-    emp_mname = models.CharField(max_length=20, null=True, blank=True)
-    emp_sname = models.CharField(max_length=35)
-    emp_active = models.CharField(max_length=1, default="Y")
-
-    class Meta:
-        db_table = "mst_employee"
-
-    def __str__(self):
-        return " ".join(p for p in [self.emp_fname, self.emp_mname, self.emp_sname] if p)
-
-
 class MstUserRigMapping(models.Model):
     user_rig_mapping_id = models.AutoField(primary_key=True)
     user = models.ForeignKey(MstUser, db_column="user_id", on_delete=models.PROTECT, related_name="rig_mappings")
@@ -1406,7 +1383,6 @@ class MstSignableDoc(models.Model):
 class DocToSignMapping(models.Model):
     doc_to_sign_id = models.AutoField(primary_key=True)
     doc_name = models.CharField(max_length=50)
-    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     user = models.ForeignKey(
         "MstUser", db_column="user_id", null=True, blank=True, on_delete=models.PROTECT, related_name="docs_to_sign"
     )
@@ -3435,7 +3411,6 @@ class MstItAsset(models.Model):
     cur_company = models.ForeignKey(
         MstCompany, db_column="cur_company_id", on_delete=models.PROTECT, related_name="held_it_assets"
     )
-    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     cur_holder_name = models.CharField(max_length=100, null=True, blank=True)
     department = models.ForeignKey(
         MstDepartment,
@@ -3503,7 +3478,6 @@ class ItAssetHolder(models.Model):
     holder_company = models.ForeignKey(
         MstCompany, db_column="holder_company_id", on_delete=models.PROTECT, related_name="it_asset_holdings"
     )
-    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     # Added alongside emp (not replacing it) — emp_id only resolves for
     # people with an HR record, but plenty of real system users who hold
     # assets don't have one (206 active users, e.g. Savita Bodake). The
@@ -3564,7 +3538,6 @@ class ItAccessoryHolder(models.Model):
     it_accessory = models.ForeignKey(
         MstItAccessory, db_column="it_accessory_id", on_delete=models.PROTECT, related_name="holders"
     )
-    legacy_emp_id = models.IntegerField(db_column="emp_id", null=True, blank=True)  # legacy employee id, no longer a link
     it_accessory_holder_name = models.CharField(max_length=100, null=True, blank=True)
     it_asset_mfg = models.ForeignKey(
         MstItAssetMfg,
@@ -4465,7 +4438,7 @@ class CertToRankMapping(models.Model):
 class MstFsEmployee(models.Model):
     """FS (field staff) employee master — legacy Mst_Fs_Employee, the
     rig-going staff. Kept under their legacy ids (these are NOT the same
-    people as MstEmployee at the same id). The whole legacy row is carried,
+    people as the legacy employee list at the same id). The whole legacy row is carried,
     including the identity and travel-document numbers, so it is as sensitive
     as the HR record it came from — who can open it is controlled through
     User Rights. New people get the next id."""

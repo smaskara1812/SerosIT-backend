@@ -49,7 +49,9 @@ class Rollback(Exception):
 
 
 def run():
-    print("1. nothing links to mst_employee")
+    print("1. the employee table is gone")
+    check("the MstEmployee model no longer exists", not any(m.__name__ == "MstEmployee" for m in apps.get_app_config("core").get_models()))
+    check("the mst_employee table no longer exists", "mst_employee" not in connection.introspection.table_names())
     refs = [f"{m.__name__}.{f.name}" for m in apps.get_app_config("core").get_models() for f in m._meta.get_fields()
             if f.is_relation and getattr(f.related_model, "__name__", "") == "MstEmployee"]
     check("no model has a foreign key to MstEmployee", not refs, refs)
@@ -62,7 +64,7 @@ def run():
 
     print("2. no code reads the employee model")
     core = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
-    skip = ("models.py", "map_employees_to_users.py")
+    skip = ("models.py",)
     hits = []
     for dirpath, dirs, files in os.walk(core):
         if "migrations" in dirpath or "__pycache__" in dirpath:
@@ -75,13 +77,15 @@ def run():
     check("only the models and the mapping command mention MstEmployee", not hits, hits)
 
     print("3. the mapping is complete")
-    buf = io.StringIO()
-    call_command("map_employees_to_users", report="/tmp/_emp_check.csv", stdout=buf)
-    counts = [int(line.rsplit(":", 1)[1]) for line in buf.getvalue().splitlines() if line.startswith("  ") and "rows listed" not in line]
-    check("a second run of map_employees_to_users changes nothing", counts and not any(counts), buf.getvalue())
+    cols = [f"{m.__name__}.{f.name}" for m in apps.get_app_config("core").get_models() for f in m._meta.concrete_fields
+            if f.column in ("emp_id", "owner_emp_id") and m.__name__ not in ("MstUser", "MstEmployee")]
+    check("no table keeps an employee id column (only mst_user.emp_id, the legacy employee a user came from)", not cols, cols)
+    if connection.vendor == "mysql":
+        buf = io.StringIO()
+        call_command("map_employees_to_users", report="/tmp/_emp_check.csv", stdout=buf)
+        counts = [int(line.rsplit(":", 1)[1]) for line in buf.getvalue().splitlines() if line.startswith("  ") and "rows listed" not in line]
+        check("a second run of map_employees_to_users changes nothing", counts and not any(counts), buf.getvalue())
     check("every Doc To Sign row has a user", not DocToSignMapping.objects.filter(user__isnull=True).exists())
-    check("every alert recipient that had an employee has a user or a name",
-          not MailAlertToUser.objects.filter(legacy_emp_id__isnull=False, user__isnull=True, recipient_name__isnull=True).exists())
 
     client = APIClient(HTTP_HOST="localhost")
     client.force_authenticate(get_user_model().objects.filter(is_superuser=True).first())
