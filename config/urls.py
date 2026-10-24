@@ -6,6 +6,8 @@ from core.media_uploads import serve_media
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # The HR module has its own routes; they must come before core's "api/" include.
+    path("api/hr/", include("hr.urls")),
     path("api/", include("core.urls")),
 ]
 

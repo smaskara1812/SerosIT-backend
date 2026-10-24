@@ -230,18 +230,14 @@ def viewsets_by_entity():
     if _VIEWSETS is None:
         import importlib
         import inspect
-        import pkgutil
-
-        import core
 
         from .masters_views import BaseMasterViewSet
+        from .project_apps import project_modules
 
         found = {}
-        for mod in pkgutil.iter_modules(core.__path__):
-            if mod.name in ("migrations", "management", "tests"):
-                continue
+        for _label, module_name in project_modules():
             try:
-                module = importlib.import_module(f"core.{mod.name}")
+                module = importlib.import_module(module_name)
             except Exception:
                 continue
             for _name, cls in inspect.getmembers(module, inspect.isclass):
@@ -359,9 +355,9 @@ def _resolve(entity, table=""):
 
 def _model_by_table(table):
     """Any model of the app by its table, switched on or not (child rows of a restored record)."""
-    from django.apps import apps
+    from .project_apps import project_models
 
-    for model in apps.get_app_config("core").get_models():
+    for model in project_models():
         if model._meta.db_table == table:
             return model
     return None

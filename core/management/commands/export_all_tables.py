@@ -13,6 +13,8 @@ import json
 import os
 
 from django.apps import apps
+
+from core.project_apps import project_models
 from django.core.management.base import BaseCommand, CommandError
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
@@ -86,7 +88,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         models = sorted(
-            apps.get_app_config("core").get_models(), key=lambda m: m._meta.db_table
+            project_models(), key=lambda m: m._meta.db_table
         )
 
         if options["tables"]:

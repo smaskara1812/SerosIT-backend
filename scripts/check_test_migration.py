@@ -159,6 +159,11 @@ mismatch = one(f"SELECT COUNT(*) FROM mst_user u JOIN `{args.legacy}`.Mst_Employ
                "WHERE (u.first_name IS NULL AND e.Emp_Fname IS NOT NULL AND e.Emp_Fname<>'') OR (u.last_name IS NULL AND e.Emp_Sname<>'') "
                "OR (u.date_of_birth IS NULL AND e.Emp_DOB IS NOT NULL) OR (u.company_id IS NULL AND e.COMPANY_ID IS NOT NULL)")
 check("every user with a legacy employee has the person details filled", mismatch == 0, f"{mismatch} users")
+ne_bad = one(f"SELECT COUNT(*) FROM mst_user u JOIN `{args.legacy}`.hr_Mst_NonEmployee n ON n.NonEmp_Id=u.nonemp_id "
+             "WHERE (u.first_name IS NULL AND n.NonEmp_Fname IS NOT NULL AND n.NonEmp_Fname<>'') OR (u.last_name IS NULL AND n.NonEmp_Sname IS NOT NULL AND n.NonEmp_Sname<>'') "
+             "OR (u.mobile_no IS NULL AND n.NonEmp_Mobile_No IS NOT NULL AND n.NonEmp_Mobile_No<>'') OR (u.user_email IS NULL AND n.NonEmp_Email IS NOT NULL AND n.NonEmp_Email<>'')")
+check("every non-employee (shared / role account) user has the legacy person details filled", ne_bad == 0, f"{ne_bad} users")
+check("every non-employee user has a legacy row", one(f"SELECT COUNT(*) FROM mst_user u LEFT JOIN `{args.legacy}`.hr_Mst_NonEmployee n ON n.NonEmp_Id=u.nonemp_id WHERE u.nonemp_id IS NOT NULL AND n.NonEmp_Id IS NULL") == 0)
 check("a user's end date (To) covers the legacy date of leaving",
       one(f"SELECT COUNT(*) FROM mst_user u JOIN `{args.legacy}`.Mst_Employee e ON e.EMP_ID=u.emp_id WHERE e.EMP_TO IS NOT NULL AND u.user_to IS NULL") == 0)
 check("every working designation on a user exists in the table",

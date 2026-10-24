@@ -32,6 +32,7 @@ from django.db import connection, transaction
 from rest_framework.test import APIClient
 
 from core.models import DocToSignMapping, MailAlertToUser, MstUser
+from core.project_apps import project_models
 
 FAILED = []
 ROOT = str(settings.MEDIA_ROOT)
@@ -50,9 +51,9 @@ class Rollback(Exception):
 
 def run():
     print("1. the employee table is gone")
-    check("the MstEmployee model no longer exists", not any(m.__name__ == "MstEmployee" for m in apps.get_app_config("core").get_models()))
+    check("the MstEmployee model no longer exists", not any(m.__name__ == "MstEmployee" for m in project_models()))
     check("the mst_employee table no longer exists", "mst_employee" not in connection.introspection.table_names())
-    refs = [f"{m.__name__}.{f.name}" for m in apps.get_app_config("core").get_models() for f in m._meta.get_fields()
+    refs = [f"{m.__name__}.{f.name}" for m in project_models() for f in m._meta.get_fields()
             if f.is_relation and getattr(f.related_model, "__name__", "") == "MstEmployee"]
     check("no model has a foreign key to MstEmployee", not refs, refs)
     if connection.vendor == "mysql":
@@ -77,7 +78,7 @@ def run():
     check("only the models and the mapping command mention MstEmployee", not hits, hits)
 
     print("3. the mapping is complete")
-    cols = [f"{m.__name__}.{f.name}" for m in apps.get_app_config("core").get_models() for f in m._meta.concrete_fields
+    cols = [f"{m.__name__}.{f.name}" for m in project_models() for f in m._meta.concrete_fields
             if f.column in ("emp_id", "owner_emp_id") and m.__name__ not in ("MstUser", "MstEmployee")]
     check("no table keeps an employee id column (only mst_user.emp_id, the legacy employee a user came from)", not cols, cols)
     if connection.vendor == "mysql":

@@ -8,6 +8,8 @@ free without anyone needing to remember to register them by hand.
 """
 
 from django.apps import apps
+
+from .project_apps import project_models
 from django.contrib import admin
 
 # Keep the list view readable even for wide operational tables (Incident
@@ -29,7 +31,7 @@ class AutoAdmin(admin.ModelAdmin):
         super().__init__(model, admin_site)
 
 
-for _model in apps.get_app_config("core").get_models():
+for _model in project_models():
     try:
         admin.site.register(_model, AutoAdmin)
     except admin.sites.AlreadyRegistered:

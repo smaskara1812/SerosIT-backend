@@ -10,3 +10,4 @@ class CoreConfig(AppConfig):
         from .validation_helpers import install_global_checks
 
         install_global_checks()
+        from . import structure_checks  # noqa: F401  (registers the project-layout system checks)

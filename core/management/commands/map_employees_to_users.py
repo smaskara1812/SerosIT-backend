@@ -11,6 +11,9 @@ What it does (dry run unless --apply; safe to run again, it only fills what is s
      from the app's own mst_employee table. The employee id of a row in the tables below is not stored in the app any more either:
      the command reads it from the legacy source table of that row by primary key (the imports keep the legacy primary keys), see
      ROW_SOURCES. Without the staging copy the command stops instead of silently leaving names empty.
+     Users that came from the legacy NON-employee list (shared and role accounts, `mst_user.nonemp_id`) are filled the same way from
+     the staging table hr_Mst_NonEmployee: names, mobile, company, email (when the user has none), the end date (NonEmp_To into To)
+     and the photo text. Title, type, SAP code, location and residence country are not carried.
   2. Doc To Sign Mapping: user = the user of the signer's employee id. A signer who has no user at all gets an inactive, no-login
      placeholder user (named like the employee) so every row points at a user.
   3. Alert To Users: user = the user of the employee id, left empty when there is none. A recipient with no user keeps the employee's
@@ -45,6 +48,7 @@ from core.models import (
     MstBusinessSystem,
     MstItAsset,
     MstUser,
+    MstCompany,
     MstWorkingDesignation,
 )
 
@@ -108,6 +112,18 @@ class Command(BaseCommand):
             keys = ("fname", "mname", "sname", "company_id", "dob", "mobile", "designation", "emp_to", "photo", "emp_from")
             return {row[0]: dict(zip(keys, row[1:])) for row in c.fetchall()}
 
+    def _legacy_nonemployees(self, db):
+        """nonemp_id -> dict of the legacy non-employee columns that mst_user takes (staging copy only)."""
+        with connection.cursor() as c:
+            try:
+                c.execute(f"SELECT NonEmp_Id, NonEmp_Fname, NonEmp_Mname, NonEmp_Sname, Company_Id, NonEmp_Mobile_No, NonEmp_Email, "
+                          f"NonEmp_To, NonEmp_Photo_Path FROM `{db}`.hr_Mst_NonEmployee")
+            except Exception as exc:
+                self.stderr.write(f"Legacy non-employee table not readable ({exc}); those users are left as they are.")
+                return {}
+            keys = ("fname", "mname", "sname", "company_id", "mobile", "email", "nonemp_to", "photo")
+            return {r[0]: dict(zip(keys, r[1:])) for r in c.fetchall()}
+
     def _row_employees(self, db, table):
         """primary key -> legacy employee id, for the rows of one app table, from the legacy staging copy."""
         src, pk, emp = ROW_SOURCES[table]
@@ -163,11 +179,40 @@ class Command(BaseCommand):
                     changed = True
                 if changed:
                     to_save.append(u)
+            # the same for users that came from the non-employee list (shared and role accounts)
+            nonemps = self._legacy_nonemployees(opts["legacy_db"])
+            companies = set(MstCompany.objects.values_list("pk", flat=True))
+            for u in MstUser.objects.filter(emp_id__isnull=True, nonemp_id__isnull=False):
+                ne = nonemps.get(u.nonemp_id)
+                if not ne:
+                    rows.append(("mst_user", u.user_id, u.nonemp_id, "no legacy non-employee row for this user", ""))
+                    continue
+                changed = False
+
+                def fill_ne(field, value):
+                    nonlocal changed
+                    if value not in (None, "", "NULL") and _blank(getattr(u, field)):
+                        setattr(u, field, value.strip() if isinstance(value, str) else value)
+                        changed = True
+
+                fill_ne("first_name", ne["fname"])
+                fill_ne("middle_name", ne["mname"])
+                fill_ne("last_name", ne["sname"])
+                fill_ne("mobile_no", ne["mobile"])
+                fill_ne("user_email", ne["email"])
+                fill_ne("user_to", ne["nonemp_to"])
+                fill_ne("profile_picture_path", ne["photo"])
+                if ne["company_id"] in companies and u.company_id is None:
+                    u.company_id = ne["company_id"]
+                    changed = True
+                if changed:
+                    to_save.append(u)
+                    counts["non-employee users filled"] += 1
             counts["users filled"] = len(to_save)
             if apply:
                 MstUser.objects.bulk_update(
                     to_save, ["first_name", "middle_name", "last_name", "date_of_birth", "mobile_no", "work_designation",
-                              "user_to", "profile_picture_path", "company"], batch_size=BATCH)
+                              "user_to", "profile_picture_path", "company", "user_email"], batch_size=BATCH)
 
             # 2. Doc To Sign ---------------------------------------------------------------------------------------
             placeholders = {}

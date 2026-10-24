@@ -39,6 +39,7 @@ from django.urls import URLPattern, URLResolver, get_resolver
 from rest_framework.test import APIClient
 
 from core.models import UserProfile
+from core.project_apps import project_models
 
 SLOW_SECONDS = 3.0
 PLACEHOLDER = re.compile(r"\(\?P<(\w+)>[^)]*\)|<(?:\w+:)?(\w+)>")
@@ -246,7 +247,7 @@ class Command(BaseCommand):
 
     # ── part 2 ──────────────────────────────────────────────────────────────
     def tables(self):
-        models = [m for m in apps.get_models() if m._meta.app_label == "core" and m._meta.managed and not m._meta.abstract and not m._meta.proxy]
+        models = [m for m in project_models() if m._meta.managed]
         self.say(f"Reading one row from each of {len(models)} tables...")
         bad = 0
         for m in models:

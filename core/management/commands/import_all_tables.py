@@ -35,6 +35,8 @@ import os
 from decimal import Decimal
 
 from django.apps import apps
+
+from core.project_apps import project_models
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.db.models import DecimalField
@@ -121,7 +123,7 @@ class Command(BaseCommand):
 
         wb = load_workbook(path, read_only=True, data_only=True)
 
-        models = list(apps.get_app_config("core").get_models())
+        models = list(project_models())
         by_table = {m._meta.db_table: m for m in models}
 
         # export_all_tables truncates a table name to Excel's 31-char sheet

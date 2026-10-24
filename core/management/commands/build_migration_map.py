@@ -21,6 +21,8 @@ import os
 import re
 
 from django.apps import apps
+
+from core.project_apps import project_models
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import connection
@@ -202,7 +204,7 @@ class Command(BaseCommand):
         imported = parse_import_sql(sql_dir)
 
         models = sorted(
-            apps.get_app_config("core").get_models(), key=lambda m: m._meta.db_table
+            project_models(), key=lambda m: m._meta.db_table
         )
 
         out = self.stdout.write

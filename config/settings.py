@@ -26,6 +26,10 @@ ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 # ── Applications ─────────────────────────────────────────────────────────
 
+# The project's own apps. THE one list: exports, imports, History and revert, the admin site, the self-test and the structure check all
+# read it (core/project_apps.py). A new app goes here and nowhere else; the structure check fails if an app folder is missing from it.
+PROJECT_APPS = ["core", "hr"]
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -37,7 +41,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
-    "core",
+    *PROJECT_APPS,
 ]
 
 # django-silk is a request/query profiler that works on plain JSON API
