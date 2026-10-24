@@ -1,4 +1,3 @@
-import csv
 import itertools
 import datetime
 import os
@@ -14,6 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import export_safety
 from . import audit as _audit
 from .models import (
     DocToSignMapping,
@@ -458,7 +458,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             return response
         titles = {f: f.replace("_", " ").title() for f in fieldnames}
         if stream:
-            writer = csv.DictWriter(_Echo(), fieldnames=fieldnames)
+            writer = export_safety.DictWriter(_Echo(), fieldnames=fieldnames)
 
             def body():
                 yield "\ufeff"
@@ -477,7 +477,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
         response.write("\ufeff")
-        writer = csv.DictWriter(response, fieldnames=fieldnames)
+        writer = export_safety.DictWriter(response, fieldnames=fieldnames)
         writer.writerow(titles)
         writer.writerow(first)
         count = 1
@@ -516,7 +516,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             return response
         first_rows = self.get_serializer(first, many=True).data
         fieldnames = [f for f in first_rows[0].keys() if f not in exclude]
-        writer = csv.DictWriter(_Echo(), fieldnames=fieldnames)
+        writer = export_safety.DictWriter(_Echo(), fieldnames=fieldnames)
 
         def stream():
             yield "\ufeff"  # BOM, see export() for why
@@ -703,7 +703,7 @@ class BaseMasterViewSet(viewsets.ModelViewSet):
             return response
         exclude = set(self.export_exclude_fields)
         fieldnames = [f for f in rows[0].keys() if f not in exclude]
-        writer = csv.DictWriter(response, fieldnames=fieldnames)
+        writer = export_safety.DictWriter(response, fieldnames=fieldnames)
         writer.writerow({f: f.replace("_", " ").title() for f in fieldnames})
         for row in rows:
             writer.writerow({k: v for k, v in row.items() if k not in exclude})

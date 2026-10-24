@@ -1,4 +1,3 @@
-import csv
 import datetime
 
 from django.db.models import F, Func, IntegerField, Prefetch
@@ -8,6 +7,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from . import export_safety
 from . import audit as _audit
 from .models import HazardCard, Incident, ItAssetHolder, MstItAsset
 from .permissions import HasMenuPermission
@@ -126,7 +126,7 @@ class IncidentViewSet(viewsets.ReadOnlyModelViewSet):
         qs = self.get_queryset()
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="incidents.csv"'
-        writer = csv.writer(response)
+        writer = export_safety.writer(response)
         writer.writerow(
             [
                 "Rig Incident No", "Date", "Rig", "Severity", "Type", "Injured",
@@ -272,7 +272,7 @@ class HazardCardViewSet(viewsets.ReadOnlyModelViewSet):
         qs = self.get_queryset()
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="hazard_cards.csv"'
-        writer = csv.writer(response)
+        writer = export_safety.writer(response)
         writer.writerow(
             [
                 "Card No", "Date", "Rig", "Type", "Location", "Status", "TFS",
@@ -387,7 +387,7 @@ class ItAssetReportViewSet(viewsets.ReadOnlyModelViewSet):
         qs = self.get_queryset()
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="it_assets_report.csv"'
-        writer = csv.writer(response)
+        writer = export_safety.writer(response)
         writer.writerow(
             [
                 "Asset Type", "Serial No", "Asset Tag", "SAP Code", "Make", "Model", "Subtype", "RAM", "HDD",

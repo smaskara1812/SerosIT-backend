@@ -12,9 +12,13 @@ logger = logging.getLogger(__name__)
 
 # Rows of this kind are routine events, purged after six months (manage.py purge_audit_events).
 # Everything else is a data change and is kept for good.
-EVENT_ACTIONS = {"export", "login", "logout", "login_failed"}
+EVENT_ACTIONS = {"export", "login", "logout", "login_failed", "login_throttled", "login_spray_suspected", "login_unlocked"}
 # Bookkeeping columns: stamped by the app, not entered by the user, so a diff never shows them.
 BOOKKEEPING_FIELDS = {"cr_user_id", "cr_dt", "mod_user_id", "mod_dt"}
+
+# Fields that hold a secret: never written into the audit log (a history entry must not carry a password, readable or encrypted).
+SECRET_FIELDS = {"mail_user_password", "password", "password_hash"}
+
 
 def snapshot(instance, full=False):
     """{field_name: json-safe value} for every real field on a model instance.
@@ -26,7 +30,7 @@ def snapshot(instance, full=False):
     """
     snap = {}
     for f in instance._meta.fields:
-        if f.primary_key:
+        if f.primary_key or f.name in SECRET_FIELDS:
             continue
         if not full and f.name in BOOKKEEPING_FIELDS:
             continue

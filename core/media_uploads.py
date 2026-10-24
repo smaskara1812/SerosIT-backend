@@ -30,11 +30,8 @@ Validated here, in order, before a single byte is written:
 """
 
 import os
-from urllib.parse import quote
 
 from django.conf import settings
-from django.core import signing
-from django.http import FileResponse, Http404
 
 # The one list of picture types every upload point accepts (the frontend mirrors it in src/lib/mediaTypes.js). Add a type here, add its
 # leading bytes to _MAGIC_SIGNATURES below, and add it to the frontend list.
@@ -176,32 +173,24 @@ def detect_extension(abs_path):
     return None
 
 
-MEDIA_LINK_MAX_AGE = 60 * 60  # seconds a signed media link stays valid
-_MEDIA_SALT = "seros.media"
+# Which page's View right opens the files in each media folder. A folder that is not listed here is never served (for example the letterhead
+# logos, which only the server reads). Administrators see every listed folder.
+FOLDER_PAGES = {
+    "incident_photos": "qhse.incident_details",
+    "HSE_Drills_photos": "qhse.hse_drill_record",
+    "fs_emp_photos": "masters.fs_employees",
+    "signatures": "masters.doc_to_sign_mapping",
+    "interviewer_signatures": "masters.interviewer_mapping",
+    "rig_certificates": "qhse.rig_certificates",
+    "training_cert": "qhse.training_log",
+    "mst_employee_images": "admin.user_management",
+}
 
 
 def media_url(request, rel_path):
-    """A signed, expiring link to a stored file. <img> tags cannot send the JWT header, so the API (which is authenticated) hands out
-    links carrying a signature of the path; the media view below only serves a path whose signature is valid and fresh."""
+    """The address of a stored file. It is NOT a secret link: the file is fetched with the signed-in user's token (see MediaFileView), which checks
+    the user's right to the page the file belongs to, so a link that is forwarded or logged opens nothing for anyone else."""
     if not rel_path:
         return None
-    sig = signing.TimestampSigner(salt=_MEDIA_SALT).sign(rel_path)[len(rel_path) + 1:]  # "<timestamp>:<signature>"
-    url = "/" + settings.MEDIA_URL.lstrip("/") + rel_path + "?s=" + quote(sig, safe="")
+    url = "/api/media/" + rel_path.lstrip("/")
     return request.build_absolute_uri(url) if request else url
-
-
-def serve_media(request, path):
-    """Serves a file under MEDIA_ROOT to anyone holding a valid signed link (whether DEBUG is on or off). Refuses path traversal."""
-    sig = request.GET.get("s", "")
-    try:
-        signing.TimestampSigner(salt=_MEDIA_SALT).unsign(f"{path}:{sig}", max_age=MEDIA_LINK_MAX_AGE)
-    except signing.BadSignature:
-        raise Http404
-    root = os.path.realpath(settings.MEDIA_ROOT)
-    full = os.path.realpath(os.path.join(root, path))
-    if not full.startswith(root + os.sep) or not os.path.isfile(full):
-        raise Http404
-    resp = FileResponse(open(full, "rb"))
-    resp["X-Content-Type-Options"] = "nosniff"
-    resp["Cache-Control"] = "private, max-age=300"
-    return resp

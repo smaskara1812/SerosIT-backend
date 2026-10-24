@@ -185,21 +185,27 @@ for t, col in FIELDS:
     print(f"        {t}.{col}: {len(rows)} paths, {len(resolved)} resolve, {len(legacy_text)} legacy text (file never in the dump)")
     check(f"{t}.{col}: no new-style path points at a missing file", not broken_new, broken_new[:5])
 
-c = Client(HTTP_HOST="localhost")
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+
+c = APIClient(HTTP_HOST="localhost")
+c.force_authenticate(get_user_model().objects.filter(is_superuser=True).first())
 served = 0
 for t, col in FIELDS:
     if not one("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND COLUMN_NAME=%s", DB, t, col):
         continue
     for (p,) in q(f"SELECT `{col}` FROM `{t}` WHERE `{col}` IS NOT NULL AND `{col}`<>'' LIMIT 400"):
         if os.path.isfile(os.path.join(ROOT, p.lstrip("/"))):
+            if p.split("/")[0] not in mu.FOLDER_PAGES:
+                continue
             ok = c.get(mu.media_url(None, p.lstrip("/"))).status_code == 200
             served += 1
             if not ok:
-                check(f"signed link serves {p}", False)
+                check(f"the file route serves {p}", False)
                 break
             if served % 5 == 0:
                 break
-check(f"signed links serve the files ({served} sampled across the tables)", served > 0)
+check(f"the file route serves the files ({served} sampled across the tables)", served > 0)
 
 print()
 print("FAILED:" if FAILED else "all checks passed", *FAILED, sep="\n  " if FAILED else " ")

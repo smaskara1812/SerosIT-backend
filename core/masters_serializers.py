@@ -1623,10 +1623,34 @@ class MstLeavingReasonDtlSerializer(serializers.ModelSerializer):
 
 
 class MstBusinessSystemSerializer(serializers.ModelSerializer):
+    # The mail account password is write-only: it is stored encrypted and never sent back (the form shows a blank box; leaving it blank on an
+    # edit keeps the stored one).
+    mail_user_password = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True, max_length=200)
+    has_mail_password = serializers.SerializerMethodField()
+
     class Meta:
         model = MstBusinessSystem
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_has_mail_password(self, obj):
+        return bool(obj.mail_user_password)
+
+    def _protect(self, validated):
+        from . import secret_box
+
+        if "mail_user_password" in validated:
+            if validated["mail_user_password"]:
+                validated["mail_user_password"] = secret_box.encrypt(validated["mail_user_password"])
+            else:
+                validated.pop("mail_user_password")  # blank = keep what is stored
+        return validated
+
+    def create(self, validated_data):
+        return super().create(self._protect(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._protect(validated_data))
 
 
 class MailAlertDtlSerializer(serializers.ModelSerializer):

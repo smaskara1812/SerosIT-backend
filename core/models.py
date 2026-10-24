@@ -335,7 +335,7 @@ class MstBusinessSystem(models.Model):
     buss_system_schema_name = models.CharField(max_length=6)
     mail_from_address = models.CharField(max_length=30, null=True, blank=True)
     mail_user_name = models.CharField(max_length=30, null=True, blank=True)
-    mail_user_password = models.CharField(max_length=15, null=True, blank=True)
+    mail_user_password = models.CharField(max_length=500, null=True, blank=True)  # encrypted (core/secret_box.py), never returned by the API
     owner_name = models.CharField(max_length=100, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
@@ -1152,7 +1152,7 @@ class MstUserPassword(models.Model):
         db_column="user_id",
         related_name="password_row",
     )
-    password_hash = models.CharField(max_length=64)
+    password_hash = models.CharField(max_length=255)
     set_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1160,6 +1160,32 @@ class MstUserPassword(models.Model):
 
     def __str__(self):
         return f"LocalPwd(user_id={self.user_id})"
+
+
+class LoginAttempt(models.Model):
+    """One sign-in attempt, kept for two days: the login throttle (core/login_guard.py) counts these. `username_key` is the typed name in lower
+    case whether or not such a user exists, so an unknown name is throttled exactly like a real one."""
+
+    ts = models.DateTimeField(db_index=True)
+    username_key = models.CharField(max_length=60, db_index=True)
+    ip = models.CharField(max_length=45, db_index=True)
+    device = models.CharField(max_length=36, blank=True, default="")
+    success = models.BooleanField(default=False)
+    blocked = models.BooleanField(default=False)  # refused by the throttle itself (not counted as a failure)
+    nonce = models.CharField(max_length=80, blank=True, default="", db_index=True)  # the one-time number of an encrypted sign-in (used once)
+
+    class Meta:
+        db_table = "sys_login_attempt"
+
+
+class RevokedToken(models.Model):
+    """An access token that was signed out before it expired (its `jti`), refused until its own expiry."""
+
+    jti = models.CharField(max_length=64, primary_key=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "sys_revoked_token"
 
 
 class UserProfile(models.Model):
@@ -2551,7 +2577,7 @@ class UserMailCredential(models.Model):
     new security infrastructure for it."""
 
     user_id = models.IntegerField(primary_key=True)  # Mst_User.user_id
-    password = models.CharField(max_length=200)
+    password = models.CharField(max_length=500)  # encrypted (core/secret_box.py)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

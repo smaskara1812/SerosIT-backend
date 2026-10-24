@@ -6,6 +6,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from . import export_safety
+
 THIN = Side(style="thin", color="B0B0B0")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 HEADER_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
@@ -63,7 +65,7 @@ def build_xlsx_response(filename, sheet_title, header_lines, columns, rows, wide
         data_row += 1
         is_totals_row = bold_last_row and row_index == len(rows) - 1
         for col, value in enumerate(row_values, start=1):
-            cell = ws.cell(row=data_row, column=col, value=xlsx_value(value))
+            cell = export_safety.xlsx_neutralise(ws.cell(row=data_row, column=col, value=xlsx_value(value)))
             cell.border = BORDER
             if is_totals_row:
                 cell.font = Font(bold=True)

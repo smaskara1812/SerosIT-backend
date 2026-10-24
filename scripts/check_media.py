@@ -40,21 +40,18 @@ for folder, (model, field) in NEW.items():
     bad = [p for p in model.objects.values_list(field, flat=True) if p and p.startswith(folder + "/") and not os.path.isfile(os.path.join(ROOT, p))]
     check(f"{folder}: no new-style path points at a missing file", not bad)
 
-c = Client(HTTP_HOST="localhost")
-url = mu.media_url(None, "fs_emp_photos/1.jpg")
-check("signed link serves the file", c.get(url).status_code == 200)
-check("no signature -> refused", c.get("/media/fs_emp_photos/1.jpg").status_code == 404)
-check("forged signature -> refused", c.get("/media/fs_emp_photos/1.jpg?s=abc:def").status_code == 404)
-other = mu.media_url(None, "fs_emp_photos/2.jpg").split("?s=")[1]
-check("signature of another file -> refused", c.get("/media/fs_emp_photos/1.jpg?s=" + other).status_code == 404)
-old = signing.TimestampSigner(salt=mu._MEDIA_SALT).sign("fs_emp_photos/1.jpg")
-real = mu.MEDIA_LINK_MAX_AGE
-mu.MEDIA_LINK_MAX_AGE = -1
-check("expired link -> refused", c.get(url).status_code == 404)
-mu.MEDIA_LINK_MAX_AGE = real
-check("path traversal -> refused", c.get("/media/../manage.py?s=" + other).status_code == 404)
-check("path traversal (encoded) -> refused", c.get("/media/..%2f..%2fmanage.py?s=" + other).status_code == 404)
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
 
+c = APIClient(HTTP_HOST="localhost")
+anon = APIClient(HTTP_HOST="localhost")
+c.force_authenticate(get_user_model().objects.filter(is_superuser=True).first())
+url = mu.media_url(None, "fs_emp_photos/1.jpg")
+check("the file address carries no secret", "?" not in url and url == "/api/media/fs_emp_photos/1.jpg")
+check("a signed-in administrator is served the file", c.get(url).status_code == 200)
+check("someone not signed in is refused", anon.get(url).status_code == 401)
+check("path traversal -> refused", c.get("/api/media/fs_emp_photos/../../manage.py").status_code == 404)
+check("a folder that is not served -> refused", c.get("/api/media/Letterhead Logo/Footer2.jpg").status_code == 404)
 check(".sql is a dangerous extension", mu._has_dangerous_extension("x.sql.jpg"))
 check("a JPEG is detected by its bytes as .jpg", mu.detect_extension(os.path.join(ROOT, "fs_emp_photos", "1.jpg")) == ".jpg")
 check("next_sequence skips used numbers", mu.next_sequence("incident_photos", "1") > 1)

@@ -18,15 +18,17 @@ from .media_uploads import IMAGE_EXTENSIONS, media_url, next_sequence, save_medi
 from .validation_helpers import EMAIL_MESSAGE, is_valid_email, phone_error, year_message
 from . import audit as _audit
 from . import audit_revert as _audit_revert
-from .auth_backend import _fetch_mst_user, _sha256
+from .auth_backend import _fetch_mst_user
+from . import jwt_auth, login_crypto, login_guard, mail_credentials
+from .passwords import hash_password
 from .models import (
     EmailLog,
+    LoginAttempt,
     MailAlertToUser,
     SysAuditLog,
     SysMenu,
     MstUser,
     MstUserPassword,
-    UserMailCredential,
     UserPermission,
     UserProfile,
     PermissionPreset,
@@ -45,9 +47,50 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
     entry — success or failure — since login/logout are otherwise invisible
     to the audit log entirely."""
 
+    def get_serializer(self, *args, **kwargs):
+        if getattr(self, "_plain", None) is not None:  # an encrypted sign-in: the decrypted form takes the place of the request body
+            kwargs["data"] = self._plain
+        return super().get_serializer(*args, **kwargs)
+
     def post(self, request, *args, **kwargs):
-        username = (request.data.get("username") or "").strip()
-        password = request.data.get("password") or ""
+        self._plain, nonce = None, ""
+        enc = request.data.get("enc")
+        if enc is not None:
+            # An encrypted sign-in (core/login_crypto.py): the password was never sent as text. Anything unreadable is counted against the
+            # sender's address only (not against any account), so it cannot be used to lock someone out.
+            try:
+                plain = login_crypto.decrypt_login(enc)
+                if not login_crypto.nonce_is_valid(plain["nonce"]):
+                    raise login_crypto.LoginDecryptError("nonce")
+            except login_crypto.LoginDecryptError:
+                bad = login_guard.begin(request, "?" + login_guard.client_ip(request))
+                request._seros_new_device = bad.row.device if bad.new_device else None
+                if bad.blocked:
+                    return Response({"detail": f"Too many sign-in attempts. Try again in {_wait_text(bad.retry_after)}.", "retry_after_seconds": bad.retry_after, "code": "login_throttled"}, status=429, headers={"Retry-After": str(bad.retry_after)})
+                return Response({"detail": "The sign-in could not be read. Reload the page and try again.", "code": "login_unreadable"}, status=400)
+            username, password, nonce = plain["username"].strip(), plain["password"], plain["nonce"]
+            self._plain = {"username": username, "password": password}
+        elif settings.LOGIN_REQUIRE_ENCRYPTED:
+            return Response({"detail": "Sign-in must be encrypted. Reload the page and try again.", "code": "login_plaintext_refused"}, status=400)
+        else:
+            username = (request.data.get("username") or "").strip()
+            password = request.data.get("password") or ""
+        # The throttle judges the attempt BEFORE the password is looked at (core/login_guard.py): too many wrong passwords means a wait, and the
+        # answer says how long.
+        attempt = login_guard.begin(request, username, nonce)
+        if nonce and LoginAttempt.objects.filter(nonce=nonce).exclude(pk=attempt.row.pk).exists():
+            # the one-time number was already used: a replayed request
+            LoginAttempt.objects.filter(pk=attempt.row.pk).update(blocked=True)
+            return Response({"detail": "The sign-in could not be read. Reload the page and try again.", "code": "login_unreadable"}, status=400)
+        request._seros_new_device = attempt.row.device if attempt.new_device else None
+        if attempt.blocked:
+            if not login_guard.was_recently_refused(login_guard.username_key(username), attempt.row.ts):
+                _audit.log_auth("login_throttled", username, request, extra={"reason": attempt.reason})
+            wait = attempt.retry_after
+            return Response(
+                {"detail": f"Too many sign-in attempts. Try again in {_wait_text(wait)}.", "retry_after_seconds": wait, "code": "login_throttled"},
+                status=429, headers={"Retry-After": str(wait)},
+            )
         # Bad credentials raise AuthenticationFailed inside simplejwt's
         # serializer validation — that propagates straight past this method
         # (DRF's dispatch() catches it, not us), so the failure path has to
@@ -55,32 +98,55 @@ class AuditedTokenObtainPairView(TokenObtainPairView):
         try:
             response = super().post(request, *args, **kwargs)
         except Exception:
+            attempt.failed()
             _audit.log_auth("login_failed", username, request)
             raise
+        attempt.succeeded()
         _audit.log_auth("login", username, request)
         invalidate_user_access(username)  # every sign-in reads the rights fresh
-        # Cache the password just used — this is the only place it's ever
-        # available server-side — so outgoing approval-notification mail
-        # can later authenticate to SMTP as this same user. Overwritten on
-        # every login; see UserMailCredential's own docstring for why this
-        # is deliberately unencrypted.
+        # Keep the password just used (encrypted, and only for as long as a session can last) so outgoing approval-notification mail can
+        # authenticate to SMTP as this same user. Overwritten on every login, deleted at sign-out (core/mail_credentials.py).
         if password:
             try:
                 uid = UserProfile.objects.get(user_login_id=username).user_id
-                UserMailCredential.objects.update_or_create(user_id=uid, defaults={"password": password})
+                mail_credentials.store(uid, password)
             except UserProfile.DoesNotExist:
                 pass
         return response
+
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        device = getattr(request, "_seros_new_device", None)
+        if device:  # an extra key for the throttle: a random id, not a person's identity
+            response.set_cookie(login_guard.DEVICE_COOKIE, device, max_age=365 * 24 * 3600, httponly=True, samesite="Lax", secure=not settings.DEBUG)
+        return response
+
+
+def _wait_text(seconds):
+    m, s = divmod(int(seconds), 60)
+    return f"{m} min {s} s" if m and s else (f"{m} min" if m else f"{s} s")
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def login_key_api(request):
+    """The public key and a one-time number the sign-in form encrypts with (core/login_crypto.py)."""
+    resp = Response({"public_key": login_crypto.public_key_b64(), "nonce": login_crypto.issue_nonce(), "alg": "RSA-OAEP-256 + AES-256-GCM"})
+    resp["Cache-Control"] = "no-store"
+    return resp
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def logout_api(request):
     _audit.log_auth("logout", request.user.username, request)
+    if request.auth is not None:
+        jwt_auth.revoke_access_token(request.auth)  # the access token stops working now, not in up to 15 minutes
     invalidate_user_access(request.user.username)
     try:
         uid = UserProfile.objects.get(user_login_id=request.user.username).user_id
-        UserMailCredential.objects.filter(user_id=uid).delete()
+        mail_credentials.clear(uid)
     except UserProfile.DoesNotExist:
         pass
     # Blacklist the refresh token this session is actually holding — the
@@ -110,6 +176,7 @@ def me(request):
             "username": request.user.username,
             "display_name": display_name or request.user.username,
             "is_app_admin": access["is_admin"],
+            "idle_timeout_minutes": settings.IDLE_TIMEOUT_MINUTES,
             "perms": access["perms"],
         }
     )
@@ -1025,7 +1092,7 @@ def admin_user_management_create_api(request):
     )
 
     if password:
-        MstUserPassword.objects.create(user=u, password_hash=_sha256(password))
+        MstUserPassword.objects.create(user=u, password_hash=hash_password(password))
 
     changes = {
         k: {"old": None, "new": v}
@@ -1059,7 +1126,7 @@ def admin_user_management_set_password_api(request, user_id):
         return Response({"error": "User not found"}, status=404)
 
     MstUserPassword.objects.update_or_create(
-        user=u, defaults={"password_hash": _sha256(password)}
+        user=u, defaults={"password_hash": hash_password(password)}
     )
     _audit.record_action(
         request, "password_change", "admin.user_management", u.user_id, u.user_login_id,
@@ -1103,3 +1170,26 @@ def admin_user_management_toggle_active_api(request, user_id):
         target=u,
     )
     return Response({"success": True, "active": u.user_active == "Y"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_login_security_api(request):
+    """Accounts waiting after too many wrong passwords, addresses flagged for trying many accounts, and how many attempts were refused lately."""
+    data = login_guard.status()
+    for f in data["flagged_addresses"]:
+        f["ts"] = f["ts"].isoformat()
+    for w in data["waiting"]:
+        w["last_failure"] = w["last_failure"].isoformat()
+    return Response(data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAppAdmin])
+def admin_login_security_unlock_api(request):
+    username = (request.data.get("username") or "").strip()
+    if not username:
+        return Response({"error": "username is required"}, status=400)
+    removed = login_guard.unlock(username)
+    _audit.log_auth("login_unlocked", request.user.username, request, extra={"unlocked": username, "rows": removed})
+    return Response({"success": True, "removed": removed})

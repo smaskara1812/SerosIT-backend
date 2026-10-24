@@ -1,4 +1,3 @@
-import csv
 import functools
 
 from django.db import transaction
@@ -9,11 +8,13 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import export_safety
 from . import approvals, mail_recipients, mail_templates, mailer
 from .drilling_dtl_serializers import DrillingDtlSerializer, DrillingDtlSlimSerializer
 from .drilling_report import recompute_dtl_totals, recompute_hdr_totals, resolve_drilling_hdr
 from .masters_views import BaseMasterViewSet
-from .models import ApproverMappingDtl, DrillingDtl, MailRecipientMapping, MstUser, MstUserRigMapping, UserMailCredential
+from . import mail_credentials
+from .models import ApproverMappingDtl, DrillingDtl, MailRecipientMapping, MstUser, MstUserRigMapping
 
 APPROVAL_CODE = "DRILLING_DTL"
 
@@ -317,7 +318,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
         filename = f"drilling-report-{instance.rig.rig_name}-{instance.drilling_dtl_dt}.csv"
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         response.write("﻿")  # BOM — see BaseMasterViewSet.export()'s own note on this.
-        writer = csv.writer(response)
+        writer = export_safety.writer(response)
 
         writer.writerow(["Field", "Value"])
         header_rows = [
@@ -439,7 +440,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
             return
 
         actor = MstUser.objects.filter(user_id=actor_user_id).first()
-        cred = UserMailCredential.objects.filter(user_id=actor_user_id).first()
+        cred_password = mail_credentials.fetch(actor_user_id)
         label = dict(MailRecipientMapping.EVENT_CHOICES).get(event_type, event_type)
         subject, body = mail_templates.drilling_report_mail(instance, actor, event_type)
         mailer.queue_notification_email(
@@ -451,7 +452,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
             bcc=recipients["bcc"],
             from_email=actor.user_email if actor else None,
             auth_user=actor.user_login_id if actor else None,
-            auth_password=cred.password if cred else None,
+            auth_password=cred_password,
             trigger=f"Drilling Report #{instance.drilling_dtl_id} {label}",
             trigger_code=f"drilling_report.{event_type.lower()}",
             sent_by_user_id=actor_user_id,

@@ -187,7 +187,7 @@ CORS_ALLOW_HEADERS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "core.jwt_auth.SerosJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -202,9 +202,19 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ("rest_framework.filters.SearchFilter",),
 }
 
+# Encrypted sign-in (core/login_crypto.py): the RSA key file (created on first use) and whether a plain-text sign-in is still accepted.
+LOGIN_PRIVATE_KEY_FILE = os.getenv("LOGIN_PRIVATE_KEY_FILE", str(BASE_DIR / "login_key.pem"))
+LOGIN_REQUIRE_ENCRYPTED = os.getenv("LOGIN_REQUIRE_ENCRYPTED", "False") == "True"
+
+# A session lives at most 2 days (the refresh token, which is rotated but never extended), and ends after IDLE_TIMEOUT_MINUTES without use.
+REFRESH_LIFETIME = timedelta(days=2)
+IDLE_TIMEOUT_MINUTES = int(os.getenv("IDLE_TIMEOUT_MINUTES", "30"))
+# How long the cached mail password may be used: never longer than a session.
+CREDENTIAL_TTL_SECONDS = int(REFRESH_LIFETIME.total_seconds())
+
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "REFRESH_TOKEN_LIFETIME": REFRESH_LIFETIME,
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,

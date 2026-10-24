@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import logging
 
 import requests
@@ -13,8 +12,7 @@ AD_AUTH_URL = "https://mobileservices.essar.com/prod/web/ldap/api/AuthAPI/IsAcco
 AD_TIMEOUT = 10  # seconds
 
 
-def _sha256(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+from .passwords import hash_password, is_legacy_hash, verify_password
 
 
 def _check_local_password(mst_user: MstUser, password: str) -> bool | None:
@@ -26,7 +24,13 @@ def _check_local_password(mst_user: MstUser, password: str) -> bool | None:
     row = getattr(mst_user, "password_row", None)
     if row is None:
         return None
-    return row.password_hash == _sha256(password)
+    if not verify_password(password, row.password_hash):
+        return False
+    if is_legacy_hash(row.password_hash):
+        # a correct password on an old unsalted hash: replace it with a salted, slow one now
+        row.password_hash = hash_password(password)
+        row.save(update_fields=["password_hash", "set_at"])
+    return True
 
 
 def _fetch_mst_user(login_id: str) -> MstUser | None:

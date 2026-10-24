@@ -49,6 +49,8 @@ from .incident_dashboard import (
     IncidentDashboardView,
 )
 from .user_shortcuts import UserShortcutsView
+from .token_security import SerosTokenRefreshView
+from .media_views import MediaFileView
 from .operations_analytics import OperationsAnalyticsExportView, OperationsAnalyticsView
 from .drilling_tripping_analysis import DrillingTrippingAnalysisExportView, DrillingTrippingAnalysisView
 from .drilling_daily_data import DrillingDailyDataExportView, DrillingDailyDataView
@@ -518,8 +520,10 @@ urlpatterns = [
         ActivityClosureAnalysisExportView.as_view(),
         name="qhse_activity_closure_analysis_export",
     ),
+    path("media/<path:path>", MediaFileView.as_view(), name="media_file"),
+    path("auth/login-key/", views.login_key_api, name="login_key"),
     path("auth/token/", views.AuditedTokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("auth/token/refresh/", SerosTokenRefreshView.as_view(), name="token_refresh"),
     path("auth/me/", views.me, name="me"),
     path("auth/logout/", views.logout_api, name="logout"),
     path("dashboard/", views.dashboard_api, name="dashboard"),
@@ -556,6 +560,8 @@ urlpatterns = [
     path("admin/user-management/",views.admin_user_management_list_api,name="admin_user_management_list"),
     path("admin/user-management/<int:user_id>/",views.admin_user_management_get_api,name="admin_user_management_get"),
     path("admin/user-management/<int:user_id>/update/",views.admin_user_management_update_api,name="admin_user_management_update"),
+    path("admin/login-security/",views.admin_login_security_api,name="admin_login_security"),
+    path("admin/login-security/unlock/",views.admin_login_security_unlock_api,name="admin_login_security_unlock"),
     path("admin/user-management/<int:user_id>/photo/",views.admin_user_management_photo_api,name="admin_user_management_photo"),
     path("admin/user-management/designations/",views.admin_user_management_designations_api,name="admin_user_management_designations"),
     path("admin/user-management/create/",views.admin_user_management_create_api,name="admin_user_management_create"),
