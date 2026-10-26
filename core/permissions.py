@@ -141,6 +141,8 @@ _ACTION_PERM = {
     # (these used to fall back to View, which let a view-only user upload).
     "upload_sign": ("add", "edit"),
     "upload_certificate": ("add", "edit"),
+    # Birthday Mailer: uploading an Excel file of people adds people.
+    "upload_people": "add",
 }
 
 

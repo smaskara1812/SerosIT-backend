@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
+from . import birthday_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
@@ -78,6 +79,7 @@ from .mis_hse_review import MisHseReviewMetaView, MisHseReviewPrintView, MisHseR
 router = DefaultRouter()
 router.register("admin/notices", NoticeViewSet, basename="admin-notice")
 router.register("admin/banner-events", BannerEventViewSet, basename="admin-banner-event")
+router.register("admin/birthday-people", birthday_views.BirthdayPersonViewSet, basename="admin-birthday-person")
 router.register("reports/incidents", reports_views.IncidentViewSet, basename="report-incident")
 router.register("qhse/incidents", IncidentDetailViewSet, basename="qhse-incident")
 router.register("qhse/incident-root-causes", IncidentRootCauseViewSet, basename="qhse-incident-root-cause")
@@ -555,6 +557,19 @@ urlpatterns = [
     path("admin/audit/<int:entry_id>/revert/", views.admin_audit_revert_api, name="admin_audit_revert"),
     path("notices/live/", live_notices_api, name="notices_live"),
     path("banner/active/", active_banner_api, name="banner_active"),
+    path("admin/birthday-templates/", birthday_views.templates_api, name="birthday_templates"),
+    path("admin/birthday-templates/preview/", birthday_views.template_preview_api, name="birthday_template_preview"),
+    path("admin/birthday-templates/<int:template_id>/", birthday_views.template_detail_api, name="birthday_template_detail"),
+    path("admin/birthday-mailer/overview/", birthday_views.overview_api, name="birthday_overview"),
+    path("admin/birthday-mailer/test-send/", birthday_views.test_send_api, name="birthday_test_send"),
+    path("admin/scheduled-mails/", scheduled_mails_views.scheduled_mails_api, name="scheduled_mails"),
+    path("admin/scheduled-mails/run-now/", scheduled_mails_views.run_now_api, name="scheduled_mails_run_now"),
+    path("admin/scheduled-mails/jobs/<str:job_key>/<str:state>/", scheduled_mails_views.job_switch_api, name="scheduled_mails_job_switch"),
+    path("admin/scheduled-mails/<int:item_id>/email/", scheduled_mails_views.item_email_api, name="scheduled_mail_email"),
+    path("admin/scheduled-mails/<int:item_id>/skip/", scheduled_mails_views.skip_api, name="scheduled_mail_skip"),
+    path("admin/scheduled-mails/<int:item_id>/unskip/", scheduled_mails_views.unskip_api, name="scheduled_mail_unskip"),
+    path("admin/scheduled-mails/<int:item_id>/send-now/", scheduled_mails_views.send_now_api, name="scheduled_mail_send_now"),
+    path("admin/scheduled-mails/<int:item_id>/resend/", scheduled_mails_views.resend_api, name="scheduled_mail_resend"),
     path("admin/banner-assets/", assets_api, name="banner_assets"),
     path("admin/banner-assets/<int:asset_id>/", asset_detail_api, name="banner_asset_detail"),
     path("banner/assets/<int:asset_id>/file/", asset_file_api, name="banner_asset_file"),

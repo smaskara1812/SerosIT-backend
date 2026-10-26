@@ -167,3 +167,128 @@ def queue_notification_email(**kwargs):
             close_old_connections()
 
     threading.Thread(target=_run, daemon=True).start()
+
+
+# ── Scheduled (automatic) mail ───────────────────────────────────────────────────────────────────────────────────────────────
+
+_sched_log = logging.getLogger("seros.scheduler")
+
+
+def designated_smtp():
+    """The sending account set up for the birthday mail in the environment (BIRTHDAY_EMAIL_*), or None when it is not set."""
+    if not settings.BIRTHDAY_EMAIL_HOST:
+        return None
+    user = settings.BIRTHDAY_EMAIL_USER
+    return {
+        "host": settings.BIRTHDAY_EMAIL_HOST, "port": settings.BIRTHDAY_EMAIL_PORT, "user": user or None,
+        "password": settings.BIRTHDAY_EMAIL_PASSWORD or None, "use_tls": settings.BIRTHDAY_EMAIL_USE_TLS,
+        "use_ssl": settings.BIRTHDAY_EMAIL_USE_SSL,
+        "from_address": settings.BIRTHDAY_EMAIL_FROM or (user if user and "@" in user else settings.DEFAULT_FROM_EMAIL),
+    }
+
+
+def default_smtp():
+    """The default account (EMAIL_HOST...), the one the rest of the application falls back to."""
+    return {
+        "host": settings.EMAIL_HOST, "port": settings.EMAIL_PORT, "user": settings.EMAIL_HOST_USER or None,
+        "password": settings.EMAIL_HOST_PASSWORD or None, "use_tls": settings.EMAIL_USE_TLS, "use_ssl": settings.EMAIL_USE_SSL,
+        "from_address": settings.DEFAULT_FROM_EMAIL,
+    }
+
+
+def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_address, inline_images, connection):
+    from email.mime.image import MIMEImage
+    from email.utils import formataddr
+
+    from django.core.mail import EmailMultiAlternatives
+
+    msg = EmailMultiAlternatives(
+        subject=subject, body=text, from_email=formataddr((from_name, from_address)) if from_name else from_address,
+        to=to or None, cc=cc or None, bcc=bcc or None, connection=connection,
+    )
+    msg.attach_alternative(html, "text/html")
+    if inline_images:
+        msg.mixed_subtype = "related"  # the picture belongs to the page, not a separate attachment
+        for cid, data, subtype in inline_images:
+            img = MIMEImage(data, _subtype=subtype)
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=f"{cid}.{subtype}")
+            msg.attach(img)
+    return msg
+
+
+def _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images):
+    """One send through one account. Raises on any failure."""
+    connection = get_connection(
+        host=smtp["host"], port=smtp["port"], username=smtp["user"], password=smtp["password"],
+        use_tls=smtp["use_tls"], use_ssl=smtp["use_ssl"], fail_silently=False,
+    )
+    msg = _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, smtp["from_address"], inline_images, connection)
+    if settings.EMAIL_USE_CONSOLE:
+        print(f"--- Envelope: To={to or []} Cc={cc or []} Bcc={bcc or []} ---")
+    msg.send()
+
+
+def _html_for_log(html, inline_images):
+    """The mail's HTML as kept in the Email Log. A picture sent inside the mail (src="cid:...") cannot be shown by the log page, so it is replaced
+    by a small copy of the picture (a data address of about 20 KB), which lets the log show what was sent."""
+    try:
+        import base64
+        import io
+
+        from PIL import Image
+
+        for cid, data, _sub in inline_images or []:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            img.thumbnail((480, 480))
+            out = io.BytesIO()
+            img.save(out, "JPEG", quality=70, optimize=True)
+            html = html.replace(f"cid:{cid}", "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii"))
+    except Exception:
+        _sched_log.warning("could not make a log preview of the inline picture", exc_info=True)
+    return html
+
+
+def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_name="", inline_images=None, trigger="", trigger_code="", designated=True):
+    """Sends one automatic mail: with the designated account first (when one is set and `designated` is true), and straight away with the default
+    account if that fails. Always writes ONE EmailLog row for the attempt, success or failure, and logs any failure to the scheduler logs.
+
+    Returns {"ok", "smtp_used" ('designated', 'default' or ''), "error", "email_log_id"}. Never raises."""
+    from .models import EmailLog
+
+    to, cc, bcc = ([a for a in (x or []) if a] for x in (to, cc, bcc))
+    recipients_display = ", ".join([*to, *(f"cc:{a}" for a in cc), *(f"bcc:{a}" for a in bcc)])
+    attempts = []
+    if designated and designated_smtp():
+        attempts.append(("designated", designated_smtp()))
+    attempts.append(("default", default_smtp()))
+
+    ok, used, errors = False, "", []
+    if not (to or cc or bcc):
+        errors.append("No recipients")
+    else:
+        for label, smtp in attempts:
+            try:
+                _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images)
+                ok, used = True, label
+                break
+            except Exception as exc:
+                errors.append(f"{label} SMTP ({smtp['host']}:{smtp['port']}) failed: {exc}")
+                _sched_log.error("scheduled mail %r: %s", trigger_code or subject, errors[-1], exc_info=True)
+    error = "; ".join(errors) if not ok else ""
+    if ok and errors:
+        _sched_log.warning("scheduled mail %r went out with the %s account after: %s", trigger_code or subject, used, "; ".join(errors))
+    if not ok and errors == ["No recipients"]:
+        _sched_log.error("scheduled mail %r has no recipients: nothing was sent", trigger_code or subject)
+
+    log_id = None
+    try:
+        row = EmailLog.objects.create(
+            subject=subject[:200], body=_html_for_log(html, inline_images), recipients=recipients_display, trigger=trigger[:200], trigger_code=trigger_code[:100], success=ok,
+            error=error or ("; ".join(errors) if errors else ""), used_fallback=bool(ok and used == "default" and designated and designated_smtp()),
+            attachment_names=", ".join(f"{cid}.{sub}" for cid, _, sub in (inline_images or [])), sent_by_user_id=None,
+        )
+        log_id = row.pk
+    except Exception:
+        _sched_log.exception("EmailLog write failed for scheduled mail %r", subject)
+    return {"ok": ok, "smtp_used": used, "error": error, "email_log_id": log_id}

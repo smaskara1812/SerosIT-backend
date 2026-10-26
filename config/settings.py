@@ -172,6 +172,7 @@ CORS_ALLOWED_ORIGINS = _env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 )
 CORS_ALLOW_CREDENTIALS = True
+CORS_EXPOSE_HEADERS = ["X-Card-Meta"]  # how a birthday card preview was fitted (the browser may read it when the API is on another address)
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = [
     "accept",
@@ -278,3 +279,39 @@ EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
 # that From must match whoever authenticated, so this must be the fallback
 # account's own address, confirmed against the real relay.
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "eosil.autoalerts@essar.com")
+
+# ── Scheduled mails (the Birthday Mailer and the other automations) ──────────────────────────────────────────────────────────
+# The birthday mail has its own sending account, set here and never in the database or on a page. When it is not set, or when it fails, the
+# mail is sent with the default account above (EMAIL_HOST...). The From name comes from the alert (its display name); the From address is the
+# one below, or the account's own user name when it is an address, or DEFAULT_FROM_EMAIL.
+BIRTHDAY_EMAIL_HOST = os.getenv("BIRTHDAY_EMAIL_HOST", "")
+BIRTHDAY_EMAIL_PORT = int(os.getenv("BIRTHDAY_EMAIL_PORT", "25") or 25)
+BIRTHDAY_EMAIL_USER = os.getenv("BIRTHDAY_EMAIL_USER", "")
+BIRTHDAY_EMAIL_PASSWORD = os.getenv("BIRTHDAY_EMAIL_PASSWORD", "")
+BIRTHDAY_EMAIL_USE_TLS = os.getenv("BIRTHDAY_EMAIL_USE_TLS", "False") == "True"
+BIRTHDAY_EMAIL_USE_SSL = os.getenv("BIRTHDAY_EMAIL_USE_SSL", "False") == "True"
+BIRTHDAY_EMAIL_FROM = os.getenv("BIRTHDAY_EMAIL_FROM", "")
+SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # after the first try: at most this many more, one per hourly run
+
+# ── Log files ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# backend/logs/ (or LOG_DIR): scheduler-<date>.log (every hourly run), automation_errors-<date>.log (every error, with its traceback) and
+# django-<date>.log. One file per day, kept LOG_KEEP_DAYS days. Passwords are never logged.
+LOG_DIR = Path(os.getenv("LOG_DIR") or (BASE_DIR / "logs"))
+LOG_KEEP_DAYS = int(os.getenv("LOG_KEEP_DAYS", "60") or 60)
+_LOG_FMT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"plain": {"format": _LOG_FMT}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+        "scheduler_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "scheduler", "keep_days": LOG_KEEP_DAYS, "formatter": "plain"},
+        "error_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "automation_errors", "keep_days": LOG_KEEP_DAYS, "formatter": "plain", "level": "ERROR"},
+        "django_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "django", "keep_days": LOG_KEEP_DAYS, "formatter": "plain", "level": "WARNING"},
+    },
+    "loggers": {
+        # everything the scheduler and the automations do; errors also go to their own file
+        "seros.scheduler": {"handlers": ["scheduler_file", "error_file", "console"], "level": "INFO", "propagate": False},
+        "django": {"handlers": ["django_file", "console"], "level": "WARNING", "propagate": False},
+    },
+}

@@ -4709,3 +4709,141 @@ class BannerAsset(models.Model):
 
     def __str__(self):
         return self.name
+
+
+# ── Scheduled mails: the Birthday Mailer and the overview of every automatic mail ────────────
+
+
+class BirthdayPerson(models.Model):
+    """Someone on the Birthday Mailer's own list (Admin > Birthday Mailer). Deliberately NOT tied to the users table and with no email address:
+    the mail goes to the people listed on the alert (see core/birthday_mailer.py), never to the celebrant. Active until the leaving date
+    (the last day; blank = active). Day and month are required, the year is optional (not needed to send, kept if given). There is no uniqueness rule: two
+    rows with the same name and birthday are two people and get two mails."""
+
+    person_id = models.AutoField(primary_key=True)
+    full_name = models.CharField(max_length=100)
+    display_name = models.CharField(max_length=100, null=True, blank=True)  # shown on the card; blank = the full name
+    birth_month = models.SmallIntegerField()
+    birth_day = models.SmallIntegerField()
+    birth_year = models.IntegerField(null=True, blank=True)
+    leaving_date = models.DateField(null=True, blank=True)  # blank = still here; the leaving date is the last day the person gets a card
+    source = models.CharField(max_length=10, default="manual")  # manual or excel
+    upload_batch = models.CharField(max_length=36, blank=True, default="")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "birthday_person"
+
+    @property
+    def shown_name(self):
+        return (self.display_name or "").strip() or self.full_name.strip()
+
+    def __str__(self):
+        return self.shown_name
+
+
+class BirthdayTemplate(models.Model):
+    """A picture (PNG or JPG) the birthday mail is built from. The person's name is drawn into the box marked on it. Several can be active: each
+    mail uses the one used longest ago (so they take turns). The box and the text settings are what the editor on the Birthday Mailer page saves;
+    positions are fractions of the picture (0 to 1) so they hold at any size."""
+
+    template_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=80)
+    file_path = models.CharField(max_length=120)  # under MEDIA_ROOT: birthday_templates/<id>_<n>.png
+    width = models.IntegerField()
+    height = models.IntegerField()
+    box_x = models.FloatField(default=0.1)
+    box_y = models.FloatField(default=0.4)
+    box_w = models.FloatField(default=0.8)
+    box_h = models.FloatField(default=0.2)
+    font = models.CharField(max_length=20, default="poppins")
+    color = models.CharField(max_length=7, default="#ffffff")
+    size_max = models.IntegerField(default=96)  # in pixels of the picture; the name is shrunk to fit the box
+    size_min = models.IntegerField(default=28)
+    align_h = models.CharField(max_length=6, default="center")  # left, center, right
+    align_v = models.CharField(max_length=6, default="middle")  # top, middle, bottom
+    text_case = models.CharField(max_length=6, default="title")  # asis, upper, title
+    is_active = models.CharField(max_length=1, default="Y")
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    times_used = models.IntegerField(default=0)
+    thumb_data = models.TextField(blank=True, default="")  # a small low-resolution copy (a data address, about 10 KB) for the list; the editor loads the real picture
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "birthday_template"
+
+    def __str__(self):
+        return self.name
+
+
+class SchedJob(models.Model):
+    """One kind of automatic mail the scheduler looks after (the birthday mailer today; others later). The row only carries the on/off switch and
+    the last run; what the job does lives in code (core/scheduler.py)."""
+
+    job_id = models.AutoField(primary_key=True)
+    job_key = models.CharField(max_length=40, unique=True)
+    name = models.CharField(max_length=80)
+    enabled = models.CharField(max_length=1, default="Y")  # N = paused: nothing is planned or sent
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_note = models.CharField(max_length=300, blank=True, default="")
+
+    class Meta:
+        db_table = "sched_job"
+
+    def __str__(self):
+        return self.name
+
+
+class SchedItem(models.Model):
+    """One mail the scheduler has planned, sent, skipped or failed to send. Rows are planned for today and the next 7 days; a row is never planned
+    twice for the same job, subject and day. The email itself is in the Email Log (email_log_id)."""
+
+    item_id = models.AutoField(primary_key=True)
+    job_key = models.CharField(max_length=40, db_index=True)
+    subject_key = models.CharField(max_length=60)  # what the mail is about: the birthday person's id
+    label = models.CharField(max_length=200)  # shown on the overview, e.g. the person's name
+    send_date = models.DateField(db_index=True)
+    due_at = models.DateTimeField()
+    status = models.CharField(max_length=10, default="planned")  # planned, sending, sent, failed, skipped, missed, cancelled
+    attempts = models.IntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    smtp_used = models.CharField(max_length=10, blank=True, default="")  # designated or default
+    email_log_id = models.IntegerField(null=True, blank=True)
+    template_id = models.IntegerField(null=True, blank=True)
+    recipients = models.TextField(blank=True, default="")  # who it went to, as a snapshot
+    sent_at = models.DateTimeField(null=True, blank=True)
+    resend_count = models.IntegerField(default=0)
+    skipped_by = models.CharField(max_length=60, blank=True, default="")
+    skipped_at = models.DateTimeField(null=True, blank=True)
+    note = models.CharField(max_length=300, blank=True, default="")
+    cr_dt = models.DateTimeField()
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "sched_item"
+        constraints = [models.UniqueConstraint(fields=["job_key", "subject_key", "send_date"], name="uniq_sched_item_job_subject_day")]
+
+    def __str__(self):
+        return f"{self.job_key}: {self.label} on {self.send_date}"
+
+
+class SchedHeartbeat(models.Model):
+    """One row, id 1: when the scheduler last ran, how it went, and the lock that stops two copies running at once."""
+
+    heartbeat_id = models.IntegerField(primary_key=True)
+    last_tick_at = models.DateTimeField(null=True, blank=True)
+    last_tick_ok = models.BooleanField(default=True)
+    last_message = models.CharField(max_length=300, blank=True, default="")
+    locked_by = models.CharField(max_length=80, blank=True, default="")
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "sched_heartbeat"

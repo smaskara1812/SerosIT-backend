@@ -711,6 +711,9 @@ def admin_email_log_list_api(request):
     status_filter = request.GET.get("status", "").strip()
     trigger = request.GET.get("trigger", "").strip()
     q = request.GET.get("q", "").strip()
+    one = request.GET.get("id", "").strip()  # one email by its id (the Scheduled Mails page links here)
+    if one.isdigit():
+        qs = qs.filter(email_log_id=int(one))
     dfrom = request.GET.get("from", "").strip()
     dto = request.GET.get("to", "").strip()
     if status_filter == "success":

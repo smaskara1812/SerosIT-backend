@@ -9,3 +9,5 @@ db.sqlite3
 
 selftest_report_*.txt
 login_key.pem
+
+/logs/

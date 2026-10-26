@@ -1710,6 +1710,8 @@ class MailAlertToUserSerializer(serializers.ModelSerializer):
             attrs["recipient_name"] = name or None
         if not user and not name and _changed(self, attrs, "user", "recipient_name"):
             errors["recipient_name"] = "Pick a user, or type the recipient's name."
+        # The alert reaches this person from the From date until the To date (blank = still receiving). A From in the future is allowed.
+        _check_to_after_from(self, attrs, errors, "mail_alert_from", "mail_alert_to", "To date")
         if errors:
             raise serializers.ValidationError(errors)
         return attrs

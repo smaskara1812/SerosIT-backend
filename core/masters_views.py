@@ -1021,6 +1021,7 @@ class MailAlertToUserViewSet(BaseMasterViewSet):
     lookup_strict = True
     lookup_fields = ('mail_alert_to_user_id', 'display_label', 'mail_alert_to_user_label')
     name_field = "email_addr"
+    date_active_field = "mail_alert_to"  # receiving now = To is blank or not yet passed (notification_triggers also needs From to have started)
     search_fields = ["email_addr", "alert__alert_name"]
     # Powers the Alert Details page's "View recipients" deep link
     # (?alert=<alert_id>) — filters this list down to just that alert's rows.
