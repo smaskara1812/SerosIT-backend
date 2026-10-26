@@ -155,6 +155,26 @@ try:
         ok("a yearly event wraps over New Year", covers(yearly, Dt(2030, 12, 30)) and covers(yearly, Dt(2031, 1, 2)) and not covers(yearly, Dt(2031, 6, 1)))
         one = NS(repeat_yearly="N", starts_on=Dt(2026, 1, 26), ends_on=Dt(2026, 1, 26))
         ok("a one-day event is inclusive", covers(one, Dt(2026, 1, 26)) and not covers(one, Dt(2026, 1, 27)) and not covers(one, Dt(2027, 1, 26)))
+        # the notice card's own look (dark, light, or the person's own colour), for banners with a picture behind the notice
+        from core.banner_events import clean_design
+        from rest_framework import serializers as _ser
+
+        def nbad(notice, what):
+            try:
+                clean_design({"notice": notice}); ok(what, False, "was accepted")
+            except _ser.ValidationError:
+                ok(what, True)
+        ok("a design with no notice look defaults to automatic", clean_design({})["notice"]["look"] == "auto" and clean_design({"notice": {"x": 50, "y": 10}})["notice"]["look"] == "auto")
+        for lk in ("auto", "dark", "light"):
+            ok(f"notice look '{lk}' is accepted", clean_design({"notice": {"look": lk, "strength": 0.6}})["notice"]["look"] == lk)
+        c = clean_design({"notice": {"look": "custom", "color": "#FFF1C2", "strength": 0.9}})["notice"]
+        ok("a custom card keeps its colour and strength", c["look"] == "custom" and c["color"].lower() == "#fff1c2" and c["strength"] == 0.9)
+        nbad({"look": "custom"}, "a custom card with no colour is refused")
+        nbad({"look": "custom", "color": "red"}, "a custom card with a colour that is not a hex colour is refused")
+        nbad({"look": "glitter"}, "an unknown look is refused")
+        nbad({"look": "dark", "strength": 0.05}, "a card too see-through to read is refused")
+        nbad({"look": "dark", "strength": 3}, "a strength over 1 is refused")
+        nbad({"look": "dark", "color": "javascript:alert(1)"}, "a colour that is not a colour is refused even when not used")
         raise Rollback()
 except Rollback:
     pass

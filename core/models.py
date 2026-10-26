@@ -4679,3 +4679,33 @@ class BannerEvent(models.Model):
 
     def __str__(self):
         return self.name
+
+
+
+class BannerAsset(models.Model):
+    """A picture an administrator uploaded for the home banner (Admin > Banner Events). The file is re-encoded on upload (JPG or PNG,
+    metadata removed, at most 1600 px on the longest side, at most 400 KB), so what is stored is never the file the person sent. It is
+    named by its own checksum, so the same picture uploaded twice is one row. `thumb_data` is an extremely small preview (a data
+    address) for the editor's library. Pictures are shared by every event; a design refers to one by `asset_id` on a picture layer.
+    `is_builtin` marks the Seros logos that come with the application: they cannot be deleted."""
+
+    asset_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=80)
+    file_path = models.CharField(max_length=120, unique=True)  # under MEDIA_ROOT: banner_assets/<checksum>.<png|jpg>
+    kind = models.CharField(max_length=3)  # png or jpg
+    has_alpha = models.CharField(max_length=1, default="N")  # Y = it has see-through parts
+    width = models.IntegerField()
+    height = models.IntegerField()
+    size_bytes = models.IntegerField()
+    sha256 = models.CharField(max_length=64, unique=True)
+    thumb_data = models.TextField(blank=True, default="")
+    is_builtin = models.CharField(max_length=1, default="N")
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+
+    class Meta:
+        db_table = "banner_asset"
+
+    def __str__(self):
+        return self.name

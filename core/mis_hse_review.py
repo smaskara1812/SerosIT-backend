@@ -427,6 +427,7 @@ class MisHseReviewView(APIView):
 class MisHseReviewPrintView(APIView):
     entity_key = ENTITY_KEY
     permission_classes = [HasMenuPermission]
+    action = "export"  # printing the review PDF needs the Export right, not just View
 
     def get(self, request):
         from .mis_hse_review_report import render_mis_hse_review_pdf

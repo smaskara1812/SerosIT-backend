@@ -20,7 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .masters_views import BaseMasterViewSet
-from .models import BannerEvent
+from .models import BannerAsset, BannerEvent
 from .notice_board import poster_name
 from .permissions import holds_a_right_on
 
@@ -36,10 +36,12 @@ SHAPES = (
     "rect", "circle", "ring", "triangle", "diamond", "star", "sparkle", "heart", "moon", "drop", "leaf", "wave", "line", "rig", "ship",
     "tree", "broadtree", "cloud", "sun", "snowflake", "helicopter", "hardhat", "arthat", "artcone", "artgear", "artclipboard", "artgoggles", "artwoman", "artlotus", "artdraft", "artcircuit", "artearth", "artplant", "artlabour", "artsite", "artskyline", "artcharkha", "artdiwali", "artgulalyellow", "artgulalteal", "artgulalpurple", "artgulalpink", "artgulalgreen", "artgulalred", "shield", "hardhatridge", "hardhatshade", "conebands", "coneshade", "drillbit", "wrench", "gear", "cone", "diya", "kite", "balloon", "flag", "spectacles",
     "chakra", "indiagate", "redfort", "tajmahal", "qutub", "jet", "swoosh", "book", "mosque", "lantern", "splash", "burst", "temple", "bauble", "holly", "flame", "bananaleaf", "ribbon", "bow", "modak", "flower", "bird", "hand",
-    "text",
+    "text", "picture",
 )
 TEXT_KEYS = ("text", "size", "bold", "font", "spacing")  # only on a text layer
-LAYER_KEYS = ("id", "type", "x", "y", "w", "h", "rot", "fill", "opacity", "n", "p", "fill2", "grad", "stroke", "sw") + TEXT_KEYS
+LAYER_KEYS = ("id", "type", "x", "y", "w", "h", "rot", "fill", "opacity", "n", "p", "fill2", "grad", "stroke", "sw", "asset") + TEXT_KEYS
+NOTICE_LOOKS = ("auto", "dark", "light", "custom")  # the notice card: follow the banner, a dark card, a light card, or the person's own colour
+MAX_PICTURES = 6  # uploaded pictures in one design
 FONT_KEYS = ("default", "poppins", "montserrat", "lora", "playfair", "cinzel", "yatra", "bebas", "pacifico", "caveat", "baloo")
 FONTS = ("sans", "serif") + FONT_KEYS[1:]  # a text label's font: the two older ones plus the bundled fonts
 
@@ -52,7 +54,7 @@ DEFAULT_DESIGN = {
     "contours": {"on": True, "color": "#ffffff", "opacity": 0.13, "density": 2},
     "showLastSignIn": True,
     "search": {"tint": "#ffffff"},
-    "notice": {"x": None, "y": 0},
+    "notice": {"x": None, "y": 0, "look": "auto", "color": None, "strength": 0.85},
     "frame": {"mode": "auto", "color": None},
     "edges": [],
     "layers": [],
@@ -112,8 +114,9 @@ def _num(value, path, lo, hi):
     return value
 
 
-def clean_design(raw):
-    """Return the design with every value checked and normalised, or raise a validation error."""
+def clean_design(raw, strict=True):
+    """Return the design with every value checked and normalised, or raise a validation error. With strict=False (reading a design
+    that is already saved) a picture layer whose picture no longer exists is left out instead of being an error."""
     if raw in (None, {}):
         return DEFAULT_DESIGN | {}
     _only_keys(raw, DEFAULT_DESIGN, "design")
@@ -163,12 +166,24 @@ def clean_design(raw):
     d["search"] = {"tint": _light_tint(sr.get("tint", "#ffffff"), "search box tint")}
 
     nt = raw.get("notice", DEFAULT_DESIGN["notice"])
-    _only_keys(nt, ("x", "y", "at"), "notice")  # `at` is the older top / middle / bottom form, kept so saved designs still open
+    _only_keys(nt, ("x", "y", "at", "look", "color", "strength"), "notice")  # `at` is the older top / middle / bottom form, kept so saved designs still open
     y = {"top": 0, "middle": 50, "bottom": 100}.get(nt.get("at"), 0) if "y" not in nt else nt["y"]
     if "at" in nt and nt["at"] not in ("top", "middle", "bottom"):
         _err("notice", "position must be top, middle or bottom")
     x = nt.get("x")
-    d["notice"] = {"x": None if x is None else _num(x, "notice across", 0, 100), "y": _num(y, "notice up and down", 0, 100)}
+    look = nt.get("look", "auto")
+    if look not in NOTICE_LOOKS:
+        _err("notice", "look must be " + ", ".join(NOTICE_LOOKS))
+    if look == "custom":
+        color = _hex(nt.get("color"), "notice colour")
+    elif nt.get("color") is None:
+        color = None
+    else:
+        color = _hex(nt["color"], "notice colour")
+    d["notice"] = {
+        "x": None if x is None else _num(x, "notice across", 0, 100), "y": _num(y, "notice up and down", 0, 100),
+        "look": look, "color": color, "strength": _num(nt.get("strength", 0.85), "notice card strength", 0.3, 1),
+    }
 
     fr = raw.get("frame", DEFAULT_DESIGN["frame"])
     _only_keys(fr, ("mode", "color"), "frame")
@@ -190,7 +205,11 @@ def clean_design(raw):
     layers = raw.get("layers", [])
     if not isinstance(layers, list) or len(layers) > MAX_LAYERS:
         _err("layers", f"must be a list of at most {MAX_LAYERS} shapes")
-    d["layers"] = [_layer(l, i) for i, l in enumerate(layers)]
+    pics = [l.get("asset") for l in layers if isinstance(l, dict) and l.get("type") == "picture"]
+    if len(pics) > MAX_PICTURES:
+        _err("layers", f"a banner can hold at most {MAX_PICTURES} uploaded pictures")
+    valid = set(BannerAsset.objects.filter(pk__in=[p for p in pics if isinstance(p, int) and not isinstance(p, bool)]).values_list("pk", flat=True)) if pics else set()
+    d["layers"] = [x for x in (_layer(l, i, valid, strict) for i, l in enumerate(layers)) if x is not None]
     return d
 
 
@@ -220,7 +239,7 @@ def _edge(e, i):
     }
 
 
-def _layer(l, i):
+def _layer(l, i, valid_assets=frozenset(), strict=True):
     path = f"shape {i + 1}"
     _only_keys(l, LAYER_KEYS, path)
     if l.get("type") not in SHAPES:
@@ -239,6 +258,17 @@ def _layer(l, i):
         "fill": _hex(l.get("fill", "#ffffff"), f"{path} colour"),
         "opacity": _num(l.get("opacity", 1), f"{path} opacity", 0, 1),
     }
+    if l["type"] == "picture":
+        aid = l.get("asset")
+        if not isinstance(aid, int) or isinstance(aid, bool):
+            _err(path, "needs a picture")
+        if aid not in valid_assets:
+            if strict:
+                _err(path, "uses a picture that does not exist")
+            return None
+        out["asset"] = aid
+    elif "asset" in l:
+        _err(path, "has a picture but is not a picture")
     if "n" in l:
         out["n"] = int(_num(l["n"], f"{path} points", 2, 12))
     if "p" in l:
@@ -412,4 +442,4 @@ def active_banner_api(request):
 
 
 def _shape(ev, preview=False):
-    return {"event_id": ev.event_id, "name": ev.name, "design": clean_design(ev.design), "preview": preview}
+    return {"event_id": ev.event_id, "name": ev.name, "design": clean_design(ev.design, strict=False), "preview": preview}

@@ -133,6 +133,14 @@ _ACTION_PERM = {
     "delete_photo": ("add", "edit"),
     # HSE Leading/Lagging Indicators: the per-report Excel export.
     "export_report": "export",
+    # Printed PDFs of a record or a list (Incident Flash Report, HSE Drill report, Incident Register): printing is an export
+    # of the underlying records, so it needs the Export right and not just View.
+    "flash_report": "export",
+    "print_pdf": "export",
+    # Saving a picture or certificate file onto the server writes to the media folders, so it needs Add or Edit on the page
+    # (these used to fall back to View, which let a view-only user upload).
+    "upload_sign": ("add", "edit"),
+    "upload_certificate": ("add", "edit"),
 }
 
 
