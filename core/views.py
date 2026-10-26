@@ -723,7 +723,7 @@ def admin_email_log_list_api(request):
     if trigger:
         qs = qs.filter(trigger_code=trigger)
     if q:
-        qs = qs.filter(Q(subject__icontains=q) | Q(recipients__icontains=q) | Q(trigger__icontains=q))
+        qs = qs.filter(Q(subject__icontains=q) | Q(recipients__icontains=q) | Q(from_address__icontains=q) | Q(trigger__icontains=q))
     if dfrom:
         qs = qs.filter(sent_dt__date__gte=dfrom)
     if dto:
@@ -741,6 +741,7 @@ def admin_email_log_list_api(request):
             "subject",
             "body",
             "recipients",
+            "from_address",
             "trigger",
             "success",
             "used_fallback",

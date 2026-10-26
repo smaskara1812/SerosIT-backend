@@ -99,6 +99,7 @@ def send_notification_email(
     success = False
     used_fallback = False
     error = ""
+    from_used = from_email or auth_user or settings.DEFAULT_FROM_EMAIL or ""
 
     if not (to or cc or bcc):
         error = "No recipients"
@@ -129,6 +130,7 @@ def send_notification_email(
                 )
                 success = True
                 used_fallback = True
+                from_used = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER or ""
                 error = ""
             except Exception as exc2:
                 logger.exception("send_notification_email failed on both primary and fallback sends")
@@ -139,6 +141,7 @@ def send_notification_email(
             subject=subject,
             body=body,
             recipients=recipients_display,
+            from_address=(from_used or "")[:200],
             trigger=trigger,
             trigger_code=trigger_code,
             success=success,
@@ -264,13 +267,14 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     attempts.append(("default", default_smtp()))
 
     ok, used, errors = False, "", []
+    from_used = attempts[0][1]["from_address"]  # the account tried first; replaced by the one that actually sent it
     if not (to or cc or bcc):
         errors.append("No recipients")
     else:
         for label, smtp in attempts:
             try:
                 _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images)
-                ok, used = True, label
+                ok, used, from_used = True, label, smtp["from_address"]
                 break
             except Exception as exc:
                 errors.append(f"{label} SMTP ({smtp['host']}:{smtp['port']}) failed: {exc}")
@@ -284,7 +288,7 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     log_id = None
     try:
         row = EmailLog.objects.create(
-            subject=subject[:200], body=_html_for_log(html, inline_images), recipients=recipients_display, trigger=trigger[:200], trigger_code=trigger_code[:100], success=ok,
+            subject=subject[:200], body=_html_for_log(html, inline_images), recipients=recipients_display, from_address=(from_used or "")[:200], trigger=trigger[:200], trigger_code=trigger_code[:100], success=ok,
             error=error or ("; ".join(errors) if errors else ""), used_fallback=bool(ok and used == "default" and designated and designated_smtp()),
             attachment_names=", ".join(f"{cid}.{sub}" for cid, _, sub in (inline_images or [])), sent_by_user_id=None,
         )

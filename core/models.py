@@ -2531,6 +2531,7 @@ class EmailLog(models.Model):
     subject = models.CharField(max_length=200)
     body = models.TextField()
     recipients = models.TextField()  # comma-separated addresses actually targeted
+    from_address = models.CharField(max_length=200, blank=True, default="")  # the From address the mail went out with (blank on rows from before this was kept)
     # Free-form, human-readable label for what caused THIS send, record id
     # and all (e.g. "Drilling Report #123 Finalize") — good for the detail
     # view, useless as a filter facet since it's different for every row.
