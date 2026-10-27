@@ -210,6 +210,7 @@ LOOKUP_CONSUMERS = {
         "masters.mail_recipient_mappings",
     ),
     "masters.mail_alerts": (
+        "masters.alert_senders",
         "masters.mail_alert_to_users",
         "masters.notification_triggers",
     ),

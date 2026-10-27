@@ -109,6 +109,7 @@ _EXTRA_LABELS = {
     "admin.banner_events": "Banner Events",
     "admin.history_settings": "History and Revert",
     "admin.birthday_mailer": "Birthday Mailer",
+    "admin.holiday_mailer": "Holiday Mailer",
     "admin.scheduled_mails": "Scheduled Mails",
 }
 

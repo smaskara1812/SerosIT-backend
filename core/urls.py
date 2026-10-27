@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
-from . import birthday_views, scheduled_mails_views
+from . import birthday_views, holiday_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
@@ -361,6 +361,7 @@ router.register(
 router.register(
     "masters/notification-triggers", masters_views.NotificationTriggerViewSet, basename="notification-trigger"
 )
+router.register("masters/alert-senders", masters_views.AlertSenderViewSet, basename="alert-sender")
 router.register(
     "it-asset/it-accessory-holders", masters_views.ItAccessoryHolderViewSet, basename="it-accessory-holder"
 )
@@ -562,6 +563,10 @@ urlpatterns = [
     path("admin/birthday-templates/<int:template_id>/", birthday_views.template_detail_api, name="birthday_template_detail"),
     path("admin/birthday-mailer/overview/", birthday_views.overview_api, name="birthday_overview"),
     path("admin/birthday-mailer/test-send/", birthday_views.test_send_api, name="birthday_test_send"),
+    path("admin/holiday-events/", holiday_views.events_api, name="holiday_events"),
+    path("admin/holiday-events/<int:event_id>/", holiday_views.event_detail_api, name="holiday_event_detail"),
+    path("admin/holiday-mailer/overview/", holiday_views.overview_api, name="holiday_overview"),
+    path("admin/holiday-mailer/test-send/", holiday_views.test_send_api, name="holiday_test_send"),
     path("admin/scheduled-mails/", scheduled_mails_views.scheduled_mails_api, name="scheduled_mails"),
     path("admin/scheduled-mails/run-now/", scheduled_mails_views.run_now_api, name="scheduled_mails_run_now"),
     path("admin/scheduled-mails/jobs/<str:job_key>/<str:state>/", scheduled_mails_views.job_switch_api, name="scheduled_mails_job_switch"),

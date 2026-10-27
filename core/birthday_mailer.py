@@ -22,6 +22,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from . import mailer
+from .sched_base import JobBase
 from .models import BirthdayPerson, BirthdayTemplate, MailAlertDtl, NotificationTrigger, SchedItem, SchedJob
 from .notification_triggers import resolve_alert_recipients
 
@@ -312,7 +313,7 @@ def get_setup(today=None):
     out = {
         "trigger_found": bool(trig), "trigger_active": bool(trig and trig.notification_trigger_active == "Y"), "alert": None,
         "from_name": "", "subject": "", "send_hour": 7, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
-        "smtp": {"designated": bool(mailer.designated_smtp()), "designated_host": settings.BIRTHDAY_EMAIL_HOST or "", "default_host": settings.EMAIL_HOST},
+        "smtp": {"designated": bool(mailer.designated_smtp()), "designated_host": settings.BIRTHDAY_EMAIL_HOST or "", "default_host": settings.EMAIL_HOST, "sender": None},
     }
     if not trig:
         out["warnings"].append("No trigger row connects the Birthday Mailer to an alert. Ask an administrator to add one in Masters > Notification Triggers.")
@@ -323,14 +324,17 @@ def get_setup(today=None):
     out["subject"] = a.mail_subject or ""
     out["send_hour"] = a.start_time if a.start_time is not None else 7
     out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
+    out["smtp"]["sender"] = mailer.sender_info(a.alert_id)
+    if out["smtp"]["sender"] and out["smtp"]["sender"]["broken"]:
+        out["warnings"].append("The sender set for this alert cannot be used: " + out["smtp"]["sender"]["broken"] + ". The next account is used instead.")
     if not out["trigger_active"]:
         out["warnings"].append("The trigger is switched off, so no birthday mail will be sent.")
     if a.alert_active != "Y":
         out["warnings"].append(f"The alert '{a.alert_name}' is switched off.")
     if not any(out["recipients"].values()):
         out["warnings"].append(f"Alert '{a.alert_name}' has no active recipients today, so a birthday mail would have nobody to go to.")
-    if not out["smtp"]["designated"]:
-        out["warnings"].append("No birthday sending account is set in the environment, so the default account is used.")
+    if not out["smtp"]["sender"] and not out["smtp"]["designated"]:
+        out["warnings"].append("No sender is set for this alert (Masters > Alert Senders) and no separate account in the environment, so the default account is used.")
     return out
 
 
@@ -359,6 +363,7 @@ def send_for_person(person_name, template, setup, designated=True):
     result = mailer.send_scheduled_email(
         subject, html, text, to=r["to"], cc=r["cc"], bcc=r["bcc"], from_name=setup["from_name"], inline_images=images,
         trigger=f"Birthday: {person_name}"[:200], trigger_code=TRIGGER_CODE, designated=designated,
+        alert_id=(setup.get("alert") or {}).get("id"),
     )
     result["recipients"] = ", ".join([*r["to"], *(f"cc:{a}" for a in r["cc"]), *(f"bcc:{a}" for a in r["bcc"])])
     return result
@@ -366,7 +371,7 @@ def send_for_person(person_name, template, setup, designated=True):
 
 # ── the job the scheduler runs ──────────────────────────────────────────────────────────────────────────────────────────────
 
-class BirthdayJob:
+class BirthdayJob(JobBase):
     key = JOB_KEY
     name = "Birthday Mailer"
 
@@ -463,29 +468,6 @@ class BirthdayJob:
         BirthdayTemplate.objects.filter(pk=template.pk).update(last_used_at=now, times_used=template.times_used + 1)
         log.info("birthday mail for %s resent (item %s)", person.shown_name, item.pk)
         return True, ""
-
-    def process(self, now, max_retries=None):
-        """Sends what is due. Returns {"sent", "failed", "missed", "retried"}."""
-        max_retries = settings.SCHEDULER_MAX_RETRIES if max_retries is None else max_retries
-        out = {"sent": 0, "failed": 0, "missed": 0, "retried": 0}
-        today = now.date()
-        # a planned mail whose day has passed was never sent (the service was down): shown as Missed, and can be sent by hand
-        out["missed"] = SchedItem.objects.filter(job_key=JOB_KEY, status="planned", send_date__lt=today).update(status="missed", note="The scheduler was not running on that day.", mod_dt=now)
-        # a mail left 'sending' (the service stopped part-way) is treated as failed so it is retried
-        SchedItem.objects.filter(job_key=JOB_KEY, status="sending", last_attempt_at__lt=now - datetime.timedelta(minutes=30)).update(status="failed", last_error="Interrupted while sending.")
-        hour_start = now.replace(minute=0, second=0, microsecond=0)
-        due = SchedItem.objects.filter(job_key=JOB_KEY, send_date=today, due_at__lte=now).filter(
-            Q(status="planned") | Q(status="failed", attempts__lte=max_retries, last_attempt_at__lt=hour_start)
-        ).order_by("due_at", "item_id")
-        for item in list(due):
-            first = item.status == "planned"
-            SchedItem.objects.filter(pk=item.pk).update(status="sending", last_attempt_at=now)
-            item.refresh_from_db()
-            ok = self.attempt(item, now)
-            out["sent" if ok else "failed"] += 1
-            if not first:
-                out["retried"] += 1
-        return out
 
 
 JOB = BirthdayJob()

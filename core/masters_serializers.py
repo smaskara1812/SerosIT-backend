@@ -24,6 +24,7 @@ def _check_unique_name(serializer, attrs, field, what):
             raise serializers.ValidationError({field: f"{what} named {name} already exists."})
 
 from .models import (
+    AlertSenderDtl,
     DocToSignMapping,
     MstSignableDoc,
     MstCert,
@@ -1644,6 +1645,68 @@ class MstBusinessSystemSerializer(serializers.ModelSerializer):
                 validated["mail_user_password"] = secret_box.encrypt(validated["mail_user_password"])
             else:
                 validated.pop("mail_user_password")  # blank = keep what is stored
+        return validated
+
+    def create(self, validated_data):
+        return super().create(self._protect(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._protect(validated_data))
+
+
+class AlertSenderSerializer(serializers.ModelSerializer):
+    """The password is write-only: stored encrypted, never sent back (the form shows a blank box; leaving it blank on an edit keeps the stored one)."""
+
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True, max_length=200)
+    has_password = serializers.SerializerMethodField()
+    alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
+
+    class Meta:
+        model = AlertSenderDtl
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_has_password(self, obj):
+        return bool(obj.password)
+
+    def validate_mail_host(self, v):
+        v = (v or "").strip()
+        if not v or any(c in v for c in " /@\\"):
+            raise serializers.ValidationError("Enter the mail server's name, for example smtp.example.com.")
+        return v
+
+    def validate_mail_port(self, v):
+        if not 1 <= int(v) <= 65535:
+            raise serializers.ValidationError("The port must be a number from 1 to 65535.")
+        return v
+
+    def validate_from_address(self, v):
+        import re
+
+        v = (v or "").strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
+            raise serializers.ValidationError("Enter the From address as an e-mail address.")
+        return v
+
+    def validate(self, data):
+        active = data.get("is_active", getattr(self.instance, "is_active", "Y"))
+        alert = data.get("alert", getattr(self.instance, "alert", None))
+        if active == "Y" and alert is not None:
+            others = AlertSenderDtl.objects.filter(alert=alert, is_active="Y")
+            if self.instance is not None:
+                others = others.exclude(pk=self.instance.pk)
+            if others.exists():
+                raise serializers.ValidationError({"alert": "This alert already has an active sender. Change that one, or switch it off first."})
+        return data
+
+    def _protect(self, validated):
+        from . import secret_box
+
+        if "password" in validated:
+            if validated["password"]:
+                validated["password"] = secret_box.encrypt(validated["password"])
+            else:
+                validated.pop("password")  # blank = keep what is stored
         return validated
 
     def create(self, validated_data):

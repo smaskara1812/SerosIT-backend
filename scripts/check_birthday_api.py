@@ -18,7 +18,7 @@ from openpyxl import Workbook, load_workbook
 from PIL import Image
 from rest_framework.test import APIClient
 from core import birthday_mailer as bm, mailer
-from core.models import BirthdayPerson, BirthdayTemplate, EmailLog, SchedItem, UserPermission, UserProfile
+from core.models import AlertSenderDtl, BirthdayPerson, BirthdayTemplate, EmailLog, SchedItem, UserPermission, UserProfile
 from core.permissions import invalidate_user_access
 
 settings.MEDIA_ROOT = os.path.join(TMP, "media")
@@ -72,7 +72,7 @@ try:
     with transaction.atomic():
         bm.ensure_setup()
         # the checks must not depend on real data: inside this rolled-back transaction the list starts empty
-        for m in (SchedItem, BirthdayTemplate, BirthdayPerson):
+        for m in (SchedItem, BirthdayTemplate, BirthdayPerson, AlertSenderDtl):
             m.objects.all().delete()
         full = mk("zzbm1", {BM: ("view", "add", "edit", "delete", "export"), SM: ("view", "edit")})
         viewer = mk("zzbm2", {BM: ("view",), SM: ("view",)})

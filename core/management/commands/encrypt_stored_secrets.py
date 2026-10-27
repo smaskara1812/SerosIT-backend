@@ -4,7 +4,7 @@
     python manage.py encrypt_stored_secrets --apply
     python manage.py encrypt_stored_secrets --apply --rotate    # also re-encrypt everything with the newest key of CREDENTIAL_KEY
 
-  - mst_business_system.mail_user_password and sys_user_mail_credential.password: plain text becomes "enc1:..." (core/secret_box.py).
+  - mst_business_system.mail_user_password, sys_user_mail_credential.password and alert_sender.password: plain text becomes "enc1:..." (core/secret_box.py).
     A legacy reload (import_business_system.sql) brings the plain text back, so reload_from_legacy.py runs this afterwards.
   - mst_user_password: only counted. Old SHA-256 hashes cannot be converted without the password; each one is replaced with a salted PBKDF2 hash
     when its owner next signs in (core/auth_backend.py).
@@ -13,7 +13,7 @@ Safe to run again."""
 from django.core.management.base import BaseCommand
 
 from core import secret_box
-from core.models import MstBusinessSystem, MstUserPassword, UserMailCredential
+from core.models import AlertSenderDtl, MstBusinessSystem, MstUserPassword, UserMailCredential
 from core.passwords import is_legacy_hash
 
 
@@ -28,7 +28,7 @@ class Command(BaseCommand):
         apply = opts["apply"]
         n_bs = n_cred = n_rot = 0
         if opts["rotate"]:
-            for model, field in ((MstBusinessSystem, "mail_user_password"), (UserMailCredential, "password")):
+            for model, field in ((MstBusinessSystem, "mail_user_password"), (UserMailCredential, "password"), (AlertSenderDtl, "password")):
                 for obj in model.objects.all():
                     v = getattr(obj, field)
                     if secret_box.is_encrypted(v):

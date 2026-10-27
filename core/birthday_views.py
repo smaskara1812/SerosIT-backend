@@ -406,6 +406,6 @@ def test_send_api(request):
         return Response({"detail": f"The template picture '{t.name}' is missing from the media folder."}, status=400)
     setup = bm.get_setup()
     subject, html, text, images, _ = bm.build_mail("Test Person", t, setup)
-    res = mailer.send_scheduled_email("[Test] " + subject, html, text, to=[to], from_name=setup["from_name"], inline_images=images, trigger=f"Birthday test to {to}", trigger_code="auto.birthday.test")
+    res = mailer.send_scheduled_email("[Test] " + subject, html, text, to=[to], from_name=setup["from_name"], inline_images=images, trigger=f"Birthday test to {to}", trigger_code="auto.birthday.test", alert_id=(setup.get("alert") or {}).get("id"))
     _audit.record_action(request, "update", MENU_KEY, "test", f"Birthday test mail to {to}", {"result": {"old": None, "new": "sent" if res["ok"] else "failed"}})
-    return Response({"ok": res["ok"], "smtp_used": res["smtp_used"], "error": res["error"], "template": t.name, "email_log_id": res["email_log_id"]}, status=200 if res["ok"] else 502)
+    return Response({"ok": res["ok"], "smtp_used": res["smtp_used"], "fell_back": res.get("fell_back", False), "first_choice": res.get("first_choice", ""), "error": res["error"], "template": t.name, "email_log_id": res["email_log_id"]}, status=200 if res["ok"] else 502)

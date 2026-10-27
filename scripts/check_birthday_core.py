@@ -15,7 +15,7 @@ from django.conf import settings
 from django.db import transaction
 from PIL import Image
 from core import birthday_mailer as bm, mailer, scheduler
-from core.models import BirthdayPerson, BirthdayTemplate, EmailLog, MailAlertDtl, MailAlertToUser, NotificationTrigger, SchedHeartbeat, SchedItem, SchedJob
+from core.models import AlertSenderDtl, BirthdayPerson, BirthdayTemplate, EmailLog, MailAlertDtl, MailAlertToUser, NotificationTrigger, SchedHeartbeat, SchedItem, SchedJob
 
 settings.MEDIA_ROOT = os.path.join(TMP, "media")
 os.makedirs(os.path.join(settings.MEDIA_ROOT, "birthday_templates"))
@@ -67,7 +67,7 @@ settings.BIRTHDAY_EMAIL_HOST = ""
 try:
     with transaction.atomic():
         # the checks must not depend on real data: inside this rolled-back transaction the lists start empty
-        for m in (SchedItem, BirthdayTemplate, BirthdayPerson):
+        for m in (SchedItem, BirthdayTemplate, BirthdayPerson, AlertSenderDtl):
             m.objects.all().delete()
         print("A. who has a birthday")
         leap = person("Leap Lara", 2, 29)

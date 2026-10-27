@@ -3,7 +3,7 @@
 `tick()` is what runs at the top of each hour (core/management/commands/run_scheduler.py, as a Windows service in production). For each job
 that is switched on it plans the next 7 days, sends what is due, retries what failed (once per hourly run, at most SCHEDULER_MAX_RETRIES more
 times), and records the result. A job is any object with `key`, `name`, `plan(now)`, `process(now)`, `attempt(item, now)` and `resend(item, now)`;
-the birthday mailer is the first (core/birthday_mailer.py). A job that raises is logged and does not stop the others.
+the birthday mailer is the first (core/birthday_mailer.py), the holiday mailer the second (core/holiday_mailer.py). A job that raises is logged and does not stop the others.
 
 Two copies can never run at once: a tick takes a lock in the heartbeat row (and gives it up when done, or when it expires, in case a copy died).
 Everything is logged to the scheduler log, and every error also to automation_errors (see settings.LOGGING)."""
@@ -16,12 +16,12 @@ import time
 
 from django.db.models import Q
 
-from . import birthday_mailer
+from . import birthday_mailer, holiday_mailer
 from .models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 
-JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB}
+JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB}
 LOCK_MINUTES = 50  # a lock older than this is taken as left behind by a copy that died
 
 

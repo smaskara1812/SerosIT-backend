@@ -185,6 +185,7 @@ FOLDER_PAGES = {
     "training_cert": "qhse.training_log",
     "mst_employee_images": "admin.user_management",
     "birthday_templates": "admin.birthday_mailer",
+    "holiday_images": "admin.holiday_mailer",
 }
 
 

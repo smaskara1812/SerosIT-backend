@@ -4802,6 +4802,65 @@ class SchedJob(models.Model):
         return self.name
 
 
+class AlertSenderDtl(models.Model):
+    """The mail account one alert is sent from (Masters > Alert Senders): server, port, security, user name, password and the From address. The legacy
+    system kept this per alert too (Alert_Sender_Dtl). The password is stored encrypted (core/secret_box.py, "enc1:...") and is never shown again, never
+    written to the audit trail. An alert with no active row here is sent from the account in the environment (BIRTHDAY_EMAIL_*), then the default
+    account, exactly as before this table existed. At most one active row per alert."""
+
+    SECURITY_CHOICES = [("N", "None"), ("T", "STARTTLS"), ("S", "SSL")]
+
+    alert_sender_dtl_id = models.AutoField(primary_key=True)
+    alert = models.ForeignKey(MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="senders")
+    mail_host = models.CharField(max_length=100)
+    mail_port = models.IntegerField(default=25)
+    mail_security = models.CharField(max_length=1, choices=SECURITY_CHOICES, default="N")
+    mail_user_name = models.CharField(max_length=100, blank=True, default="")
+    password = models.CharField(max_length=400, blank=True, default="")
+    from_address = models.CharField(max_length=150)
+    is_active = models.CharField(max_length=1, default="Y")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "alert_sender_dtl"
+
+    def __str__(self):
+        return f"{self.alert_id}: {self.from_address} via {self.mail_host}"
+
+
+class HolidayEvent(models.Model):
+    """A festival or holiday mail (Admin > Holiday Mailer): a finished picture that goes to the people on the "Holiday Events" alert on the date set
+    here. No name is drawn on it. `send_on` is the first day, `send_days` how many days in a row it goes out (1 = that day only), `repeat_yearly`
+    makes a fixed date (1 January, 26 January) come back every year. The subject is this event's own; the alert's subject is only the fallback."""
+
+    event_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=80)
+    subject = models.CharField(max_length=200, blank=True, default="")
+    send_on = models.DateField()
+    send_days = models.IntegerField(default=1)
+    repeat_yearly = models.CharField(max_length=1, default="N")
+    file_path = models.CharField(max_length=120)  # under MEDIA_ROOT: holiday_images/<id>_<n>.png
+    width = models.IntegerField(default=0)
+    height = models.IntegerField(default=0)
+    thumb_data = models.TextField(blank=True, default="")
+    is_active = models.CharField(max_length=1, default="Y")
+    note = models.CharField(max_length=200, blank=True, default="")
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "holiday_event"
+
+    def __str__(self):
+        return self.name
+
+
 class SchedItem(models.Model):
     """One mail the scheduler has planned, sent, skipped or failed to send. Rows are planned for today and the next 7 days; a row is never planned
     twice for the same job, subject and day. The email itself is in the Email Log (email_log_id)."""

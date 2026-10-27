@@ -199,6 +199,36 @@ def default_smtp():
     }
 
 
+def alert_sender(alert_id):
+    """The account set for this alert in Masters > Alert Senders (its one active row), as the same kind of dict the other accounts are, or None when
+    the alert has none. A stored password that cannot be read (the key it was encrypted with is gone) is marked "broken": that account is not used,
+    and the next one is tried."""
+    if not alert_id:
+        return None
+    from . import secret_box
+    from .models import AlertSenderDtl
+
+    row = AlertSenderDtl.objects.filter(alert_id=alert_id, is_active="Y").order_by("alert_sender_dtl_id").first()
+    if row is None:
+        return None
+    pw = secret_box.decrypt(row.password) if row.password else None
+    smtp = {
+        "host": row.mail_host, "port": row.mail_port or 25, "user": row.mail_user_name or None, "password": pw or None,
+        "use_tls": row.mail_security == "T", "use_ssl": row.mail_security == "S", "from_address": row.from_address,
+    }
+    if row.password and not pw:
+        smtp["broken"] = "the stored password could not be read (is CREDENTIAL_KEY the key it was saved with?)"
+    return smtp
+
+
+def sender_info(alert_id):
+    """What the setup panels may show about an alert's own account: server, port, user and From address. Never the password."""
+    a = alert_sender(alert_id)
+    if not a:
+        return None
+    return {"host": a["host"], "port": a["port"], "user": a["user"] or "", "from_address": a["from_address"], "broken": a.get("broken", "")}
+
+
 def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_address, inline_images, connection):
     from email.mime.image import MIMEImage
     from email.utils import formataddr
@@ -222,6 +252,8 @@ def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_a
 
 def _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images):
     """One send through one account. Raises on any failure."""
+    if smtp.get("broken"):
+        raise RuntimeError(smtp["broken"])
     connection = get_connection(
         host=smtp["host"], port=smtp["port"], username=smtp["user"], password=smtp["password"],
         use_tls=smtp["use_tls"], use_ssl=smtp["use_ssl"], fail_silently=False,
@@ -252,18 +284,24 @@ def _html_for_log(html, inline_images):
     return html
 
 
-def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_name="", inline_images=None, trigger="", trigger_code="", designated=True):
-    """Sends one automatic mail: with the designated account first (when one is set and `designated` is true), and straight away with the default
-    account if that fails. Always writes ONE EmailLog row for the attempt, success or failure, and logs any failure to the scheduler logs.
+def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_name="", inline_images=None, trigger="", trigger_code="", designated=True, alert_id=None):
+    """Sends one automatic mail. The accounts are tried in this order, each straight after the one before it fails: the alert's own account (Masters >
+    Alert Senders, when `alert_id` is given and it has an active row), the one set in the environment (BIRTHDAY_EMAIL_*, when set), then the default
+    account. `designated` false means the default account only. Always writes ONE EmailLog row for the attempt, success or failure, and logs any
+    failure to the scheduler logs.
 
-    Returns {"ok", "smtp_used" ('designated', 'default' or ''), "error", "email_log_id"}. Never raises."""
+    Returns {"ok", "smtp_used" ('alert', 'designated', 'default' or ''), "error", "email_log_id", "fell_back"}. Never raises."""
     from .models import EmailLog
 
     to, cc, bcc = ([a for a in (x or []) if a] for x in (to, cc, bcc))
     recipients_display = ", ".join([*to, *(f"cc:{a}" for a in cc), *(f"bcc:{a}" for a in bcc)])
     attempts = []
-    if designated and designated_smtp():
-        attempts.append(("designated", designated_smtp()))
+    if designated:
+        own = alert_sender(alert_id)
+        if own:
+            attempts.append(("alert", own))
+        if designated_smtp():
+            attempts.append(("designated", designated_smtp()))
     attempts.append(("default", default_smtp()))
 
     ok, used, errors = False, "", []
@@ -289,10 +327,10 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     try:
         row = EmailLog.objects.create(
             subject=subject[:200], body=_html_for_log(html, inline_images), recipients=recipients_display, from_address=(from_used or "")[:200], trigger=trigger[:200], trigger_code=trigger_code[:100], success=ok,
-            error=error or ("; ".join(errors) if errors else ""), used_fallback=bool(ok and used == "default" and designated and designated_smtp()),
+            error=error or ("; ".join(errors) if errors else ""), used_fallback=bool(ok and used != attempts[0][0]),
             attachment_names=", ".join(f"{cid}.{sub}" for cid, _, sub in (inline_images or [])), sent_by_user_id=None,
         )
         log_id = row.pk
     except Exception:
         _sched_log.exception("EmailLog write failed for scheduled mail %r", subject)
-    return {"ok": ok, "smtp_used": used, "error": error, "email_log_id": log_id}
+    return {"ok": ok, "smtp_used": used, "error": error, "email_log_id": log_id, "fell_back": bool(ok and used != attempts[0][0]), "first_choice": attempts[0][0]}

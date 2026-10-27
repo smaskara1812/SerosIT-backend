@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from . import export_safety
 from . import audit as _audit
 from .models import (
+    AlertSenderDtl,
     DocToSignMapping,
     MstSignableDoc,
     JobDescriptionDtl,
@@ -125,6 +126,7 @@ from .models import (
     MstActivity,
 )
 from .masters_serializers import (
+    AlertSenderSerializer,
     DocToSignMappingSerializer,
     MstSignableDocSerializer,
     JobDescriptionDtlSerializer,
@@ -1070,6 +1072,18 @@ class NotificationTriggerViewSet(BaseMasterViewSet):
         # No plain name_field — an (entity_key, action) pair, same reasoning
         # as MailRecipientMappingViewSet.label_for above.
         return f"{instance.entity_key}.{instance.action} → {instance.alert.alert_name}"
+
+
+class AlertSenderViewSet(BaseMasterViewSet):
+    queryset = AlertSenderDtl.objects.select_related("alert").all()
+    serializer_class = AlertSenderSerializer
+    entity_key = "masters.alert_senders"
+    name_field = "from_address"
+    active_field = "is_active"
+    search_fields = ["from_address", "mail_host", "alert__alert_name"]
+
+    def label_for(self, instance):
+        return f"{instance.alert.alert_name} → {instance.from_address}"
 
 
 class MstEmailNotificationTypeViewSet(BaseMasterViewSet):

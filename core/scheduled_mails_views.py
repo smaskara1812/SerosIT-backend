@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import audit as _audit
-from . import birthday_mailer, scheduler
+from . import birthday_mailer, holiday_mailer, scheduler
 from .birthday_views import scheduler_health
 from .models import BirthdayTemplate, EmailLog, SchedItem, SchedJob
 from .notice_board import poster_name
@@ -80,12 +80,12 @@ def scheduled_mails_api(request):
     rows = [_row(i, names, max_attempts) for i in chosen[(page - 1) * size : page * size]]
     base = SchedItem.objects.all()
     next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
-    setup = birthday_mailer.get_setup(today)
+    hours = {"birthday": birthday_mailer.get_setup(today)["send_hour"], "holiday": holiday_mailer.get_setup(today)["send_hour"]}
     jobs = []
     for key, job in scheduler.JOBS.items():
         row = SchedJob.objects.filter(job_key=key).first()
         jobs.append({"key": key, "name": job.name, "enabled": (row.enabled == "Y") if row else True, "last_run_at": row.last_run_at if row else None,
-                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": f"Daily at {setup['send_hour']:02d}:00 (checked every hour)" if key == "birthday" else "Hourly",
+                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": (f"Daily at {hours[key]:02d}:00 (checked every hour)" if key == "birthday" else f"On each event's dates, at {hours[key]:02d}:00 (checked every hour)") if key in hours else "Hourly",
                      "failed": base.filter(job_key=key, status="failed").count(), "sent_today": base.filter(job_key=key, send_date=today, status="sent").count()})
     return Response({
         "health": scheduler_health(now), "jobs": jobs, "section": section, "count": total, "page": page, "page_size": size, "results": rows,
