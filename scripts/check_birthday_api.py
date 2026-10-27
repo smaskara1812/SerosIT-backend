@@ -189,7 +189,7 @@ try:
 
         print("E. the setup panel and the test mail")
         ov = viewer.get("/api/admin/birthday-mailer/overview/").json()
-        ok("the panel shows the alert, the from-name, the hour and the recipients", ov["setup"]["alert"]["id"] == 247 and ov["setup"]["from_name"] and ov["setup"]["send_hour"] == 7 and any(ov["setup"]["recipients"].values()))
+        ok("the panel shows the alert, the hour and the recipients (no name without a sender account)", ov["setup"]["alert"]["id"] == 247 and ov["setup"]["from_name"] == "" and ov["setup"]["send_hour"] == 7 and any(ov["setup"]["recipients"].values()))
         ok("it links to the places that change the recipients and the trigger", "mail-alert-to-users" in ov["links"]["recipients"] and ov["links"]["trigger"])
         ok("it counts people and templates", ov["counts"]["templates_active"] == 1)
         ok("sending without an address is refused", full.post("/api/admin/birthday-mailer/test-send/", {"email": "nope"}, format="json").status_code == 400)

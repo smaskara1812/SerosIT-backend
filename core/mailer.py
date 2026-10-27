@@ -215,6 +215,7 @@ def alert_sender(alert_id):
     smtp = {
         "host": row.mail_host, "port": row.mail_port or 25, "user": row.mail_user_name or None, "password": pw or None,
         "use_tls": row.mail_security == "T", "use_ssl": row.mail_security == "S", "from_address": row.from_address,
+        "display_name": (row.display_name or "").strip(),
     }
     if row.password and not pw:
         smtp["broken"] = "the stored password could not be read (is CREDENTIAL_KEY the key it was saved with?)"
@@ -222,11 +223,11 @@ def alert_sender(alert_id):
 
 
 def sender_info(alert_id):
-    """What the setup panels may show about an alert's own account: server, port, user and From address. Never the password."""
+    """What the setup panels may show about an alert's own account: server, port, user, From address and sender name. Never the password."""
     a = alert_sender(alert_id)
     if not a:
         return None
-    return {"host": a["host"], "port": a["port"], "user": a["user"] or "", "from_address": a["from_address"], "broken": a.get("broken", "")}
+    return {"host": a["host"], "port": a["port"], "user": a["user"] or "", "from_address": a["from_address"], "display_name": a.get("display_name", ""), "broken": a.get("broken", "")}
 
 
 def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_address, inline_images, connection):

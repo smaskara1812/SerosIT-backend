@@ -99,7 +99,8 @@ try:
         print("B. the setup is read from the trigger and the alert")
         alert = MailAlertDtl.objects.filter(alert_active="Y").order_by("alert_id").first()
         orig = {k: getattr(alert, k) for k in ("alert_name", "alert_display_name", "mail_subject", "start_time")}
-        MailAlertDtl.objects.filter(pk=alert.pk).update(alert_name="Holiday Events", alert_display_name="Human Resource – Seros", mail_subject="Season's greetings", start_time=8)
+        MailAlertDtl.objects.filter(pk=alert.pk).update(alert_name="Holiday Events", mail_subject="Season's greetings", start_time=8)
+        AlertSenderDtl.objects.create(alert=alert, mail_host="down.example.test", mail_port=25, mail_security="N", from_address="hr@example.test", display_name="Human Resource – Seros", is_active="Y", cr_user_id=0, cr_dt=NOW)
         s0 = hm.get_setup(NOW.date())
         ok("with no trigger the page is told what to do", not s0["trigger_found"] and s0["warnings"])
         did = hm.ensure_setup(alert_name="Holiday Events")
@@ -108,7 +109,7 @@ try:
         ok("it is safe to run again", hm.ensure_setup(alert_name="Holiday Events") == [])
         MailAlertToUser.objects.filter(alert_id=alert.pk).delete()
         s1 = hm.get_setup(NOW.date())
-        ok("no recipients is a warning, the hour and From name come from the alert", s1["send_hour"] == 8 and s1["from_name"] == "Human Resource – Seros" and any("nobody" in w.lower() for w in s1["warnings"]))
+        ok("no recipients is a warning, the hour comes from the alert and the From name from its sender account", s1["send_hour"] == 8 and s1["from_name"] == "Human Resource – Seros" and any("nobody" in w.lower() for w in s1["warnings"]))
         MailAlertToUser.objects.create(alert=alert, recipient_name="Everyone", email_addr="all-staff@example.test", addressee_type="T", mail_alert_from=D(2026, 1, 1), mail_alert_to=None, mail_alert_order=1, cr_user_id=0, cr_dt=NOW)
         MailAlertToUser.objects.create(alert=alert, recipient_name="Records", email_addr="records@example.test", addressee_type="B", mail_alert_from=D(2026, 1, 1), mail_alert_to=None, mail_alert_order=2, cr_user_id=0, cr_dt=NOW)
         setup = hm.get_setup(NOW.date())
@@ -144,7 +145,7 @@ try:
         m = sent[0]
         ok("it goes to the alert's To and Bcc", m["to"] == ["all-staff@example.test"] and m["bcc"] == ["records@example.test"])
         ok("the subject is the event's own, with the year", m["subject"] == "Happy Diwali 2026 from Seros", m["subject"])
-        ok("the From name is the alert's display name", m["from_name"] == "Human Resource – Seros")
+        ok("the From name is the sender account's display name", m["from_name"] == "Human Resource – Seros")
         ok("the picture is sent inline and nothing is drawn on it", m["images"][0][0] == "holiday" and m["images"][0][2] == "png" and "cid:holiday" in m["html"] and Image.open(io.BytesIO(m["images"][0][1])).getpixel((5, 5)) == (200, 80, 30))
         ok("it is shrunk to 900 px wide", Image.open(io.BytesIO(m["images"][0][1])).size[0] == 900)
         ok("it is in the Email Log, tagged auto.holiday", EmailLog.objects.filter(trigger_code="auto.holiday", success=True).count() == 1)

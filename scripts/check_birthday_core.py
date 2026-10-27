@@ -130,7 +130,10 @@ try:
         ok("the trigger row points at alert 247", alert.alert_id == 247)
         ok("the alert's subject carries the {name} marker", "{name}" in MailAlertDtl.objects.get(pk=247).mail_subject)
         setup = bm.get_setup(NOW.date())
-        ok("the setup shows the alert, the from-name and the send hour", setup["alert"]["id"] == 247 and setup["from_name"] and setup["send_hour"] == 7)
+        ok("the setup shows the alert and the send hour, and no name when the alert has no sender (only the From address is shown)", setup["alert"]["id"] == 247 and setup["from_name"] == "" and setup["send_hour"] == 7)
+        snd = AlertSenderDtl.objects.create(alert=alert, mail_host="named.example.test", mail_port=25, mail_security="N", from_address="hr@example.test", display_name="Human Resource – Seros", is_active="Y", cr_user_id=0, cr_dt=NOW)
+        ok("the sender name comes from the alert's sender account", bm.get_setup(NOW.date())["from_name"] == "Human Resource – Seros" and mailer.sender_info(247)["display_name"] == "Human Resource – Seros")
+        snd.delete()  # the rest of the checks use the default account, as they always did
         ok("recipients are the alert's active To, Cc and Bcc rows", setup["recipients"] == __import__("core.notification_triggers", fromlist=["x"]).resolve_alert_recipients(247, as_of=NOW.date()) and any(setup["recipients"].values()), str(setup["recipients"]))
         MailAlertToUser.objects.create(alert=alert, recipient_name="Cc Person", email_addr="zz-cc@example.com", addressee_type="C", mail_alert_from=D(2026, 1, 1), mail_alert_to=None, mail_alert_order=9, cr_user_id=0, cr_dt=NOW)
         MailAlertToUser.objects.create(alert=alert, recipient_name="Old Person", email_addr="zz-old@example.com", addressee_type="T", mail_alert_from=D(2025, 1, 1), mail_alert_to=D(2026, 1, 1), mail_alert_order=9, cr_user_id=0, cr_dt=NOW)
@@ -165,7 +168,7 @@ try:
         ok("the celebrant is not a recipient", all("priya" not in a.lower() and "raj" not in a.lower() for s in sent for a in s["to"] + s["cc"] + s["bcc"]))
         pat = setup["subject"]  # the alert's own subject (an administrator may have added words around {name}); {name} becomes the person's name
         ok("the subject is the alert's subject with the name in it", "{name}" in pat and {s["subject"] for s in sent} == {pat.replace("{name}", "Priya Sharma"), pat.replace("{name}", "Raj")}, str([s["subject"] for s in sent]))
-        ok("the From name is the alert's display name", m["from_name"] == setup["from_name"])
+        ok("the mail carries the sender name that was set up (none here: no sender account)", m["from_name"] == setup["from_name"] == "")
         ok("the card is sent inline as a PNG", m["images"][0][0] == "birthday" and m["images"][0][2] == "png" and m["images"][0][1][:4] == b"\x89PNG" and 'cid:birthday' in m["html"])
         ok("the two cards use different templates (they take turns)", len({i.template_id for i in SchedItem.objects.filter(send_date=NOW.date(), status="sent")}) == 2)
         ok("both are in the Email Log, tagged auto.birthday", EmailLog.objects.filter(trigger_code="auto.birthday", success=True).count() == 2)

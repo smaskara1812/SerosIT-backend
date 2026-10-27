@@ -320,11 +320,11 @@ def get_setup(today=None):
         return out
     a = trig.alert
     out["alert"] = {"id": a.alert_id, "name": a.alert_name, "active": a.alert_active == "Y"}
-    out["from_name"] = (a.alert_display_name or "Human Resource").strip()
     out["subject"] = a.mail_subject or ""
     out["send_hour"] = a.start_time if a.start_time is not None else 7
     out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
     out["smtp"]["sender"] = mailer.sender_info(a.alert_id)
+    out["from_name"] = (out["smtp"]["sender"] or {}).get("display_name", "")  # the sender name is kept with the alert's sender account; none = the From address only
     if out["smtp"]["sender"] and out["smtp"]["sender"]["broken"]:
         out["warnings"].append("The sender set for this alert cannot be used: " + out["smtp"]["sender"]["broken"] + ". The next account is used instead.")
     if not out["trigger_active"]:

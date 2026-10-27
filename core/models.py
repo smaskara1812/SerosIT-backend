@@ -4818,6 +4818,8 @@ class AlertSenderDtl(models.Model):
     mail_user_name = models.CharField(max_length=100, blank=True, default="")
     password = models.CharField(max_length=400, blank=True, default="")
     from_address = models.CharField(max_length=150)
+    # The sender name recipients see ("Human Resource – Seros <hr@seros.co.in>"). Blank = the mail shows only the From address.
+    display_name = models.CharField(max_length=125, blank=True, default="")
     is_active = models.CharField(max_length=1, default="Y")
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()

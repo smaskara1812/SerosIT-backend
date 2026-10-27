@@ -1766,13 +1766,9 @@ class MailAlertToUserSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         errors = {}
-        # Either a user is picked (their email is copied in, still editable) or a name is typed for someone who is not a user. Judged only
-        # when the person or the name is new or changed, so an old recipient with neither can still be edited for something else.
-        user, name = _get(self, attrs, "user"), (_get(self, attrs, "recipient_name") or "").strip()
+        # The name is optional: a recipient can be just an email address. A blank name is stored as empty (not as spaces).
         if "recipient_name" in attrs:
-            attrs["recipient_name"] = name or None
-        if not user and not name and _changed(self, attrs, "user", "recipient_name"):
-            errors["recipient_name"] = "Pick a user, or type the recipient's name."
+            attrs["recipient_name"] = (attrs["recipient_name"] or "").strip() or None
         # The alert reaches this person from the From date until the To date (blank = still receiving). A From in the future is allowed.
         _check_to_after_from(self, attrs, errors, "mail_alert_from", "mail_alert_to", "To date")
         if errors:
