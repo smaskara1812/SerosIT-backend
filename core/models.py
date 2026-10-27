@@ -2652,7 +2652,7 @@ class NotificationTrigger(models.Model):
 
     notification_trigger_id = models.AutoField(primary_key=True)
     entity_key = models.CharField(max_length=60)
-    action = models.CharField(max_length=20)
+    action = models.CharField(max_length=40)
     alert = models.ForeignKey(
         MailAlertDtl, db_column="alert_id", on_delete=models.PROTECT, related_name="notification_triggers"
     )
@@ -4794,6 +4794,7 @@ class SchedJob(models.Model):
     enabled = models.CharField(max_length=1, default="Y")  # N = paused: nothing is planned or sent
     last_run_at = models.DateTimeField(null=True, blank=True)
     last_run_note = models.CharField(max_length=300, blank=True, default="")
+    last_error_mail_at = models.DateTimeField(null=True, blank=True)  # when the error mail for a failed hourly run was last sent (at most once a day)
 
     class Meta:
         db_table = "sched_job"
@@ -4886,6 +4887,7 @@ class SchedItem(models.Model):
     skipped_by = models.CharField(max_length=60, blank=True, default="")
     skipped_at = models.DateTimeField(null=True, blank=True)
     note = models.CharField(max_length=300, blank=True, default="")
+    error_mailed_at = models.DateTimeField(null=True, blank=True)  # when the error mail for this item (it failed for good) was sent
     cr_dt = models.DateTimeField()
     mod_dt = models.DateTimeField(null=True, blank=True)
 
@@ -4901,7 +4903,9 @@ class SchedHeartbeat(models.Model):
     """One row, id 1: when the scheduler last ran, how it went, and the lock that stops two copies running at once."""
 
     heartbeat_id = models.IntegerField(primary_key=True)
-    last_tick_at = models.DateTimeField(null=True, blank=True)
+    last_tick_at = models.DateTimeField(null=True, blank=True)  # the latest run of any kind
+    last_service_tick_at = models.DateTimeField(null=True, blank=True)  # the latest run by the scheduler service (run_scheduler): this is what says the service is alive
+    last_manual_tick_at = models.DateTimeField(null=True, blank=True)  # the latest "Run it now" on the Scheduled Mails page
     last_tick_ok = models.BooleanField(default=True)
     last_message = models.CharField(max_length=300, blank=True, default="")
     locked_by = models.CharField(max_length=80, blank=True, default="")

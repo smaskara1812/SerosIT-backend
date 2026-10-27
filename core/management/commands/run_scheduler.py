@@ -71,7 +71,9 @@ class Command(BaseCommand):
 
     def _status(self):
         hb = SchedHeartbeat.objects.filter(pk=1).first()
-        self.stdout.write("Last run: " + (f"{hb.last_tick_at:%Y-%m-%d %H:%M} ({'ok' if hb.last_tick_ok else 'errors'}: {hb.last_message})" if hb and hb.last_tick_at else "never"))
+        self.stdout.write("Last run by the service: " + (f"{hb.last_service_tick_at:%Y-%m-%d %H:%M} ({'ok' if hb.last_tick_ok else 'errors'}: {hb.last_message})" if hb and hb.last_service_tick_at else "never"))
+        if hb and hb.last_manual_tick_at:
+            self.stdout.write(f"Last run started by hand (Run it now): {hb.last_manual_tick_at:%Y-%m-%d %H:%M}")
         for j in SchedJob.objects.all():
             self.stdout.write(f"  {j.name}: {'on' if j.enabled == 'Y' else 'PAUSED'}; last run {j.last_run_at or 'never'} ({j.last_run_note})")
         today = datetime.date.today()

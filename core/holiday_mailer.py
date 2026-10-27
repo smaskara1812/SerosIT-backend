@@ -1,8 +1,8 @@
 """The Holiday Mailer: festival and holiday pictures that go to everyone on the "Holiday Events" alert on the date set for each.
 
 What decides what, so nothing here is hardcoded:
-  * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (entity_key "automation.holiday", action
-    "send"), pointing at an alert (named "Holiday Events"). Switching that row off stops every holiday mail.
+  * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (trigger point "automation", action
+    "send_holiday_mail"), pointing at an alert (named "Holiday Events"). Switching that row off stops every holiday mail.
   * Who receives it: the alert's active rows in Alert To Users (To, Cc, Bcc), exactly as for every other alert. One alert for all festivals.
   * When it goes: the dates set on each event here, at the alert's start hour, by the hourly scheduler (core/scheduler.py).
   * The From name: the alert's display name. The subject: the event's own subject (the alert's subject only when the event has none).
@@ -28,8 +28,8 @@ from .sched_base import JobBase
 log = logging.getLogger("seros.scheduler")
 
 JOB_KEY = "holiday"
-ENTITY_KEY = "automation.holiday"
-ACTION = "send"
+ENTITY_KEY = "automation"
+ACTION = "send_holiday_mail"
 TRIGGER_CODE = "auto.holiday"
 ALERT_NAME = "Holiday Events"  # only what the setup command looks for when it is not told an alert id
 FOLDER = "holiday_images"
@@ -133,7 +133,7 @@ def get_setup(today=None):
     trig = NotificationTrigger.objects.filter(entity_key=ENTITY_KEY, action=ACTION).select_related("alert").first()
     out = {
         "trigger_found": bool(trig), "trigger_active": bool(trig and trig.notification_trigger_active == "Y"), "alert": None,
-        "from_name": "", "subject": "", "send_hour": 7, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
+        "from_name": "", "from_address": mailer.sender_identity(None, True)["address"], "links": mailer.alert_links(None, ""), "subject": "", "send_hour": 7, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
         "smtp": {"designated": bool(mailer.designated_smtp()), "designated_host": settings.BIRTHDAY_EMAIL_HOST or "", "default_host": settings.EMAIL_HOST, "sender": None},
     }
     if not trig:
@@ -145,6 +145,8 @@ def get_setup(today=None):
     out["send_hour"] = a.start_time if a.start_time is not None else 7
     out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
     out["smtp"]["sender"] = mailer.sender_info(a.alert_id)
+    out["from_address"] = mailer.sender_identity(a.alert_id, True)["address"]
+    out["links"] = mailer.alert_links(a.alert_id, a.alert_name)
     out["from_name"] = (out["smtp"]["sender"] or {}).get("display_name", "")  # the sender name is kept with the alert's sender account; none = the From address only
     if out["smtp"]["sender"] and out["smtp"]["sender"]["broken"]:
         out["warnings"].append("The sender set for this alert cannot be used: " + out["smtp"]["sender"]["broken"] + ". The next account is used instead.")
@@ -197,6 +199,14 @@ def send_event(ev, setup, day, designated=True):
 class HolidayJob(JobBase):
     key = JOB_KEY
     name = "Holiday Mailer"
+    trigger_entity = ENTITY_KEY
+    trigger_action = ACTION
+
+    def schedule_text(self, today):
+        return f"On each event's dates, at {get_setup(today)['send_hour']:02d}:00 (checked every hour)"
+
+    def setup(self, today=None):
+        return get_setup(today)
 
     def plan(self, now, days=7):
         """Makes sure there is an item for every day an active event goes out, from today to `days` days ahead, and cancels planned ones that no longer

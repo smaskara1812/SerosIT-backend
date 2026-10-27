@@ -1,8 +1,8 @@
 """The Birthday Mailer: who has a birthday, the picture the name is drawn on, and the mail that goes out.
 
 What decides what, so nothing here is hardcoded:
-  * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (entity_key "automation.birthday",
-    action "send"), pointing at an alert (alert 247, "Happy Birthday !!!"). Switching that row off stops the mail.
+  * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (trigger point "automation",
+    action "send_birthday_mail"), pointing at an alert (alert 247, "Happy Birthday !!!"). Switching that row off stops the mail.
   * Who receives it: the alert's active rows in Alert To Users (To, Cc, Bcc), exactly as for every other alert. The celebrant is not a recipient.
   * When it goes: the alert's start hour (07:00), every day, by the hourly scheduler (core/scheduler.py).
   * The From name and the subject: the alert's display name and subject. A {name} in the subject becomes the person's name.
@@ -29,8 +29,8 @@ from .notification_triggers import resolve_alert_recipients
 log = logging.getLogger("seros.scheduler")
 
 JOB_KEY = "birthday"
-ENTITY_KEY = "automation.birthday"
-ACTION = "send"
+ENTITY_KEY = "automation"
+ACTION = "send_birthday_mail"
 TRIGGER_CODE = "auto.birthday"
 DEFAULT_ALERT_ID = 247
 FONT_DIR = os.path.join(os.path.dirname(__file__), "birthday_fonts")
@@ -312,7 +312,7 @@ def get_setup(today=None):
     trig = NotificationTrigger.objects.filter(entity_key=ENTITY_KEY, action=ACTION).select_related("alert").first()
     out = {
         "trigger_found": bool(trig), "trigger_active": bool(trig and trig.notification_trigger_active == "Y"), "alert": None,
-        "from_name": "", "subject": "", "send_hour": 7, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
+        "from_name": "", "from_address": mailer.sender_identity(None, True)["address"], "links": mailer.alert_links(None, ""), "subject": "", "send_hour": 7, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
         "smtp": {"designated": bool(mailer.designated_smtp()), "designated_host": settings.BIRTHDAY_EMAIL_HOST or "", "default_host": settings.EMAIL_HOST, "sender": None},
     }
     if not trig:
@@ -324,6 +324,8 @@ def get_setup(today=None):
     out["send_hour"] = a.start_time if a.start_time is not None else 7
     out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
     out["smtp"]["sender"] = mailer.sender_info(a.alert_id)
+    out["from_address"] = mailer.sender_identity(a.alert_id, True)["address"]
+    out["links"] = mailer.alert_links(a.alert_id, a.alert_name)
     out["from_name"] = (out["smtp"]["sender"] or {}).get("display_name", "")  # the sender name is kept with the alert's sender account; none = the From address only
     if out["smtp"]["sender"] and out["smtp"]["sender"]["broken"]:
         out["warnings"].append("The sender set for this alert cannot be used: " + out["smtp"]["sender"]["broken"] + ". The next account is used instead.")
@@ -374,6 +376,14 @@ def send_for_person(person_name, template, setup, designated=True):
 class BirthdayJob(JobBase):
     key = JOB_KEY
     name = "Birthday Mailer"
+    trigger_entity = ENTITY_KEY
+    trigger_action = ACTION
+
+    def schedule_text(self, today):
+        return f"Daily at {get_setup(today)['send_hour']:02d}:00 (checked every hour)"
+
+    def setup(self, today=None):
+        return get_setup(today)
 
     def plan(self, now, days=7):
         """Makes sure there is an item for every birthday from today to `days` days ahead, and cancels planned ones that no longer apply (the

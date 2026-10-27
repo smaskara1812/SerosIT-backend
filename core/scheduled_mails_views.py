@@ -80,19 +80,29 @@ def scheduled_mails_api(request):
     rows = [_row(i, names, max_attempts) for i in chosen[(page - 1) * size : page * size]]
     base = SchedItem.objects.all()
     next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
-    hours = {"birthday": birthday_mailer.get_setup(today)["send_hour"], "holiday": holiday_mailer.get_setup(today)["send_hour"]}
     jobs = []
     for key, job in scheduler.JOBS.items():
         row = SchedJob.objects.filter(job_key=key).first()
         jobs.append({"key": key, "name": job.name, "enabled": (row.enabled == "Y") if row else True, "last_run_at": row.last_run_at if row else None,
-                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": (f"Daily at {hours[key]:02d}:00 (checked every hour)" if key == "birthday" else f"On each event's dates, at {hours[key]:02d}:00 (checked every hour)") if key in hours else "Hourly",
-                     "failed": base.filter(job_key=key, status="failed").count(), "sent_today": base.filter(job_key=key, send_date=today, status="sent").count()})
+                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today),
+                     "failed": base.filter(job_key=key, status="failed").count(), "sent_today": base.filter(job_key=key, send_date=today, status="sent").count(),
+                     # for the pause and resume dialogs: what pausing would leave behind
+                     "kind": job.schedule_kind, "planned": base.filter(job_key=key, status="planned", send_date__gte=today).count(),
+                     "overdue_planned": base.filter(job_key=key, status="planned", send_date__lt=today).count(), **_cycle(job, today)})
     return Response({
         "health": scheduler_health(now), "jobs": jobs, "section": section, "count": total, "page": page, "page_size": size, "results": rows,
         "counts": {"upcoming": sections["upcoming"].count() if section != "upcoming" else total, "today": sections["today"].count() if section != "today" else total,
                    "earlier": sections["earlier"].count() if section != "earlier" else total},
         "max_attempts": max_attempts, "statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
     })
+
+
+def _cycle(job, today):
+    """For a cycle automation (a report mail): its Next Mail and frequency, so the dialogs can say what resuming will do."""
+    if job.schedule_kind != "cycle":
+        return {}
+    st = job.get_setup(today)
+    return {"next_mail_dt": st["next_mail_dt"], "freq": st["freq"]}
 
 
 def _act(request, item_id, name):
@@ -177,7 +187,7 @@ def run_now_api(request):
     wants it done without waiting for the hour."""
     if not _may(request, "edit"):
         return _deny("run the scheduler")
-    res = scheduler.tick()
+    res = scheduler.tick(source="manual")
     _audit.record_action(request, "update", MENU_KEY, "run", "Scheduler run by hand", {"result": {"old": None, "new": "ran" if res["ran"] else "skipped"}})
     return Response(res, status=200 if res["ran"] else 409)
 
@@ -195,3 +205,32 @@ def item_email_api(request, item_id):
         return Response({"detail": "No email was recorded for this item yet."}, status=404)
     return Response({"id": log.email_log_id, "subject": log.subject, "body": log.body, "recipients": log.recipients, "success": log.success, "error": log.error,
                      "used_fallback": log.used_fallback, "sent_at": log.sent_dt, "trigger": log.trigger})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def item_recipients_api(request, item_id):
+    """Who one item goes (or went) to: every To, Cc and Bcc recipient with where it comes from, resolved the way sending resolves it, for the day the
+    item is for. `snapshot` is what was recorded when it was actually sent. Also the sender and the error-mail address. Needs View on this page."""
+    if not _may(request, "view"):
+        return _deny()
+    it = SchedItem.objects.filter(pk=item_id).first()
+    job = scheduler.JOBS.get(it.job_key) if it else None
+    if not it or not job:
+        return Response({"detail": "That mail no longer exists."}, status=404)
+    return Response(recipients_preview(job, it.send_date, it.recipients))
+
+
+def recipients_preview(job, as_of, snapshot=""):
+    """The preview payload for one job on one day (shared with the Report Mails page)."""
+    from .notification_triggers import resolve_alert_recipients_detailed
+
+    setup = job.setup(as_of) or {}
+    alert = setup.get("alert")
+    entries = resolve_alert_recipients_detailed(alert["id"], as_of) if alert else []
+    counts = {k: sum(1 for e in entries if e["type"] == k) for k in ("to", "cc", "bcc")}
+    return {
+        "job": job.key, "job_name": job.name, "as_of": as_of, "alert": alert, "from_name": setup.get("from_name", ""), "from_address": setup.get("from_address", ""), "links": setup.get("links", {}), "subject": setup.get("subject", ""),
+        "sender": (setup.get("smtp") or {}).get("sender"), "recipients": entries, "counts": counts, "snapshot": snapshot or "",
+        "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO), "warnings": setup.get("warnings", []),
+    }

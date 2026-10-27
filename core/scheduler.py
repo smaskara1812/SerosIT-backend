@@ -16,12 +16,12 @@ import time
 
 from django.db.models import Q
 
-from . import birthday_mailer, holiday_mailer
+from . import birthday_mailer, error_mail, haz_id_register, holiday_mailer, rig_rate_breakup
 from .models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 
-JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB}
+JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB, haz_id_register.JOB.key: haz_id_register.JOB, rig_rate_breakup.JOB.key: rig_rate_breakup.JOB}
 LOCK_MINUTES = 50  # a lock older than this is taken as left behind by a copy that died
 
 
@@ -41,8 +41,9 @@ def release_lock(owner):
     SchedHeartbeat.objects.filter(pk=1, locked_by=owner).update(locked_by="", locked_until=None)
 
 
-def tick(now=None, owner=None):
-    """One run of the scheduler. Returns {"ran": bool, "jobs": {key: summary}, "errors": [..]}."""
+def tick(now=None, owner=None, source="service"):
+    """One run of the scheduler. `source` is "service" for the scheduler service (run_scheduler) and "manual" for "Run it now" on the page: only a service run
+    shows the service as alive. Returns {"ran": bool, "jobs": {key: summary}, "errors": [..]}."""
     now = now or datetime.datetime.now().replace(microsecond=0)
     owner = owner or owner_name()
     if not acquire_lock(owner, now):
@@ -68,9 +69,10 @@ def tick(now=None, owner=None):
             except Exception as exc:
                 log.exception("job %s failed during the hourly run", key)
                 errors.append(f"{key}: {type(exc).__name__}: {exc}")
+                error_mail.notify_job_failed(key, job.name, f"{type(exc).__name__}: {exc}", now)
                 SchedJob.objects.filter(pk=row.pk).update(last_run_at=now, last_run_note=f"Error: {exc}"[:300])
         msg = ("Errors: " + "; ".join(errors)) if errors else "OK"
-        SchedHeartbeat.objects.filter(pk=1).update(last_tick_at=now, last_tick_ok=not errors, last_message=msg[:300])
+        SchedHeartbeat.objects.filter(pk=1).update(last_tick_at=now, last_tick_ok=not errors, last_message=msg[:300], **{("last_manual_tick_at" if source == "manual" else "last_service_tick_at"): now})
         log.info("hourly run finished in %.1fs (%s)", time.monotonic() - started, msg)
     finally:
         release_lock(owner)
@@ -98,6 +100,7 @@ def skip_item(item_id, who, now=None):
     n = SchedItem.objects.filter(pk=it.pk, status__in=("planned", "failed", "missed")).update(status="skipped", skipped_by=who[:60], skipped_at=now, mod_dt=now, note="Skipped")
     if not n:
         raise ActionError(f"A mail that is {it.status} cannot be skipped.")
+    JOBS[it.job_key].on_skip(it, now)
     log.info("item %s (%s) skipped by %s", it.pk, it.label, who)
 
 

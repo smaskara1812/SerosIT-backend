@@ -292,6 +292,9 @@ BIRTHDAY_EMAIL_USE_TLS = os.getenv("BIRTHDAY_EMAIL_USE_TLS", "False") == "True"
 BIRTHDAY_EMAIL_USE_SSL = os.getenv("BIRTHDAY_EMAIL_USE_SSL", "False") == "True"
 BIRTHDAY_EMAIL_FROM = os.getenv("BIRTHDAY_EMAIL_FROM", "")
 SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # after the first try: at most this many more, one per hourly run
+# Who is told when an automatic mail has finally failed (after its retries): comma separated addresses. Empty = nobody is mailed (the failure still shows on
+# Scheduled Mails and in the logs). The error mail goes out through the default account.
+SCHEDULER_ERROR_MAIL_TO = [a.strip() for a in os.getenv("SCHEDULER_ERROR_MAIL_TO", "").split(",") if a.strip()]
 
 # ── Log files ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # backend/logs/ (or LOG_DIR): scheduler-<date>.log (every hourly run), automation_errors-<date>.log (every error, with its traceback) and
@@ -302,9 +305,14 @@ _LOG_FMT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {"plain": {"format": _LOG_FMT}},
+    "formatters": {
+        "plain": {"format": _LOG_FMT},
+        # runserver's own request line, coloured by status: [27/Oct/2026 17:00:00] "GET /api/... HTTP/1.1" 200 1234
+        "server": {"()": "django.utils.log.ServerFormatter", "format": "[{server_time}] {message}", "style": "{"},
+    },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+        "server_console": {"class": "logging.StreamHandler", "formatter": "server"},
         "scheduler_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "scheduler", "keep_days": LOG_KEEP_DAYS, "formatter": "plain"},
         "error_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "automation_errors", "keep_days": LOG_KEEP_DAYS, "formatter": "plain", "level": "ERROR"},
         "django_file": {"class": "core.log_setup.DailyFileHandler", "folder": str(LOG_DIR), "prefix": "django", "keep_days": LOG_KEEP_DAYS, "formatter": "plain", "level": "WARNING"},
@@ -313,5 +321,7 @@ LOGGING = {
         # everything the scheduler and the automations do; errors also go to their own file
         "seros.scheduler": {"handlers": ["scheduler_file", "error_file", "console"], "level": "INFO", "propagate": False},
         "django": {"handlers": ["django_file", "console"], "level": "WARNING", "propagate": False},
+        # the development server's request lines (every API call) in the terminal, as Django prints them by default; not written to the log files
+        "django.server": {"handlers": ["server_console"], "level": "INFO", "propagate": False},
     },
 }

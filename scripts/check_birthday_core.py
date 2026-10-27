@@ -133,7 +133,9 @@ try:
         ok("the setup shows the alert and the send hour, and no name when the alert has no sender (only the From address is shown)", setup["alert"]["id"] == 247 and setup["from_name"] == "" and setup["send_hour"] == 7)
         snd = AlertSenderDtl.objects.create(alert=alert, mail_host="named.example.test", mail_port=25, mail_security="N", from_address="hr@example.test", display_name="Human Resource – Seros", is_active="Y", cr_user_id=0, cr_dt=NOW)
         ok("the sender name comes from the alert's sender account", bm.get_setup(NOW.date())["from_name"] == "Human Resource – Seros" and mailer.sender_info(247)["display_name"] == "Human Resource – Seros")
+        ok("the setup shows the sender address of the account that sends: the alert's own, else the environment's, else the default", bm.get_setup(NOW.date())["from_address"] == "hr@example.test")
         snd.delete()  # the rest of the checks use the default account, as they always did
+        ok("with no sender account of its own the address is the default account's", bm.get_setup(NOW.date())["from_address"] == (settings.BIRTHDAY_EMAIL_FROM or settings.DEFAULT_FROM_EMAIL))
         ok("recipients are the alert's active To, Cc and Bcc rows", setup["recipients"] == __import__("core.notification_triggers", fromlist=["x"]).resolve_alert_recipients(247, as_of=NOW.date()) and any(setup["recipients"].values()), str(setup["recipients"]))
         MailAlertToUser.objects.create(alert=alert, recipient_name="Cc Person", email_addr="zz-cc@example.com", addressee_type="C", mail_alert_from=D(2026, 1, 1), mail_alert_to=None, mail_alert_order=9, cr_user_id=0, cr_dt=NOW)
         MailAlertToUser.objects.create(alert=alert, recipient_name="Old Person", email_addr="zz-old@example.com", addressee_type="T", mail_alert_from=D(2025, 1, 1), mail_alert_to=D(2026, 1, 1), mail_alert_order=9, cr_user_id=0, cr_dt=NOW)

@@ -29,23 +29,70 @@ from . import mailer
 from .models import MailAlertToUser, NotificationTrigger
 
 
+# Every trigger point and action the application knows, with the words the form shows. This is the one list: the Notification Triggers form offers
+# exactly these, and a row for any other pair is refused (a typo would otherwise be a mail that silently never goes out). Adding a "notify on X" feature
+# means adding it here AND to the schema in frontend/src/config/mastersSchemas.js ('notification-triggers'); scripts/check_trigger_registry.py fails
+# when the two differ. {entity_key: (label, {action: label})}
+TRIGGER_POINTS = {
+    "qhse.incident_details": ("QHSE → Incident Details", {"create": "Create"}),
+    "automation": (
+        "Automation",
+        {
+            "send_birthday_mail": "Send birthday mail",
+            "send_holiday_mail": "Send holiday mail",
+            "send_haz_id_register_mail": "Send HAZ ID register mail",
+            "send_rig_rate_breakup_mail": "Send Rig Rate Break-Up mail",
+        },
+    ),
+}
+
+
+def is_registered(entity_key, action):
+    return action in TRIGGER_POINTS.get(entity_key, ("", {}))[1]
+
+
 def _dedupe(seq):
     return list(dict.fromkeys(a for a in seq if a))
+
+
+def _alert_rows(alert_id, as_of):
+    return (
+        MailAlertToUser.objects.filter(alert_id=alert_id, mail_alert_from__lte=as_of)
+        .filter(Q(mail_alert_to__isnull=True) | Q(mail_alert_to__gte=as_of))
+        .select_related("user")
+    )
+
+
+def resolve_alert_recipients_detailed(alert_id, as_of=None):
+    """The recipients of one alert, each with where it comes from: [{"type": "to"|"cc"|"bcc", "email", "name", "source"}, ...], from the
+    MailAlertToUser rows whose From/To window covers as_of (default today). This is the one place that decides who a mail goes to: sending uses
+    it (through resolve_alert_recipients), and so does the recipients preview on the Scheduled Mails and Report Mails pages, so the preview is
+    exactly what is sent. More sources (for example the rig-wise recipients of some report) are added here, each with its own `source` text."""
+    as_of = as_of or date_cls.today()
+    kind = {"T": "to", "C": "cc", "B": "bcc"}
+    out = []
+    for r in _alert_rows(alert_id, as_of):
+        if r.addressee_type not in kind or not r.email_addr:
+            continue
+        name = (r.user.user_name.strip() if r.user_id and r.user.user_name else "") or (r.recipient_name or "")
+        out.append({
+            "type": kind[r.addressee_type], "email": r.email_addr, "name": name,
+            "source": f"Alert To Users (alert {alert_id}, row {r.mail_alert_to_user_id})",
+            "from": r.mail_alert_from, "to_date": r.mail_alert_to,
+        })
+    return out
 
 
 def resolve_alert_recipients(alert_id, as_of=None):
     """Returns {to, cc, bcc} (deduped email lists) for one alert_id, from
     MailAlertToUser rows whose mail_alert_from/mail_alert_to window covers
     as_of (defaults to today) — same date-scoping shape used elsewhere in
-    this app for time-bounded config (e.g. company_branding.py)."""
-    as_of = as_of or date_cls.today()
-    to, cc, bcc = [], [], []
-    rows = MailAlertToUser.objects.filter(alert_id=alert_id, mail_alert_from__lte=as_of).filter(
-        Q(mail_alert_to__isnull=True) | Q(mail_alert_to__gte=as_of)
-    )
-    for r in rows:
-        {"T": to, "C": cc, "B": bcc}.get(r.addressee_type, []).append(r.email_addr)
-    return {"to": _dedupe(to), "cc": _dedupe(cc), "bcc": _dedupe(bcc)}
+    this app for time-bounded config (e.g. company_branding.py). Built from
+    resolve_alert_recipients_detailed, so the list and the preview agree."""
+    lists = {"to": [], "cc": [], "bcc": []}
+    for e in resolve_alert_recipients_detailed(alert_id, as_of):
+        lists[e["type"]].append(e["email"])
+    return {k: _dedupe(v) for k, v in lists.items()}
 
 
 def trigger(entity_key, action, subject, body, sent_by_user_id=None, is_html=True, attachments=None):

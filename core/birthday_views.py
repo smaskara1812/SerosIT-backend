@@ -359,13 +359,17 @@ def template_preview_api(request):
 # ── the setup the page shows, and the test mail ──────────────────────────────────────────────────────────────────────────────
 
 def scheduler_health(now=None):
-    """When the scheduler last ran. It runs at the top of every hour, so more than 75 minutes without a run means it has stopped."""
+    """Whether the scheduler SERVICE is alive: it runs at the top of every hour, so more than 75 minutes since its last run means it has stopped. A run
+    started by hand with "Run it now" does not count (it is reported on its own as manual_at), or a click would make a stopped service look alive."""
     now = now or datetime.datetime.now()
     hb = SchedHeartbeat.objects.filter(pk=1).first()
-    if not hb or not hb.last_tick_at:
-        return {"state": "never", "last_run": None, "minutes_ago": None, "ok": True, "message": "The scheduler has never run."}
-    minutes = int((now - hb.last_tick_at).total_seconds() // 60)
-    return {"state": "stale" if minutes > 75 else "running", "last_run": hb.last_tick_at, "minutes_ago": minutes, "ok": hb.last_tick_ok, "message": hb.last_message}
+    manual = hb.last_manual_tick_at if hb else None
+    manual_minutes = int((now - manual).total_seconds() // 60) if manual else None
+    if not hb or not hb.last_service_tick_at:
+        return {"state": "never", "last_run": None, "minutes_ago": None, "ok": True, "message": "The scheduler service has not run.", "manual_at": manual, "manual_minutes_ago": manual_minutes}
+    minutes = int((now - hb.last_service_tick_at).total_seconds() // 60)
+    return {"state": "stale" if minutes > 75 else "running", "last_run": hb.last_service_tick_at, "minutes_ago": minutes, "ok": hb.last_tick_ok, "message": hb.last_message,
+            "manual_at": manual, "manual_minutes_ago": manual_minutes}
 
 
 @api_view(["GET"])

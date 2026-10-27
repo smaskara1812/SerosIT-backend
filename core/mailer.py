@@ -222,6 +222,29 @@ def alert_sender(alert_id):
     return smtp
 
 
+def sender_identity(alert_id, env_account=True):
+    """Who a mail for this alert is sent as, from the first account that would be tried (the alert's own, else the environment's when `env_account`,
+    else the default one): {"address": From address, "account": "alert" | "designated" | "default"}. The name next to it is the alert sender's display name
+    (see sender_info); with none, the mail shows the address only."""
+    own = alert_sender(alert_id)
+    if own:
+        return {"address": own["from_address"], "account": "alert"}
+    env = designated_smtp() if env_account else None
+    if env:
+        return {"address": env["from_address"], "account": "designated"}
+    return {"address": default_smtp()["from_address"], "account": "default"}
+
+
+def alert_links(alert_id, alert_name):
+    """Quick links for the pages: the alert's recipients (Alert To Users, filtered to this alert) and the alert itself (Alert Details, opened on it)."""
+    from urllib.parse import quote
+
+    if not alert_id:
+        return {"recipients": "", "alert": ""}
+    q = quote(alert_name or "", safe="")
+    return {"recipients": f"/masters/mail-alert-to-users?alert={alert_id}&alertName={q}", "alert": f"/masters/mail-alerts?select={alert_id}&q={q}"}
+
+
 def sender_info(alert_id):
     """What the setup panels may show about an alert's own account: server, port, user, From address and sender name. Never the password."""
     a = alert_sender(alert_id)
@@ -230,7 +253,7 @@ def sender_info(alert_id):
     return {"host": a["host"], "port": a["port"], "user": a["user"] or "", "from_address": a["from_address"], "display_name": a.get("display_name", ""), "broken": a.get("broken", "")}
 
 
-def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_address, inline_images, connection):
+def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_address, inline_images, connection, attachments=None):
     from email.mime.image import MIMEImage
     from email.utils import formataddr
 
@@ -248,10 +271,12 @@ def _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, from_a
             img.add_header("Content-ID", f"<{cid}>")
             img.add_header("Content-Disposition", "inline", filename=f"{cid}.{subtype}")
             msg.attach(img)
+    for filename, content, mimetype in attachments or []:
+        msg.attach(filename, content, mimetype)
     return msg
 
 
-def _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images):
+def _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images, attachments=None):
     """One send through one account. Raises on any failure."""
     if smtp.get("broken"):
         raise RuntimeError(smtp["broken"])
@@ -259,7 +284,7 @@ def _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images):
         host=smtp["host"], port=smtp["port"], username=smtp["user"], password=smtp["password"],
         use_tls=smtp["use_tls"], use_ssl=smtp["use_ssl"], fail_silently=False,
     )
-    msg = _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, smtp["from_address"], inline_images, connection)
+    msg = _build_scheduled_message(subject, html, text, to, cc, bcc, from_name, smtp["from_address"], inline_images, connection, attachments)
     if settings.EMAIL_USE_CONSOLE:
         print(f"--- Envelope: To={to or []} Cc={cc or []} Bcc={bcc or []} ---")
     msg.send()
@@ -285,10 +310,11 @@ def _html_for_log(html, inline_images):
     return html
 
 
-def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_name="", inline_images=None, trigger="", trigger_code="", designated=True, alert_id=None):
+def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_name="", inline_images=None, trigger="", trigger_code="", designated=True, alert_id=None, attachments=None, env_account=True):
     """Sends one automatic mail. The accounts are tried in this order, each straight after the one before it fails: the alert's own account (Masters >
     Alert Senders, when `alert_id` is given and it has an active row), the one set in the environment (BIRTHDAY_EMAIL_*, when set), then the default
-    account. `designated` false means the default account only. Always writes ONE EmailLog row for the attempt, success or failure, and logs any
+    account. `designated` false means the default account only; `env_account` false leaves out the one set in the environment (a report that must go through
+    the default account still honours an alert's own account). `attachments` is a list of (file name, bytes, mime type). Always writes ONE EmailLog row for the attempt, success or failure, and logs any
     failure to the scheduler logs.
 
     Returns {"ok", "smtp_used" ('alert', 'designated', 'default' or ''), "error", "email_log_id", "fell_back"}. Never raises."""
@@ -301,7 +327,7 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
         own = alert_sender(alert_id)
         if own:
             attempts.append(("alert", own))
-        if designated_smtp():
+        if env_account and designated_smtp():
             attempts.append(("designated", designated_smtp()))
     attempts.append(("default", default_smtp()))
 
@@ -312,7 +338,10 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     else:
         for label, smtp in attempts:
             try:
-                _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images)
+                if attachments:
+                    _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images, attachments=attachments)
+                else:
+                    _deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_images)
                 ok, used, from_used = True, label, smtp["from_address"]
                 break
             except Exception as exc:
@@ -329,7 +358,7 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
         row = EmailLog.objects.create(
             subject=subject[:200], body=_html_for_log(html, inline_images), recipients=recipients_display, from_address=(from_used or "")[:200], trigger=trigger[:200], trigger_code=trigger_code[:100], success=ok,
             error=error or ("; ".join(errors) if errors else ""), used_fallback=bool(ok and used != attempts[0][0]),
-            attachment_names=", ".join(f"{cid}.{sub}" for cid, _, sub in (inline_images or [])), sent_by_user_id=None,
+            attachment_names=", ".join([f"{cid}.{sub}" for cid, _, sub in (inline_images or [])] + [a[0] for a in (attachments or [])])[:300], sent_by_user_id=None,
         )
         log_id = row.pk
     except Exception:

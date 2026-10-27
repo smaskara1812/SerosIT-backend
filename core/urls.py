@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
-from . import birthday_views, holiday_views, scheduled_mails_views
+from . import birthday_views, holiday_views, report_mail_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
 from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
@@ -571,6 +571,12 @@ urlpatterns = [
     path("admin/scheduled-mails/run-now/", scheduled_mails_views.run_now_api, name="scheduled_mails_run_now"),
     path("admin/scheduled-mails/jobs/<str:job_key>/<str:state>/", scheduled_mails_views.job_switch_api, name="scheduled_mails_job_switch"),
     path("admin/scheduled-mails/<int:item_id>/email/", scheduled_mails_views.item_email_api, name="scheduled_mail_email"),
+    path("admin/scheduled-mails/<int:item_id>/recipients/", scheduled_mails_views.item_recipients_api, name="scheduled_mail_recipients"),
+    path("admin/report-mails/", report_mail_views.reports_api, name="report_mails"),
+    path("admin/report-mails/<str:key>/download/", report_mail_views.download_api, name="report_mail_download"),
+    path("admin/report-mails/<str:key>/test-send/", report_mail_views.test_send_api, name="report_mail_test_send"),
+    path("admin/report-mails/<str:key>/run-now/", report_mail_views.run_now_api, name="report_mail_run_now"),
+    path("admin/report-mails/<str:key>/schedule/", report_mail_views.schedule_api, name="report_mail_schedule"),
     path("admin/scheduled-mails/<int:item_id>/skip/", scheduled_mails_views.skip_api, name="scheduled_mail_skip"),
     path("admin/scheduled-mails/<int:item_id>/unskip/", scheduled_mails_views.unskip_api, name="scheduled_mail_unskip"),
     path("admin/scheduled-mails/<int:item_id>/send-now/", scheduled_mails_views.send_now_api, name="scheduled_mail_send_now"),

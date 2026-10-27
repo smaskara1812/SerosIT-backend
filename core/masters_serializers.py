@@ -1797,11 +1797,34 @@ class MailRecipientMappingSerializer(serializers.ModelSerializer):
 
 class NotificationTriggerSerializer(serializers.ModelSerializer):
     alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
+    trigger_label = serializers.SerializerMethodField()
+    action_label = serializers.SerializerMethodField()
+
+    def get_trigger_label(self, obj):
+        from .notification_triggers import TRIGGER_POINTS
+
+        return TRIGGER_POINTS.get(obj.entity_key, (obj.entity_key, {}))[0]
+
+    def get_action_label(self, obj):
+        from .notification_triggers import TRIGGER_POINTS
+
+        return TRIGGER_POINTS.get(obj.entity_key, ("", {}))[1].get(obj.action, obj.action)
 
     class Meta:
         model = NotificationTrigger
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        from .notification_triggers import TRIGGER_POINTS, is_registered
+
+        entity_key = attrs.get("entity_key", getattr(self.instance, "entity_key", ""))
+        action = attrs.get("action", getattr(self.instance, "action", ""))
+        if entity_key not in TRIGGER_POINTS:
+            raise serializers.ValidationError({"entity_key": "That trigger point does not exist."})
+        if not is_registered(entity_key, action):
+            raise serializers.ValidationError({"action": f"'{action}' is not an action of {TRIGGER_POINTS[entity_key][0]}."})
+        return attrs
 
 
 class ItAccessoryHolderSerializer(serializers.ModelSerializer):

@@ -42,6 +42,7 @@ EDIT_OVERRIDES = {
     "it_asset.it_accessory_holders": ("it_accessory_holder_remark", ["ZZ remark 1", "ZZ remark 2", "ZZ remark 3"]),
     "masters.hse_drills": ("hse_drill_active", ["Y", "N", "Y"]),  # name and frequency are locked once a drill is saved
     "masters.notification_triggers": ("notification_trigger_active", ["Y", "N", "Y"]),
+    "masters.alert_senders": ("from_address", ["zz1@t.in", "zz2@t.in", "zz3@t.in"]),
     "masters.mail_recipient_mappings": ("event_type", ["FINALIZE", "APPROVE", "REJECT"]),
     "masters.rigs": ("rig_name", ["ZZ Rig A", "ZZ Rig B", "ZZ Rig C"]),  # at most two digits in a rig name
     # Mapping pages have no name; an ordinary editable field of each stands in.
@@ -83,7 +84,18 @@ SOFT_DELETE = {
 }
 
 # Extra values for the copy a page is given, where a straight copy would clash with the original.
+def _free_trigger_pair():
+    """A (trigger point, action) the copy of a trigger row can use: the page refuses unknown or repeated pairs, and every real pair may already have a row,
+    so a check-only action is added to the registry of this process (it is never stored: the run is rolled back, and the registry lives in memory)."""
+    from core.notification_triggers import TRIGGER_POINTS
+
+    TRIGGER_POINTS["automation"][1]["zz_check_only"] = "Check only"
+    return {"entity_key": "automation", "action": "zz_check_only"}
+
+
 CREATE_EXTRA = {
+    "masters.notification_triggers": _free_trigger_pair,
+    "masters.alert_senders": {"is_active": "N"},  # one active sender per alert: the copy is switched off
     "it_asset.it_asset_holders": {"it_asset_holder_from": "1999-01-01", "it_asset_holder_to": "1999-02-01T00:00:00"},
     "admin.approver_mapping": {"approver_active": "Y"},  # older rows hold a blank the page would refuse
     "qhse.activities": {"intimate_vessel": "N"},
@@ -261,7 +273,8 @@ def exercise_basic(client, entity):
         if f.get_internal_type() == "DateField" and isinstance(payload.get(f.name), str):
             payload[f.name] = payload[f.name][:10]
     payload[edit_field] = uniq(1)
-    payload.update(CREATE_EXTRA.get(entity, {}))
+    extra = CREATE_EXTRA.get(entity, {})
+    payload.update(extra() if callable(extra) else extra)
     if edit_field != name_field:
         payload[name_field] = f"ZZ{os.getpid() % 1000}"[:limit]  # keep the copy's name unique as well
 
