@@ -233,6 +233,8 @@ class HolidayJob(JobBase):
         error = ""
         if not setup["trigger_found"] or not setup["trigger_active"]:
             error = "The trigger for the holiday mail is missing or switched off."
+        elif not setup["alert"]["active"]:
+            error = f"The alert '{setup['alert']['name']}' is switched off. Tick Active on it in Masters > Alert Details."
         elif not any(setup["recipients"].values()):
             error = f"The alert has no active recipients on {now.date()}."
         elif not os.path.isfile(picture_path(ev)):

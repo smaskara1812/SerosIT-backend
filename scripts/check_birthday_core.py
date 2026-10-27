@@ -175,6 +175,10 @@ try:
         ok("the items are marked sent with the log id and the account used", all(i.status == "sent" and i.email_log_id and i.smtp_used == "default" and i.attempts == 1 for i in SchedItem.objects.filter(send_date=NOW.date())))
         n_before = len(sent); bm.JOB.process(NOW + datetime.timedelta(hours=1))
         ok("the next hour sends nothing again", len(sent) == n_before)
+        MailAlertDtl.objects.filter(pk=247).update(alert_active=None)
+        err_off, res_off, _t = bm.JOB._compose_and_send(p1, NOW)
+        ok("an alert that is not ticked Active sends nothing, and says why", res_off is None and "switched off" in err_off and "Alert Details" in err_off and len(sent) == n_before, err_off)
+        MailAlertDtl.objects.filter(pk=247).update(alert_active="Y")
         SchedItem.objects.filter(send_date=NOW.date()).delete(); sent.clear()
 
         print("F. the designated account, then the default; retries")
