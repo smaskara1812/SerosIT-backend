@@ -359,17 +359,20 @@ def template_preview_api(request):
 # ── the setup the page shows, and the test mail ──────────────────────────────────────────────────────────────────────────────
 
 def scheduler_health(now=None):
-    """Whether the scheduler SERVICE is alive: it runs at the top of every hour, so more than 75 minutes since its last run means it has stopped. A run
-    started by hand with "Run it now" does not count (it is reported on its own as manual_at), or a click would make a stopped service look alive."""
+    """The scheduler's health for the pages (see core/scheduler_health.py): whether the scheduler SERVICE is alive, what is wrong, and the last mail-server check.
+    A run started by hand with "Run it now" does not count as the service being alive (it is reported on its own as manual_at). The older keys (state,
+    last_run, minutes_ago, ok, message, manual_at, manual_minutes_ago) are kept for the pages that already use them."""
+    from . import scheduler_health as sh
+
     now = now or datetime.datetime.now()
-    hb = SchedHeartbeat.objects.filter(pk=1).first()
-    manual = hb.last_manual_tick_at if hb else None
-    manual_minutes = int((now - manual).total_seconds() // 60) if manual else None
-    if not hb or not hb.last_service_tick_at:
-        return {"state": "never", "last_run": None, "minutes_ago": None, "ok": True, "message": "The scheduler service has not run.", "manual_at": manual, "manual_minutes_ago": manual_minutes}
-    minutes = int((now - hb.last_service_tick_at).total_seconds() // 60)
-    return {"state": "stale" if minutes > 75 else "running", "last_run": hb.last_service_tick_at, "minutes_ago": minutes, "ok": hb.last_tick_ok, "message": hb.last_message,
-            "manual_at": manual, "manual_minutes_ago": manual_minutes}
+    ev = sh.evaluate(now)
+    hb = ev["heartbeat"]
+    manual = hb["last_manual_at"]
+    state = "never" if ev["state"] == "never" else ev["state"]
+    return {
+        **ev, "state": state, "last_run": hb["last_alive_at"] or hb["last_run_at"], "minutes_ago": ev["age"], "ok": hb["last_run_ok"] and ev["level"] != "critical",
+        "message": hb["last_run_message"], "manual_at": manual, "manual_minutes_ago": int((now - manual).total_seconds() // 60) if manual else None,
+    }
 
 
 @api_view(["GET"])

@@ -291,6 +291,14 @@ BIRTHDAY_EMAIL_PASSWORD = os.getenv("BIRTHDAY_EMAIL_PASSWORD", "")
 BIRTHDAY_EMAIL_USE_TLS = os.getenv("BIRTHDAY_EMAIL_USE_TLS", "False") == "True"
 BIRTHDAY_EMAIL_USE_SSL = os.getenv("BIRTHDAY_EMAIL_USE_SSL", "False") == "True"
 BIRTHDAY_EMAIL_FROM = os.getenv("BIRTHDAY_EMAIL_FROM", "")
+# Scheduler health (core/scheduler_health.py, manage.py check_scheduler_health). SCHEDULER_MODE is "service" when the scheduler stays running (it writes a heartbeat every
+# minute) or "task" when Windows Task Scheduler runs it once an hour. The watchdog e-mails SCHEDULER_ERROR_MAIL_TO only when SCHEDULER_HEALTH_ALERTS is True.
+SCHEDULER_MODE = os.getenv("SCHEDULER_MODE", "service").strip().lower()
+SCHEDULER_STALE_MINUTES = int(os.getenv("SCHEDULER_STALE_MINUTES", "10") or 10)  # service mode: no heartbeat for this long = stopped
+SCHEDULER_STOPPED_GRACE_MINUTES = int(os.getenv("SCHEDULER_STOPPED_GRACE_MINUTES", "60") or 60)  # a service stopped properly (a planned stop) is only an outage after this long
+SCHEDULER_OVERDUE_HOURS = int(os.getenv("SCHEDULER_OVERDUE_HOURS", "2") or 2)  # a mail due this long ago and still not sent is a problem
+SCHEDULER_HEALTH_ALERTS = os.getenv("SCHEDULER_HEALTH_ALERTS", "False") == "True"
+SCHEDULER_HEALTH_REMINDER_HOURS = int(os.getenv("SCHEDULER_HEALTH_REMINDER_HOURS", "0") or 0)  # 0 = one mail per problem, no reminders
 SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # after the first try: at most this many more, one per hourly run
 # Who is told when an automatic mail has finally failed (after its retries): comma separated addresses. Empty = nobody is mailed (the failure still shows on
 # Scheduled Mails and in the logs). The error mail goes out through the default account.

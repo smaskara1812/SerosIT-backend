@@ -4899,6 +4899,29 @@ class SchedItem(models.Model):
         return f"{self.job_key}: {self.label} on {self.send_date}"
 
 
+class SchedHealthEvent(models.Model):
+    """One problem the watchdog (manage.py check_scheduler_health) found with the scheduler: the service stopped, mails overdue, the mail server unreachable.
+    A row is opened when the problem starts and closed when it is gone. It is how the page shows the last outages, and how the watchdog knows it has
+    already told IT, so one problem is one e-mail (see core/scheduler_health.py)."""
+
+    event_id = models.AutoField(primary_key=True)
+    kind = models.CharField(max_length=30, db_index=True)  # service_down, overdue, smtp_down
+    level = models.CharField(max_length=10)  # warning or critical
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    detail = models.CharField(max_length=500, blank=True, default="")
+    alerted_at = models.DateTimeField(null=True, blank=True)  # when IT was e-mailed about it (blank: not, for example alerts were switched off)
+    reminder_at = models.DateTimeField(null=True, blank=True)
+    recovery_alerted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "sched_health_event"
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"{self.kind} from {self.started_at}"
+
+
 class SchedHeartbeat(models.Model):
     """One row, id 1: when the scheduler last ran, how it went, and the lock that stops two copies running at once."""
 
@@ -4910,6 +4933,17 @@ class SchedHeartbeat(models.Model):
     last_message = models.CharField(max_length=300, blank=True, default="")
     locked_by = models.CharField(max_length=80, blank=True, default="")
     locked_until = models.DateTimeField(null=True, blank=True)
+    # "Still alive" of the scheduler service, written every minute while it runs (core/scheduler_health.py), so a crash is seen within minutes, not at the next hour
+    last_alive_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)  # when this run of the service started
+    stopped_at = models.DateTimeField(null=True, blank=True)  # set when the service was stopped properly (a planned stop); cleared when it starts
+    service_host = models.CharField(max_length=80, blank=True, default="")
+    service_pid = models.IntegerField(null=True, blank=True)
+    # The mail-server check made by the watchdog: whether the default SMTP account could be reached, and how many checks in a row failed
+    smtp_ok = models.BooleanField(null=True, blank=True)
+    smtp_checked_at = models.DateTimeField(null=True, blank=True)
+    smtp_error = models.CharField(max_length=300, blank=True, default="")
+    smtp_fail_streak = models.IntegerField(default=0)
 
     class Meta:
         db_table = "sched_heartbeat"

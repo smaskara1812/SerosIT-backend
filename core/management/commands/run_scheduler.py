@@ -15,10 +15,11 @@ import time
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
-from core import scheduler
+from core import scheduler, scheduler_health
 from core.models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
+HEARTBEAT_SECONDS = 60
 
 
 def seconds_to_next_hour(now=None):
@@ -53,6 +54,7 @@ class Command(BaseCommand):
             except (ValueError, OSError):
                 pass
         log.info("scheduler started: one run now, then one at the top of every hour")
+        self._beat(start=True)
         first = True
         while not stop["now"]:
             try:
@@ -65,11 +67,28 @@ class Command(BaseCommand):
             wait = seconds_to_next_hour()
             log.info("next run in %.0f minutes", wait / 60)
             end = time.monotonic() + wait
+            next_beat = time.monotonic() + HEARTBEAT_SECONDS
             while not stop["now"] and time.monotonic() < end:
                 time.sleep(min(5, max(0.0, end - time.monotonic())))
+                if time.monotonic() >= next_beat:  # "still alive", once a minute, so a crash is seen within minutes
+                    self._beat()
+                    next_beat = time.monotonic() + HEARTBEAT_SECONDS
+        self._beat(stop=True)
         log.info("scheduler stopped")
 
+    @staticmethod
+    def _beat(start=False, stop=False):
+        try:
+            close_old_connections()
+            scheduler_health.heartbeat(start=start, stop=stop)
+        except Exception:
+            log.exception("the heartbeat could not be written")  # never stops the scheduler
+
     def _status(self):
+        from django.utils import timezone  # noqa: F401
+
+        st = scheduler_health.evaluate()
+        self.stdout.write(f"Health: {st['level'].upper()}: {st['title']}" + "".join(f"\n  - {p['title']}: {p['detail']}" for p in st["problems"]))
         hb = SchedHeartbeat.objects.filter(pk=1).first()
         self.stdout.write("Last run by the service: " + (f"{hb.last_service_tick_at:%Y-%m-%d %H:%M} ({'ok' if hb.last_tick_ok else 'errors'}: {hb.last_message})" if hb and hb.last_service_tick_at else "never"))
         if hb and hb.last_manual_tick_at:

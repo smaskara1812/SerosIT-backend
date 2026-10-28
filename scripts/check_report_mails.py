@@ -439,14 +439,14 @@ try:
         ok("the change is in the audit trail, with the old and the new date", SysAuditLog.objects.filter(entity=MK, record_label__contains="Next Mail changed").exists())
         from core import birthday_views
         from core.models import SchedHeartbeat
-        SchedHeartbeat.objects.update_or_create(pk=1, defaults=dict(last_tick_at=None, last_service_tick_at=None, last_manual_tick_at=None))
+        SchedHeartbeat.objects.update_or_create(pk=1, defaults=dict(last_tick_at=None, last_service_tick_at=None, last_manual_tick_at=None, last_alive_at=None, started_at=None, stopped_at=None))
         scheduler.tick(NOW, owner="check", source="manual")
         h = birthday_views.scheduler_health(NOW)
         ok("a run by hand does not make the scheduler service look alive", h["state"] == "never" and h["manual_at"] is not None)
         scheduler.tick(NOW + datetime.timedelta(minutes=1), owner="check", source="service")
         h = birthday_views.scheduler_health(NOW + datetime.timedelta(minutes=2))
         ok("a run by the service does", h["state"] == "running" and h["minutes_ago"] <= 2)
-        ok("and it is stale after 75 minutes without one", birthday_views.scheduler_health(NOW + datetime.timedelta(minutes=90))["state"] == "stale")
+        ok("and it is stale after the limit (10 minutes in service mode) without one", birthday_views.scheduler_health(NOW + datetime.timedelta(minutes=90))["state"] == "stale")
 
         raise Rollback()
 except Rollback:

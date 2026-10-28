@@ -13,6 +13,7 @@ from rest_framework.response import Response
 
 from . import audit as _audit
 from . import birthday_mailer, holiday_mailer, scheduler
+from . import scheduler_health as scheduler_health_module
 from .birthday_views import scheduler_health
 from .models import BirthdayTemplate, EmailLog, SchedItem, SchedJob
 from .notice_board import poster_name
@@ -90,7 +91,10 @@ def scheduled_mails_api(request):
                      "kind": job.schedule_kind, "planned": base.filter(job_key=key, status="planned", send_date__gte=today).count(),
                      "overdue_planned": base.filter(job_key=key, status="planned", send_date__lt=today).count(), **_cycle(job, today)})
     return Response({
-        "health": scheduler_health(now), "jobs": jobs, "section": section, "count": total, "page": page, "page_size": size, "results": rows,
+        "health": scheduler_health(now), "health_events": [
+            {"id": e.event_id, "kind": e.kind, "level": e.level, "started_at": e.started_at, "ended_at": e.ended_at, "detail": e.detail, "alerted": e.alerted_at is not None}
+            for e in scheduler_health_module.recent_events(6)
+        ], "jobs": jobs, "section": section, "count": total, "page": page, "page_size": size, "results": rows,
         "counts": {"upcoming": sections["upcoming"].count() if section != "upcoming" else total, "today": sections["today"].count() if section != "today" else total,
                    "earlier": sections["earlier"].count() if section != "earlier" else total},
         "max_attempts": max_attempts, "statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
@@ -234,3 +238,29 @@ def recipients_preview(job, as_of, snapshot=""):
         "sender": (setup.get("smtp") or {}).get("sender"), "recipients": entries, "counts": counts, "snapshot": snapshot or "",
         "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO), "warnings": setup.get("warnings", []),
     }
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def scheduler_status_api(request):
+    """The light status the sidebar dot polls once a minute: {"level": ok|warning|critical, "title", "problems": [titles]}. Needs View on this page."""
+    if not _may(request, "view"):
+        return _deny()
+    ev = scheduler_health_module.evaluate()
+    return Response({"level": ev["level"], "title": ev["title"], "problems": [p["title"] for p in ev["problems"]]})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def smtp_check_api(request):
+    """Checks now whether the default mail server can be reached (a connection and a hello; nothing is sent) and records the result. Needs Edit. At most one
+    check every 20 seconds, so a clicking person cannot hammer the mail server."""
+    if not _may(request, "edit"):
+        return _deny("check the mail server")
+    hb = scheduler_health_module.SchedHeartbeat.objects.filter(pk=1).first()
+    now = datetime.datetime.now().replace(microsecond=0)
+    if hb and hb.smtp_checked_at and (now - hb.smtp_checked_at).total_seconds() < 20:
+        return Response({"detail": "The mail server was checked a moment ago. Wait a few seconds."}, status=429)
+    res = scheduler_health_module.smtp_check(now)
+    _audit.record_action(request, "update", MENU_KEY, "smtp-check", "Mail server checked", {"result": {"old": None, "new": "reachable" if res["ok"] else "not reachable" if res["ok"] is False else "not checked"}})
+    return Response(res)

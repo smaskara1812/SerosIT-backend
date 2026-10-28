@@ -20,7 +20,7 @@ def recipients():
     return list(settings.SCHEDULER_ERROR_MAIL_TO)
 
 
-def _send(subject, rows, note):
+def _send(subject, rows, note, designated=False):
     to = recipients()
     if not to:
         log.warning("error mail not sent: SCHEDULER_ERROR_MAIL_TO is empty (%s)", subject)
@@ -34,7 +34,7 @@ def _send(subject, rows, note):
     )
     text = "\n".join(f"{k}: {v}" for k, v in rows) + "\n" + note
     try:
-        res = mailer.send_scheduled_email(subject, page, text, to=to, trigger=subject[:200], trigger_code=TRIGGER_CODE, designated=False)
+        res = mailer.send_scheduled_email(subject, page, text, to=to, trigger=subject[:200], trigger_code=TRIGGER_CODE, designated=designated)
     except Exception:
         log.exception("the error mail itself could not be sent (%s)", subject)
         return False
