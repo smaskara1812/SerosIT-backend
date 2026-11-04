@@ -245,7 +245,7 @@ class TrainingLogHdrViewSet(BaseMasterViewSet):
         if not (category and category.isdigit()):
             return Response([])
         seen, out = set(), []
-        for m in FsCatgToRankMapping.objects.filter(fs_category_id=category).select_related("rank").order_by("rank__rank_name"):
+        for m in FsCatgToRankMapping.objects.filter(fs_category_id=category, rank__business_system_id_6="Y").select_related("rank").order_by("rank__rank_name"):
             if m.rank_id not in seen:
                 seen.add(m.rank_id)
                 out.append({"id": m.rank_id, "name": m.rank.rank_name})

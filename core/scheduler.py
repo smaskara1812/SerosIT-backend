@@ -16,12 +16,12 @@ import time
 
 from django.db.models import Q
 
-from . import birthday_mailer, error_mail, haz_id_register, holiday_mailer, rig_rate_breakup
+from . import activity_monitor_alert, birthday_mailer, error_mail, haz_id_register, holiday_mailer, open_incident_actions, rig_rate_breakup
 from .models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 
-JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB, haz_id_register.JOB.key: haz_id_register.JOB, rig_rate_breakup.JOB.key: rig_rate_breakup.JOB}
+JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB, haz_id_register.JOB.key: haz_id_register.JOB, rig_rate_breakup.JOB.key: rig_rate_breakup.JOB, activity_monitor_alert.JOB.key: activity_monitor_alert.JOB, open_incident_actions.JOB.key: open_incident_actions.JOB}
 LOCK_MINUTES = 50  # a lock older than this is taken as left behind by a copy that died
 
 

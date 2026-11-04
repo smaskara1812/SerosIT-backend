@@ -185,7 +185,7 @@ try:
         full = mk("zzrr1", {"admin.report_mails": ("view", "edit", "export"), "admin.scheduled_mails": ("view",)})
         alert(next_mail_dt=DT(2026, 10, 16, 11, 19, 13), start_time=11)
         cards = full.get("/api/admin/report-mails/").json()["results"]
-        ok("Report Mails lists both reports", {c["key"] for c in cards} == {"haz_id_register", "rig_rate_breakup"})
+        ok("Report Mails lists both reports", {c["key"] for c in cards} == {"haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions"})
         c = next(x for x in cards if x["key"] == "rig_rate_breakup")
         ok("the card has the setup, the schedule and the recipients", c["name"] == "Rig Rate Break-Up Sheet" and c["setup"]["alert"]["id"] == ALERT and "Every 15 days" in c["schedule"] and c["preview"]["counts"]["to"] >= 3 and c["overdue"])
         r = full.get("/api/admin/report-mails/rig_rate_breakup/download/")
@@ -194,7 +194,7 @@ try:
         r = full.post("/api/admin/report-mails/rig_rate_breakup/test-send/", {"email": "me@example.test"}, format="json")
         ok("a test goes to one address, marked [Test], with the Excel, and does not move Next Mail", r.status_code == 200 and len(sent) == 1 and sent[0]["to"] == ["me@example.test"] and sent[0]["subject"].startswith("[Test] ") and sent[0]["attachments"] and MailAlertDtl.objects.get(pk=ALERT).next_mail_dt == DT(2026, 10, 16, 11, 19, 13), str(r.content[:150]))
         sm = full.get("/api/admin/scheduled-mails/").json()
-        ok("Scheduled Mails lists the four automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup"})
+        ok("Scheduled Mails lists the six automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions"})
         raise Rollback()
 except Rollback:
     pass

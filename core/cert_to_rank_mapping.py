@@ -125,7 +125,7 @@ class CertToRankMappingViewSet(viewsets.ViewSet):
             return Response([])
         taken = CertToRankMapping.objects.filter(cert_id=cert, fs_category_id=category).values_list("rank_id", flat=True)
         dtls = (
-            HseTrainingGroupDtl.objects.filter(hdr_id=group, fs_category_id=category)
+            HseTrainingGroupDtl.objects.filter(hdr_id=group, fs_category_id=category, rank__business_system_id_6="Y")
             .exclude(rank_id__in=taken)
             .select_related("rank")
             .order_by("rank__rank_name")

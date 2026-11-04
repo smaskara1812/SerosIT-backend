@@ -47,7 +47,7 @@ print("B. everything in use is in the registry")
 ok("every row in the table", all(nt.is_registered(e, a) for e, a in NotificationTrigger.objects.values_list("entity_key", "action")), str(list(NotificationTrigger.objects.values_list("entity_key", "action"))))
 from core import birthday_mailer, holiday_mailer
 mods = [birthday_mailer, holiday_mailer]
-for name in ("haz_id_register", "rig_rate_breakup"):
+for name in ("haz_id_register", "rig_rate_breakup", "activity_monitor_alert", "open_incident_actions"):
     try:
         mods.append(__import__(f"core.{name}", fromlist=["x"]))
     except ImportError:
@@ -58,7 +58,7 @@ for f in os.listdir(os.path.join(ROOT, "core")):
     if f.endswith(".py") and f != "notification_triggers.py":
         calls += re.findall(r"notification_triggers\.trigger\(\s*[\"']([\w.]+)[\"']\s*,\s*[\"'](\w+)[\"']", open(os.path.join(ROOT, "core", f), encoding="utf-8").read())
 ok("every notification_triggers.trigger(...) call site", all(nt.is_registered(e, a) for e, a in calls), str(calls))
-ok("the Automation trigger point has the four mails", set(nt.TRIGGER_POINTS["automation"][1]) == {"send_birthday_mail", "send_holiday_mail", "send_haz_id_register_mail", "send_rig_rate_breakup_mail"})
+ok("the Automation trigger point has the six mails", set(nt.TRIGGER_POINTS["automation"][1]) == {"send_birthday_mail", "send_holiday_mail", "send_haz_id_register_mail", "send_rig_rate_breakup_mail", "send_activity_monitor_mail", "send_open_incident_actions_mail"})
 ok("the column is wide enough for the longest action", NotificationTrigger._meta.get_field("action").max_length >= max(len(a) for v in nt.TRIGGER_POINTS.values() for a in v[1]))
 
 

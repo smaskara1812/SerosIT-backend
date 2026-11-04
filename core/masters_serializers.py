@@ -1840,6 +1840,13 @@ class ItAccessoryHolderSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
 
+    def validate(self, attrs):
+        errors = {}
+        _check_to_after_from(self, attrs, errors, "it_accessory_holder_from", "it_accessory_holder_to", "To date")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class MstItAssetSerializer(serializers.ModelSerializer):
     it_asset_model_name = serializers.CharField(
@@ -1946,6 +1953,19 @@ class ItAssetHolderSerializer(serializers.ModelSerializer):
 
     def get_holder_user_name(self, obj):
         return obj.holder_user.user_name.strip() if obj.holder_user_id else ""
+
+    def validate(self, attrs):
+        # "To" is a date-time column (a closed row ends at the end of its day), "From" a plain date: compare the two days. Only checked when
+        # one of them is being changed, so an old row whose dates were already out of order can still be edited for other things.
+        errors = {}
+        a, b = _get(self, attrs, "it_asset_holder_from"), _get(self, attrs, "it_asset_holder_to")
+        if a and b and _changed(self, attrs, "it_asset_holder_from", "it_asset_holder_to"):
+            end = b.date() if hasattr(b, "date") else b
+            if end < a:
+                errors["it_asset_holder_to"] = "To date can't be before the From date."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstApprovalCodeSerializer(serializers.ModelSerializer):

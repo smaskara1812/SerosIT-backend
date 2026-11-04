@@ -155,7 +155,7 @@ class TrainingGroupHdrViewSet(BaseMasterViewSet):
         if allowed is not None and int(category) not in allowed:
             return Response([])
         mapped = (
-            FsCatgToRankMapping.objects.filter(fs_category_id=category)
+            FsCatgToRankMapping.objects.filter(fs_category_id=category, rank__business_system_id_6="Y")
             .exclude(rank_id__in=_taken_rank_ids(hdr.pk, category))
             .select_related("rank")
             .order_by("rank__rank_name")

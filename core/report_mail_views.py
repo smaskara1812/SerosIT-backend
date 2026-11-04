@@ -47,7 +47,8 @@ def _card(job, today):
     if s["alert"] and s["next_mail_dt"] and s["freq"] >= 1:
         due = s["next_mail_dt"]
     return {
-        "key": job.key, "name": job.report_name, "description": job.description, "setup": s, "schedule": job.schedule_text(today),
+        # the title is the alert's own name (editable in Masters > Alert Details); before the mail is connected to an alert, the report's own name
+        "key": job.key, "name": (alert.alert_name.strip() if alert is not None and (alert.alert_name or "").strip() else job.report_name), "description": job.description, "setup": s, "schedule": job.schedule_text(today),
         "overdue": bool(due and due.date() < today), "run_now": effect,
         "runs": [{"id": i.item_id, "label": i.label, "send_date": i.send_date, "status": i.status, "note": i.note, "last_error": i.last_error, "sent_at": i.sent_at} for i in items],
         "preview": recipients_preview(job, today),

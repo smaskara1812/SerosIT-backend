@@ -1266,6 +1266,9 @@ class MstRankViewSet(BaseMasterViewSet):
         fs_category_id = self.request.query_params.get("fs_category")
         if fs_category_id:
             qs = qs.filter(fs_category_id=fs_category_id)
+        # ?business_system_id_6=Y: only the ranks used by Oilfield Services (what every Rank dropdown asks for)
+        if self.request.query_params.get("business_system_id_6") == "Y":
+            qs = qs.filter(business_system_id_6="Y")
         return qs.order_by(self.name_field)
 
 
