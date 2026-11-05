@@ -37,7 +37,7 @@ from .drilling_performance_dashboard import DrillingPerformanceDashboardView
 from .compliance_radar import ComplianceDigestView, ComplianceRadarExportView, ComplianceRadarView
 from .fleet_operating_dashboard import FleetOperatingDashboardView
 from .fuel_water_dashboard import FuelWaterDashboardView
-from .rig_operations_dashboard import RigOperationsDashboardView
+from .rig_operations_dashboard import RigOperationsDashboardView, RigOperationsThingsToCheckView
 from .rig_moves_dashboard import RigMovesDashboardView
 from .safety_performance_dashboard import SafetyPerformanceDashboardView
 from .contract_exposure_dashboard import ContractExposureDashboardView
@@ -301,6 +301,7 @@ router.register("masters/signable-docs", masters_views.MstSignableDocViewSet, ba
 router.register("masters/diesel-prices", masters_views.DieselPriceViewSet, basename="diesel-price")
 router.register("masters/rig-month-plans", masters_views.RigMonthPlanViewSet, basename="rig-month-plan")
 router.register("masters/ilm-rate-terms", masters_views.IlmRateTermViewSet, basename="ilm-rate-term")
+router.register("masters/rig-alert-recipients", masters_views.RigToEmailMappingViewSet, basename="rig-alert-recipient")
 router.register("masters/vendor-types", masters_views.MstVendorTypeViewSet, basename="mst-vendor-type")
 router.register("it-asset/it-assets", masters_views.MstItAssetViewSet, basename="it-asset")
 router.register(
@@ -406,6 +407,7 @@ urlpatterns = [
     path("dashboards/safety-performance/", SafetyPerformanceDashboardView.as_view(), name="dashboards_safety_performance"),
     path("dashboards/fuel-water/", FuelWaterDashboardView.as_view(), name="dashboards_fuel_water"),
     path("dashboards/rig-operations/", RigOperationsDashboardView.as_view(), name="dashboards_rig_operations"),
+    path("dashboards/rig-operations/things-to-check/", RigOperationsThingsToCheckView.as_view(), name="dashboards_rig_operations_things_to_check"),
     path("dashboards/rig-moves/", RigMovesDashboardView.as_view(), name="dashboards_rig_moves"),
     path(
         "dashboards/fleet-operating-picture/",

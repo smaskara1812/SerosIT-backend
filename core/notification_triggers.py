@@ -46,6 +46,8 @@ TRIGGER_POINTS = {
             "send_open_incident_actions_mail": "Send Open Incident Actions mail",
             "send_daily_operations_update_mail": "Send Daily Operations Update mail",
             "send_rig_performance_mail": "Send Rig Performance mail",
+            "send_drilling_info_not_entered_mail": "Send Drilling Info: Daily Not Entered mail",
+            "send_drilling_info_status_mail": "Send Drilling Info Status mail",
         },
     ),
 }

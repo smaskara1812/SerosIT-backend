@@ -105,14 +105,24 @@ def test_send_api(request, key):
     if alert is None:
         return Response({"detail": "This report is not connected to an alert yet."}, status=409)
     setup = job.get_setup()
-    mail = job.build(alert, datetime.datetime.now())
-    res = mailer.send_scheduled_email(
-        "[Test] " + mail.subject, mail.html, mail.text, to=[to], from_name=setup["from_name"], trigger=f"{job.report_name} test to {to}", trigger_code=job.trigger_code + ".test",
-        designated=True, alert_id=alert.alert_id, attachments=mail.attachments, inline_images=mail.inline_images, env_account=False,
-    )
+    mails = job.preview_mails(alert, datetime.datetime.now())
+    if not mails:
+        return Response({"ok": False, "error": "", "detail": "There is nothing to send right now.", "summary": "nothing to send"}, status=409)
+    last, failed = None, None
+    for mail in mails:
+        res = mailer.send_scheduled_email(
+            "[Test] " + mail.subject, mail.html, mail.text, to=[to], from_name=setup["from_name"], trigger=f"{job.report_name} test to {to}", trigger_code=job.trigger_code + ".test",
+            designated=True, alert_id=alert.alert_id, attachments=mail.attachments, inline_images=mail.inline_images, env_account=False,
+        )
+        last = res
+        if not res["ok"]:
+            failed = res
+            break
+    res = failed or last
+    summary = mails[0].summary if len(mails) == 1 else f"{len(mails)} test mails: " + "; ".join(m.subject for m in mails)
     _audit.record_action(request, "update", MENU_KEY, "test", f"{job.report_name} test mail to {to}", {"result": {"old": None, "new": "sent" if res["ok"] else "failed"}})
     return Response(
-        {"ok": res["ok"], "smtp_used": res["smtp_used"], "fell_back": res.get("fell_back", False), "error": res["error"], "summary": mail.summary, "email_log_id": res["email_log_id"]},
+        {"ok": res["ok"], "smtp_used": res["smtp_used"], "fell_back": res.get("fell_back", False), "error": res["error"], "summary": summary, "email_log_id": res["email_log_id"], "count": len(mails)},
         status=200 if res["ok"] else 502,
     )
 

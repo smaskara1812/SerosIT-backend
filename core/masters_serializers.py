@@ -113,6 +113,7 @@ from .models import (
     ProjectDrillingRate,
     IlmRateTerm,
     RigMonthPlan,
+    RigToEmailMapping,
     ReportingStructure,
     TravelEligibility,
     MstItAssetType,
@@ -1279,7 +1280,18 @@ class MstDrillingRateSerializer(serializers.ModelSerializer):
         # Active is Y or N. Judged only when it is changed, so the old rates with a blank Active still save.
         if "rate_active" in attrs and fields_changed(self.instance, attrs, "rate_active") and attrs["rate_active"] not in ("Y", "N"):
             raise serializers.ValidationError({"rate_active": "Choose Active or Inactive."})
+        from . import rate_classes
+
+        if attrs.get("rate_class") and attrs["rate_class"] not in rate_classes.CLASSES:
+            raise serializers.ValidationError({"rate_class": "Choose one of the listed rate classes."})
         return attrs
+
+    def save(self, **kw):
+        from . import rate_classes
+
+        out = super().save(**kw)
+        rate_classes.clear_cache()
+        return out
 
 
 class ProjectContractDtlSerializer(serializers.ModelSerializer):
@@ -1365,10 +1377,16 @@ class ProjectDrillingRateSerializer(serializers.ModelSerializer):
 
 
 class MstDrillingOperationSerializer(serializers.ModelSerializer):
+    # "6. Trips": the code number first, as the legacy screen listed them (people pick an operation by its number)
+    display_label = serializers.SerializerMethodField()
+
     class Meta:
         model = MstDrillingOperation
         fields = "__all__"
         read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_label(self, obj):
+        return f"{obj.drilling_ops_code_no}. {obj.drilling_ops_name}"
 
     def validate(self, attrs):
         inst = self.instance
@@ -2242,32 +2260,22 @@ class RigMonthPlanSerializer(serializers.ModelSerializer):
         if "month" in attrs:
             attrs["month"] = _first_of_month(attrs["month"])  # any day of the month is accepted; it is kept as the 1st
         if inst is not None and inst.closed_on is not None:
-            raise serializers.ValidationError({"month": "This month is closed: its ILM days are final. Reopen it first (Reports > Rig Performance > Masters)."})
+            raise serializers.ValidationError({"month": "This month is closed: its plan is locked. Reopen it first (Reports > Rig Performance > Masters)."})
         get = lambda name: attrs.get(name, getattr(inst, name, None))
         rig, month = get("rig"), get("month")
         days_in_month = calendar.monthrange(month.year, month.month)[1] if month else 31
-        for name, label in (("ilm_days", "ILM days"), ("non_ilm_days", "Non-ILM days")):
-            v = get(name)
-            if v is not None and not (0 <= v <= days_in_month):
-                raise serializers.ValidationError({name: f"{label} must be from 0 to the {days_in_month} days of the month."})
-        ilm, non = get("ilm_days") or 0, get("non_ilm_days")
-        if non is not None and ilm + non > days_in_month:
-            raise serializers.ValidationError({"non_ilm_days": f"ILM days and non-ILM days together are more than the {days_in_month} days of the month."})
-        if rig and month:
-            # the ILM days are days of the rig's project: not more than it has that month
-            from .daily_operations_update import current_contract
-            from .rig_performance_month import project_days
-
-            last = month.replace(day=days_in_month)
-            contract = current_contract(rig.rig_id, last)
-            on_project = project_days(rig.rig_id, contract, month, last)[2] if contract else 0
-            if contract and (ilm or 0) > on_project:
-                raise serializers.ValidationError({"ilm_days": f"ILM days cannot be more than the {on_project} days this rig is on its project in {month:%B %Y}."})
+        v = get("non_ilm_days")
+        if v is not None and not (0 <= v <= days_in_month):
+            raise serializers.ValidationError({"non_ilm_days": f"Normal days must be from 0 to the {days_in_month} days of the month."})
         pcts = [get("r1_pct"), get("r2_pct"), get("r3_pct")]
-        if any(v is None or v < 0 for v in pcts):
-            raise serializers.ValidationError({"r1_pct": "The percentages cannot be negative."})
-        if sum(pcts) != 100:
-            raise serializers.ValidationError({"r1_pct": "R1, R2 and R3 percentages must add up to 100."})
+        if any(v is not None for v in pcts):
+            # the three weights go together: all blank (carried over or the default) or all given and adding up to 100
+            if any(v is None for v in pcts):
+                raise serializers.ValidationError({"r1_pct": "Enter all three weights (R1, R2, R3), or leave all three blank to carry them over."})
+            if any(v < 0 for v in pcts):
+                raise serializers.ValidationError({"r1_pct": "The percentages cannot be negative."})
+            if sum(pcts) != 100:
+                raise serializers.ValidationError({"r1_pct": "R1, R2 and R3 percentages must add up to 100."})
         if rig and month and fields_changed(inst, attrs, "rig", "month"):
             repeats = RigMonthPlan.objects.filter(rig=rig, month=month)
             if inst is not None:
@@ -2306,4 +2314,62 @@ class IlmRateTermSerializer(serializers.ModelSerializer):
                 repeats = repeats.exclude(pk=inst.pk)
             if repeats.exists():
                 raise serializers.ValidationError({"contract": "This rig already has ILM terms on this project. Edit that row."})
+        return attrs
+
+
+class RigToEmailMappingSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    alert_name = serializers.CharField(source="alert.alert_name", read_only=True, default="")
+    company_name = serializers.CharField(source="company.company_name", read_only=True, default="")
+    user_name = serializers.SerializerMethodField()
+    user_label = serializers.SerializerMethodField()
+    user_email = serializers.CharField(source="user.user_email", read_only=True, default="")
+    addressee_label = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RigToEmailMapping
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_user_name(self, obj):
+        return (obj.user.user_name or "").strip()
+
+    def get_user_label(self, obj):
+        return f"{(obj.user.user_name or '').strip()} ({obj.user.user_login_id})"
+
+    def get_addressee_label(self, obj):
+        return {"T": "To", "C": "Cc", "B": "Bcc"}.get(obj.addressee_type or "", "")
+
+    def get_display_name(self, obj):
+        return f"{obj.rig.rig_name if obj.rig_id else (obj.company.company_name if obj.company_id else 'Any rig')} — {obj.alert.alert_name if obj.alert_id else 'Any alert'} — {(obj.user.user_name or '').strip()} ({self.get_addressee_label(obj) or '?'})"
+
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        errors = {}
+        if get("addressee_type") not in ("T", "C", "B"):
+            errors["addressee_type"] = "Choose To, Cc or Bcc."
+        # A row is for ONE rig or for ONE company (as the client requires; every legacy row is one or the other): the mails that go out per rig read the rig's rows,
+        # the ones that go out per company (Drilling Info Status) read the company's.
+        rig_v, company_v = get("rig"), get("company")
+        if rig_v is None and company_v is None:
+            errors["rig"] = "Choose a rig, or a company for a mail that goes out per company."
+        elif rig_v is not None and company_v is not None:
+            errors["company"] = "Choose either a rig or a company, not both."
+        elif company_v is not None and not MstCompany.objects.filter(pk=company_v.pk, cost_centre_mappings__mapping_to__isnull=True, cost_centre_mappings__cost_centre__rig__isnull=False).exists():
+            errors["company"] = "This company owns no rig, so no mail goes out for it. Choose one of the companies in the list."
+        _check_to_after_from(self, attrs, errors, "from_dt", "to_dt", "To date")
+        user = get("user")
+        if user is not None and not (user.user_email or "").strip():
+            errors["user"] = "This user has no email address on their record, so a mail could not reach them. Add the email to the user first."
+        if errors:
+            raise serializers.ValidationError(errors)
+        rig, alert = get("rig"), get("alert")
+        if user and fields_changed(inst, attrs, "rig", "company", "alert", "user", "addressee_type", "from_dt"):
+            same = RigToEmailMapping.objects.filter(rig=rig, company=get("company"), alert=alert, user=user, addressee_type=get("addressee_type"), from_dt=get("from_dt"))
+            if inst is not None:
+                same = same.exclude(pk=inst.pk)
+            if same.exists():
+                raise serializers.ValidationError({"user": "This person is already set for this rig and alert with the same type from the same date."})
         return attrs

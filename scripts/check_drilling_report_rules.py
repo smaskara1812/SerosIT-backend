@@ -70,7 +70,7 @@ def run():
         base = {
             "rig": src.rig_id, "drilling_dtl_dt": (day + datetime.timedelta(days=counter[0])).isoformat(),
             "pob_operator": 5, "pob_essar": 5, "wind_speed": 10, "current_k": "1.5", "at_press_mbar": 1000, "vdl": 10, "avdl": 10, "tot_vdl": 20,
-            "kg": "1.50", "kg_margin": "0.50", "draft": "5.00", "consumption_diesel": 10, "consumption_water": 10, "received_water": 0,
+            "kg": "1.50", "kg_margin": "0.50", "draft": "5.00", "consumption_diesel": 10, "consumption_water": 10, "received_diesel": 0, "received_water": 0,
             "remark": "Rule check summary text", "ops": [op()],
         }
         base.update(over)
@@ -85,6 +85,7 @@ def run():
         ("a future report date", {"drilling_dtl_dt": (datetime.date.today() + datetime.timedelta(days=1)).isoformat()}, "drilling_dtl_dt"),
         ("a blank Operations Summary", {"remark": "  "}, "remark"),
         ("a too short Operations Summary", {"remark": "short"}, "remark"),
+        ("a missing Received Diesel", {"received_diesel": None}, "received_diesel"),
         ("a missing Received Water", {"received_water": None}, "received_water"),
         ("hours above 24", {"ops": [op(hours=13, start=0), op(hours=12, start=13)]}, "ops"),
         ("downtime time without a reason", {"ops": [op(code="R0")]}, "downtime_reason"),
@@ -103,11 +104,16 @@ def run():
         check(f"{name} is refused", r.status_code == 400 and field in keys(r), r.content.decode())
     check("the digit-limit message is plain", "99.99" in str(client.post(URL, body(kg="100.00"), format="json").json().get("kg")))
 
+    # the shift is worked out from the time the row starts
+    day_s = day.isoformat()
+    r_m = client.post(URL, body(ops=[op(start=7, hours=2)]), format="json"); r_e = client.post(URL, body(ops=[op(start=19, hours=2)]), format="json"); r_n = client.post(URL, body(ops=[op(start=5, hours=2, **{})]), format="json")
+    sh = lambda r: [o["work_shift"] for o in r.json()["ops"]] if r.status_code == 201 else r.content[:100]
+    check("a row starting at 07:00 is Morning, at 19:00 Evening, at 05:00 Evening (a wrong shift sent by the screen is overridden)", sh(r_m) == ["M"] and sh(r_e) == ["E"] and sh(r_n) == ["E"], str((sh(r_m), sh(r_e), sh(r_n))))
     check("0 is accepted for every number", client.post(URL, body(vdl=0, avdl=0, kg="0", kg_margin="0", draft="0", consumption_diesel=0, consumption_water=0, received_diesel=0, generated_water=0), format="json").status_code == 201)
     check("exactly 24 hours is accepted", client.post(URL, body(ops=[op(hours=12, start=0), op(hours=12, start=12)]), format="json").status_code == 201)
     check("downtime time with a reason is accepted", client.post(URL, body(ops=[op(code="R0")], downtime_reason="Waiting on weather"), format="json").status_code == 201)
     check("a summary of exactly 10 characters is accepted", client.post(URL, body(remark="0123456789"), format="json").status_code == 201)
-    check("received diesel and generated water may be blank", client.post(URL, body(received_diesel=None, generated_water=None), format="json").status_code == 201)
+    check("generated water may be blank (received diesel may not: it is compulsory)", client.post(URL, body(generated_water=None), format="json").status_code == 201 and client.post(URL, body(received_diesel=None), format="json").status_code == 400)
 
     r = client.post(URL, body(ops=[]), format="json")
     check("a report without a time log is accepted", r.status_code == 201, r.content.decode())

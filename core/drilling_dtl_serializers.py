@@ -48,6 +48,11 @@ def _ops_key(rows):
     )
 
 
+def shift_of(start):
+    """'M' (Morning) for a row that starts from 06:00 up to 18:00, else 'E' (Evening: 18:00 up to 06:00)."""
+    return "M" if 6 <= start.hour < 18 else "E"
+
+
 class DrillingDtlOpsSerializer(serializers.ModelSerializer):
     # Declared explicitly (not left to ModelSerializer's default) so it's
     # writable and optional — same reasoning as ApproverMappingDtlSerializer:
@@ -55,6 +60,7 @@ class DrillingDtlOpsSerializer(serializers.ModelSerializer):
     # sync needs existing rows' ids back to tell an edit from a new row.
     drilling_dtl_ops_id = serializers.IntegerField(required=False)
     drilling_ops_name = serializers.CharField(source="drilling_ops.drilling_ops_name", read_only=True, default="")
+    drilling_ops_code_no = serializers.IntegerField(source="drilling_ops.drilling_ops_code_no", read_only=True, default=None)
     drilling_section_name = serializers.CharField(
         source="drilling_section.drilling_section_name", read_only=True, default=""
     )
@@ -66,6 +72,9 @@ class DrillingDtlOpsSerializer(serializers.ModelSerializer):
     # depth — tripping out — gives a real negative ROP, not an error).
     duration = serializers.DecimalField(max_digits=4, decimal_places=2, read_only=True)
     rop_trip_mh = serializers.IntegerField(read_only=True)
+    # The shift is NOT entered: it follows from the time the row starts (06:00 up to 18:00 is Morning, 18:00 up to 06:00 is Evening). Sent or not, it is
+    # worked out here, so the screen has no shift marker and the two can never disagree.
+    work_shift = serializers.CharField(required=False, read_only=False, allow_blank=True)
 
     class Meta:
         model = DrillingDtlOps
@@ -77,6 +86,7 @@ class DrillingDtlOpsSerializer(serializers.ModelSerializer):
             "duration",
             "drilling_ops",
             "drilling_ops_name",
+            "drilling_ops_code_no",
             "drilling_section",
             "drilling_section_name",
             "depth_from",
@@ -92,6 +102,10 @@ class DrillingDtlOpsSerializer(serializers.ModelSerializer):
         time_to = attrs.get("time_to")
         if time_from and time_to and time_to <= time_from:
             raise serializers.ValidationError("Time To must be after Time From.")
+        if time_from:
+            attrs["work_shift"] = shift_of(time_from)
+        elif not attrs.get("work_shift") and self.instance is None:
+            raise serializers.ValidationError({"time_from": "Enter the Time From."})
         return attrs
 
 
@@ -166,6 +180,8 @@ class DrillingDtlSerializer(serializers.ModelSerializer):
             if fields_changed(inst, attrs, "drilling_dtl_dt") and report_date > timezone.now().date():
                 errors["drilling_dtl_dt"] = "The Drilling Date can't be in the future."
 
+        if inst is None and attrs.get("received_diesel") is None:
+            errors["received_diesel"] = "Enter the Received Diesel (0 if none)."
         if inst is None and attrs.get("received_water") is None:
             errors["received_water"] = "Enter the Received Water (0 if none)."
 

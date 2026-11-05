@@ -23,8 +23,8 @@ The day reported is yesterday. How the figures are made (kept exactly as the leg
 Differences from the legacy mail, all agreed: the wording says "Seros-IT" where the legacy mail said "S.I.S."; when no rig qualifies the mail still goes,
 saying so, with no attachment; a failure is retried and reported by e-mail to SCHEDULER_ERROR_MAIL_TO (core/error_mail.py).
 
-THE LEGACY SQL FUNCTIONS: Gnc_Get_Prj_Drilling_Rate, Fnc_Get_Average_Revenue and Fnc_Get_LastStock_Rig_Diesel are ported from the files given (section "legacy
-functions"). Fnc_Get_Days_On_Well was not given: fnc_get_days_on_well is a plain calculation until it is."""
+THE LEGACY SQL FUNCTIONS: Gnc_Get_Prj_Drilling_Rate, Fnc_Get_Average_Revenue, Fnc_Get_LastStock_Rig_Diesel and Fnc_Get_Days_On_Well are all ported from the files
+given (section "legacy functions"; Fnc_Get_Days_On_Well from Fnc_Get_Days_On_Well.txt, 5 Nov 2026)."""
 
 import datetime
 import io
@@ -124,20 +124,24 @@ def fnc_get_last_stock_rig_diesel(rig_id, project_from_date):
 
 
 def fnc_get_days_on_well(at, first_anchor):
-    """eos.Fnc_Get_Days_On_Well: '2 Months 8 Days 1:00 Hrs' from the first anchor down to `at`.
-    NOT YET PORTED: the legacy function was not provided; this is a plain calculation (months of 30 days)."""
+    """eos.Fnc_Get_Days_On_Well(@To_Date, @From_Date), ported exactly. SQL Server adds the difference (a datetime) to 1900-01-01 and the function reads the parts of
+    that date: years above 1900, months above 1 (shown less 1), days above 1 (shown less 1, else the two characters "00" with no unit), hours above 0, minutes
+    above 0. Its quirks are kept: for example one whole day gives "1 Days 0000 Hrs", and hours and minutes are joined with ":" only when the hours are above 0.
+    Returns "-" when there is no first anchor-down date."""
     if first_anchor is None:
         return "-"
-    secs = max(0, int((at - first_anchor).total_seconds()))
-    days, rest = divmod(secs, 86400)
-    hours, rest = divmod(rest, 3600)
-    months, days = divmod(days, 30)
-    parts = []
-    if months:
-        parts.append(f"{months} Month{'s' if months != 1 else ''}")
-    parts.append(f"{days} Day{'s' if days != 1 else ''}")
-    parts.append(f"{hours}:{rest // 60:02d} Hrs")
-    return " ".join(parts)
+    base = datetime.datetime(1900, 1, 1)
+    try:
+        d = base + (at - first_anchor)
+    except OverflowError:
+        return "-"
+    out = ""
+    out += f"{d.year - 1900} Year " if d.year > 1900 else ""
+    out += f"{d.month - 1} Months " if d.month > 1 else ""
+    out += f"{d.day - 1} Days " if d.day > 1 else "00"
+    out += f"{d.hour}:" if d.hour > 0 else "00"
+    out += f"{d.minute}" if d.minute > 0 else "00"
+    return out + " Hrs"
 
 
 # ───────────────────────────── which rigs, which contract ─────────────────────────────

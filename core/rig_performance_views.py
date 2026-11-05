@@ -2,7 +2,7 @@
 year, and the rate sheet behind its projection (what the Master Rate Sheet showed). Read-only; the numbers come from core/rig_performance_month.py, the same
 code that builds the Excel file mailed every day. Rights are the pages' own (menu keys reports.rig_performance and reports.rig_performance_masters):
 View to see, Export (on the report) to download the Excel file. The Masters page is also where the month's inputs are changed (Edit on
-reports.rig_performance_masters): the rig's ILM days, non-ILM days and weights (Rig Month Plans) and its ILM terms (ILM Rate Terms), saved through the same
+reports.rig_performance_masters): the rig's planned moves (in hours), normal days and weights (Rig Month Plans) and its ILM terms (ILM Rate Terms), saved through the same
 checks as the Masters pages and recorded in the audit history."""
 
 import calendar
@@ -119,17 +119,57 @@ def report_payload(first, end):
     }
 
 
+RECENT_REPORT_DAYS = 60  # a rig that reported within this many days before the month is still working
+NEW_LINE_DAYS = 45  # a rig whose project line started within this many days before the month's end is starting (it may not have reported yet)
+
+
+def rate_sheet_rigs(first, last, ref):
+    """The rigs of the rate sheet for a month: the drilling rigs that are on a project line overlapping the month AND are working (reported in the month or in the
+    60 days before it) or are just starting (the line began within 45 days of the month's end), plus every rig that reported in the month even when its project
+    line does not cover it. Rigs with an old open-ended line and no recent report are left out (they would only be noise). Returns ([(rig id, name)] in rig
+    order, ids of the rigs that reported in the month)."""
+    from django.db.models import Max
+
+    from .dashboard_access import dashboard_rig_queryset
+    from .models import DrillingDtl, ProjectContractDtl
+
+    reported = set(DrillingDtl.objects.filter(drilling_dtl_dt__gte=first, drilling_dtl_dt__lte=ref).values_list("rig_id", flat=True)) if ref >= first else set()
+    drilling_rigs = set(dashboard_rig_queryset().values_list("rig_id", flat=True))
+    lines = {}
+    for ln in ProjectContractDtl.objects.filter(rig_active_from__lte=last, rig_id__in=drilling_rigs).select_related("contract"):
+        ends = ln.rig_active_to or ln.contract.prj_end_dt
+        if ends is None or ends >= first:
+            cur = lines.get(ln.rig_id)
+            if cur is None or ln.rig_active_from > cur:
+                lines[ln.rig_id] = ln.rig_active_from  # the latest start of its lines in the month
+    recent_from = first - datetime.timedelta(days=RECENT_REPORT_DAYS)
+    last_report = {r["rig_id"]: r["m"] for r in DrillingDtl.objects.filter(rig_id__in=lines.keys(), drilling_dtl_dt__lte=max(ref, first)).values("rig_id").annotate(m=Max("drilling_dtl_dt"))}
+    starting_from = last - datetime.timedelta(days=NEW_LINE_DAYS)
+    working = {rid for rid, started in lines.items() if rid in reported or (last_report.get(rid) and last_report[rid] >= recent_from) or started >= starting_from}
+    return [(r.rig_id, r.rig_name) for r in MstRig.objects.filter(pk__in=reported | working).order_by("rig_id")], reported
+
+
 def rate_sheet_payload(first, end):
-    """The rate sheet behind the projection: per rig the rates per day, the weights, the normal day, the days, the ILM block and the projection."""
-    if end < first:
+    """The rate sheet behind the projection: per rig the rates per day, the weights, the normal day, the days, the ILM block and the projection. A rig is
+    listed when it is on a project in the month (even before its first report) or has reported in it, so the month can be planned from its first day."""
+    today = datetime.date.today()
+    if first > today.replace(day=1):
         return {"month": f"{first:%Y-%m}", "label": f"{first:%B %Y}", "rigs": [], "message": f"{first:%B %Y} has not started: there is nothing to show yet."}
-    data = m.collect(end)
+    last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
+    ref = max(first, end)  # the day the project and its rates are looked up for: the last day reported, or the 1st when nothing is reported yet
+    collected = {r["rig"].rig_id: r for r in m.collect(end)["rigs"]} if end >= first else {}
     codes = {r.drilling_rate_id: (r.rate_code or "").strip() for r in MstDrillingRate.objects.all()}
+    rigs, reported_ids = rate_sheet_rigs(first, last, ref)
     out = []
-    for rg in data["rigs"]:
-        pj = rg["proj"]
-        contract = current_contract(rg["rig"].rig_id, end)
-        rates = m.contract_rates(rg["rig"].rig_id, contract) if contract else {}
+    for rig_id, name in rigs:
+        rg = collected.get(rig_id)
+        if rg is not None:
+            plan, pj = rg["plan"], rg["proj"]
+        else:
+            plan = m.plan_for(rig_id, first)
+            pj = m.projection_for(rig_id, current_contract(rig_id, ref), first, last, plan)
+        contract = current_contract(rig_id, ref)
+        rates = m.contract_rates(rig_id, contract) if contract else {}
         weights = pj["weights"] or (Decimal(85), Decimal(15), Decimal(0))
         weighted = {m.RATE_R1: weights[0], m.RATE_R2: weights[1], m.RATE_R3: weights[2]}
         lines = []
@@ -138,31 +178,40 @@ def rate_sheet_payload(first, end):
             lines.append({"code": codes.get(rid, str(rid)), "per_day": _f(per_day), "weight": _f(weighted[rid]), "for_revenue": _f(per_day * weighted[rid] / 100)})
         others = [{"code": codes.get(rid, str(rid)), "per_day": _f(rate * 24)} for rid, rate in sorted(rates.items()) if rid not in (m.RATE_R1, m.RATE_R2, m.RATE_R3) and rid not in m.NO_MONEY_RATES and rate]
         contract_no = ProjectContract.objects.filter(pk=contract).values_list("prj_contract_no", flat=True).first() if contract else None
-        term = rg_term(rg["rig"].rig_id, contract)
+        term = rg_term(rig_id, contract)
+        reported = rig_id in reported_ids
         out.append({
-            "name": rg["name"], "contract": contract_no, "problem": pj["problem"], "rates": lines, "other_rates": others, "normal_day": _f(pj["normal_day"]),
+            "name": name, "contract": contract_no, "problem": pj["problem"], "weights_source": pj["weights_source"], "rates": lines, "other_rates": others, "normal_day": _f(pj["normal_day"]), "reported": reported,
             "days_on_project": pj["days"], "from": pj["start"].isoformat() if pj["start"] else None, "to": pj["end"].isoformat() if pj["end"] else None,
-            "ilm_days": _f(pj["ilm_days"]), "non_ilm_days": _f(pj["non_ilm_days"]), "normal_total": _f(pj["non_ilm_days"] * pj["normal_day"]) if pj["normal_day"] is not None else None,
+            "ilm_hours": _f(pj["ilm_hours"]), "ilm_days": _f(pj["ilm_days"], 2), "non_ilm_days": _f(pj["non_ilm_days"]), "normal_total": _f(pj["non_ilm_days"] * pj["normal_day"]) if pj["normal_day"] is not None else None,
             "normal_total_cr": _f(pj["non_ilm_days"] * pj["normal_day"] / m.CRORE, 4) if pj["normal_day"] is not None else None,
-            "rig_id": rg["rig"].rig_id, "contract_id": contract,
-            "moves": [{"date": mv["date"].isoformat(), "well": mv["well"], "type": mv["type"], "km": _f(mv["km"]), "amount": _f(mv.get("amount"))} for mv in pj["moves"]],
+            "rig_id": rig_id, "contract_id": contract,
+            "moves": [
+                {"date": mv["date"].isoformat(), "well": mv["well"], "type": mv["type"], "km": _f(mv["km"]), "amount": _f(mv["amount"]), "hours": _f(mv["hours"]), "hours_month": _f(mv["hours_month"]),
+                 "mis_hour": _f(mv["mis_hour"]), "note": mv["note"]} for mv in pj["moves"]
+            ],
+            "planned_moves": [
+                {"rate_id": p["rate_id"], "type": p["type"], "hours": _f(p["hours"]), "km": _f(p["km"]), "km_source": p["km_source"], "amount": _f(p["amount"]), "mis_hour": _f(p["mis_hour"]), "note": p["note"], "text": p["text"]}
+                for p in pj["planned"]
+            ],
             "warnings": pj["warnings"],
-            "closed": _closed_info(rg["plan"]),
-            "can_close": end >= first.replace(day=calendar.monthrange(first.year, first.month)[1]) and not (rg["plan"] and rg["plan"].closed_on),
-            "history": _history(rg["plan"]),
+            "closed": _closed_info(plan),
+            "can_close": reported and end >= last and not (plan and plan.closed_on),
+            "history": _history(plan),
             "plan": {
-                "exists": rg["plan"] is not None, "ilm_days": _f(rg["plan"].ilm_days) if rg["plan"] else 0, "non_ilm_days": _f(rg["plan"].non_ilm_days) if rg["plan"] else None,
-                "r1_pct": _f(rg["plan"].r1_pct) if rg["plan"] else 85, "r2_pct": _f(rg["plan"].r2_pct) if rg["plan"] else 15, "r3_pct": _f(rg["plan"].r3_pct) if rg["plan"] else 0,
-                "note": rg["plan"].note if rg["plan"] else "",
+                "exists": plan is not None, "moves": [{"rate_id": pm.move_rate_id, "hours": _f(pm.planned_hours), "km": _f(pm.planned_km), "note": pm.note} for pm in m.planned_moves_of(plan)], "non_ilm_days": _f(plan.non_ilm_days) if plan else None,
+                "r1_pct": _f(plan.r1_pct) if plan else None, "r2_pct": _f(plan.r2_pct) if plan else None, "r3_pct": _f(plan.r3_pct) if plan else None,
+                "weights_source": pj["weights_source"], "weights": [_f(w) for w in pj["weights"]] if pj["weights"] else None,
+                "note": plan.note if plan else "",
             },
             "auto_days": max(0, rg_days(pj)),
             "ilm": {
                 "term": term, "km": _f(pj["km"]), "amount": _f(pj["ilm_amount"]), "amount_cr": _f(pj["ilm_amount"] / m.CRORE, 4) if pj["ilm_amount"] is not None else None,
-                "note": pj["ilm_note"], "mis_cr": _f(pj["mis_cr"], 4),
+                "note": pj["ilm_note"],
             },
             "projection_cr": _f(pj["value"], 4),
         })
-    return {"month": f"{first:%Y-%m}", "label": f"{first:%B %Y}", "rigs": out, "message": "" if out else f"There is no daily drilling report for any rig in {first:%B %Y}."}
+    return {"month": f"{first:%Y-%m}", "label": f"{first:%B %Y}", "rigs": out, "message": "" if out else f"No rig is on a project in {first:%B %Y}, and none has reported."}
 
 
 def _closed_info(plan):
@@ -179,13 +228,13 @@ def _history(plan):
     rows = SysAuditLog.objects.filter(target_table="rig_month_plan", target_pk=str(plan.pk), kind="change").order_by("-ts")[:12]
     out = []
     for r in rows:
-        ch = {k: v for k, v in (r.changes or {}).items() if k in ("ilm_days", "non_ilm_days", "r1_pct", "r2_pct", "r3_pct", "closed_on", "note")}
+        ch = {k: v for k, v in (r.changes or {}).items() if k in ("planned_moves", "non_ilm_days", "r1_pct", "r2_pct", "r3_pct", "closed_on", "note")}
         out.append({"when": r.ts.isoformat(timespec="minutes"), "who": r.username or "", "action": r.action, "changes": ch, "note": r.note})
     return out
 
 
 def rg_days(pj):
-    return pj["days"] - int(pj["ilm_days"] or 0)
+    return int(pj["days"] - pj["ilm_days"])
 
 
 def rg_term(rig_id, contract):
@@ -284,11 +333,45 @@ def _rig_month(request):
     return (rig, first), None
 
 
+def _clean_moves(raw, first, rig):
+    """[(rate id, hours, km or None, note)] from the request, or (None, error text). Hours are more than 0 and, together, within the hours the rig has in the month."""
+    if raw in (None, ""):
+        return [], None
+    if not isinstance(raw, list) or len(raw) > 20:
+        return None, "The planned moves must be a list of at most 20."
+    ids = m.move_rate_ids()
+    out = []
+    for i, row in enumerate(raw, start=1):
+        try:
+            rate = int(row.get("rate_id"))
+            hours = Decimal(str(row.get("hours")))
+            km = None if _blank(row.get("km")) is None else Decimal(str(row.get("km")))
+        except (TypeError, ValueError, ArithmeticError, AttributeError):
+            return None, f"Planned move {i}: enter the type, the hours and (for an ILM) the km as numbers."
+        if rate not in ids:
+            return None, f"Planned move {i}: choose ILM or IPM."
+        if hours <= 0 or hours > 24 * 31:
+            return None, f"Planned move {i}: the hours must be more than 0 and within the month."
+        if km is not None and km < 0:
+            return None, f"Planned move {i}: the km cannot be negative."
+        out.append((rate, hours, km, str(row.get("note") or "")[:200]))
+    last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
+    total = sum((h for _r, h, _k, _n in out), Decimal(0))
+    if total > 24 * last.day:
+        return None, f"The planned moves together take {total:g} hours; the month has {24 * last.day}."
+    return out, None
+
+
+def _moves_text(rows):
+    names = {6: "ILM", 7: "IPM - Lateral", 8: "IPM - Adjacent"}
+    return "; ".join(f"{names.get(r, r)} {h:g} h" + (f" {k:g} km" if k is not None else "") for r, h, k, _n in rows) or "none"
+
+
 @api_view(["PUT"])
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def plan_api(request):
-    """Sets the rig's plan for the month (ILM days, non-ILM days, weights), creating the row when the rig had none."""
+    """Sets the rig's plan for the month (the planned moves in hours, normal days, weights), creating the row when the rig had none."""
     denied = _deny(request, KEY_MASTERS, "edit")
     if denied:
         return denied
@@ -298,15 +381,40 @@ def plan_api(request):
     rig, first = rm
     d = request.data
     payload = {
-        "rig": rig, "month": first.isoformat(), "ilm_days": _blank(d.get("ilm_days")) if _blank(d.get("ilm_days")) is not None else 0, "non_ilm_days": _blank(d.get("non_ilm_days")),
-        "r1_pct": d.get("r1_pct"), "r2_pct": d.get("r2_pct"), "r3_pct": d.get("r3_pct"), "note": (d.get("note") or "")[:200],
+        "rig": rig, "month": first.isoformat(), "non_ilm_days": _blank(d.get("non_ilm_days")),
+        "r1_pct": _blank(d.get("r1_pct")), "r2_pct": _blank(d.get("r2_pct")), "r3_pct": _blank(d.get("r3_pct")), "note": (d.get("note") or "")[:200],
     }
-    from .models import MstRig
+    from django.db import transaction
+
+    from .models import MstRig, RigPlannedMove
 
     name = MstRig.objects.filter(pk=rig).values_list("rig_name", flat=True).first()
     if name is None:
         return Response({"detail": "Unknown rig."}, status=404)
-    return _save(request, RigMonthPlanSerializer, RigMonthPlan, {"rig_id": rig, "month": first}, payload, f"{name} {first:%b %Y}")
+    moves, error = _clean_moves(d.get("moves"), first, rig)
+    if error:
+        return Response({"detail": error}, status=400)
+    if moves:
+        from .daily_operations_update import current_contract
+
+        last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
+        contract = current_contract(rig, last)
+        on_project = m.project_days(rig, contract, first, last)[2] if contract else 0
+        total = sum((h for _r, h, _k, _n in moves), Decimal(0))
+        if contract and total > 24 * on_project:
+            return Response({"detail": f"The planned moves take {total:g} hours but the rig is on its project for only {on_project} days ({24 * on_project} hours) in {first:%B %Y}."}, status=400)
+    with transaction.atomic():
+        res = _save(request, RigMonthPlanSerializer, RigMonthPlan, {"rig_id": rig, "month": first}, payload, f"{name} {first:%b %Y}")
+        if res.status_code != 200 or d.get("moves") is None:
+            return res
+        plan = RigMonthPlan.objects.get(rig_id=rig, month=first)
+        old = [(pm.move_rate_id, pm.planned_hours, pm.planned_km, pm.note) for pm in plan.planned_moves.all()]
+        if [(a, b, c) for a, b, c, _n in old] != [(a, b, c) for a, b, c, _n in moves]:
+            plan.planned_moves.all().delete()
+            for rate, hours, km, note in moves:
+                RigPlannedMove.objects.create(plan=plan, move_rate_id=rate, planned_hours=hours, planned_km=km, note=note)
+            _audit.record_action(request, "update", KEY_MASTERS, plan.pk, f"{name} {first:%b %Y}", {"planned_moves": {"old": _moves_text(old), "new": _moves_text(moves)}}, target=plan)
+    return res
 
 
 @api_view(["PUT"])
@@ -336,7 +444,7 @@ def ilm_terms_api(request):
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def reopen_api(request):
-    """Reopens a closed month for a rig (its ILM days can be changed again). A reason is required and goes to the audit history."""
+    """Reopens a closed month for a rig (its plan can be changed again). A reason is required and goes to the audit history."""
     denied = _deny(request, KEY_MASTERS, "edit")
     if denied:
         return denied
@@ -362,7 +470,7 @@ def reopen_api(request):
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser])
 def close_api(request):
-    """Closes a month that has ended for one rig, with the ILM days as they stand (0 when none were entered)."""
+    """Closes a month that has ended for one rig, with its plan as it stands."""
     denied = _deny(request, KEY_MASTERS, "edit")
     if denied:
         return denied

@@ -70,6 +70,11 @@ class ScheduledReportJob(JobBase):
         """-> ReportMail for this alert as of `now`. Raises on any problem (the item then fails with the message)."""
         raise NotImplementedError
 
+    def preview_mails(self, alert, now):
+        """The mails a test send (Report Mails > Send a test) should send: a list of ReportMail. A job that makes ONE mail returns it; a job that makes several
+        (one per rig, one per company) overrides this so that the test shows every one of them, as the real run would."""
+        return [self.build(alert, now)]
+
     # ── setup, as the pages show it ──
     def from_name(self, alert):
         from . import mailer as _m

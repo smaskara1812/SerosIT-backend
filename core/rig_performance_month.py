@@ -5,7 +5,7 @@ Revenue in crore) and a FINAL sheet (the target and projection of each rig, its 
 target, and the diesel consumption, cost and closing balance).
 
 What is calculated, and from what:
-  * Hours: the activity hours of the day on the rig's daily report, by rate. Columns: R1, R2 (also ILM-R2 and 1/5 R2), R3, R0, FM (FM, FM 2/3, FM 1/3 and Force majeure),
+  * Hours: the activity hours of the day on the rig's daily report, by rate. Columns: R1, R2 (also ILM-R2 and 1/5 R2; a Standby rate added later, R2-A / R2-B / R2-C ..., gets a column of its own after R2), R3, R0, FM (FM, FM 2/3, FM 1/3 and Force majeure),
     ILM/IPM (ILM, IPM-Lateral, IPM-Adjacent) and, only when a rig has any, Other (the remaining rates). Total is their sum. A day with no report is a
     blank row (a rig that started mid-month has empty rows before it, a day not yet reported is empty).
   * Productivity = (R1 + R2 + R3 + ILM/IPM + FM) / Total: the productive classes of core/rate_classes.py (every class except R0) over all hours, the same
@@ -15,13 +15,14 @@ What is calculated, and from what:
   * Diesel: the litres of the day's report; cost = litres x the price per litre in force that day (Diesel Price) / 10,000,000; closing balance = the
     rig's diesel stock as the Daily Operations Update works it out (received less consumed, added up day by day from the project's start).
   * Target: 96 % for every rig (a constant for now). Productive hours: the one rule of core/rate_classes.py (every class except R0, FM included; to be confirmed).
-  * Projection (crore), calculated, never typed: (non-ILM days x the normal day's revenue + the ILM amount when there are ILM days) / 10,000,000. The normal
+  * Projection (crore), calculated, never typed: (normal days x the normal day's revenue + the planned moves' amounts) / 10,000,000. The normal
     day's revenue = 24 x (R1 % x the R1 rate per hour + R2 % x the R2 rate + R3 % x the R3 rate), the rates from Project Drilling Rates and the percentages
     from Rig Month Plans (85 / 15 / 0 unless changed for the rig and month). The days are those the rig is on its project in the month (from the day it
-    starts, to the day it ends), or the plan's own numbers; ILM days come from the plan. ILM amount = the flat amount + (km - upto km) x the price per
-    km when km is over upto km (ILM Rate Terms; the km are the distance covered of the wells started in the month); MIS per day = that amount / the ILM
-    days (the plan's, else the days with ILM/IPM hours so far) and it is the revenue of each ILM/IPM day (hours / 24 of it).
-  * IPM is not in the projection yet (to be confirmed).
+    starts - its first daily report on the project - to the day it ends), or the plan's own number, less the planned moves' hours / 24. Planned moves (Rig Month Plans, any number, entered in
+    HOURS) are priced one by one: an ILM = the flat amount + (km - upto km) x the price per km (ILM Rate Terms), an IPM = the project's IPM rate.
+  * Revenue earned on rig-move hours (the daily columns): every move (a well whose Rate Type is ILM / IPM) earns its amount over the hours LOGGED on it in
+    the daily reports (all dates): hours of the day x amount / all hours logged on the move. So the figure of an earlier day or month follows the move as
+    its hours grow; hours of the same day that are not move hours earn at the normal rates (partial days).
   * Differences between the old workbook and the system's rates are not copied: the system's rates are used and the known differences are listed on the
     Notes sheet (KNOWN_DIFFERENCES), to be confirmed.
 The day reported is yesterday; on the 1st the whole previous month is reported (yesterday is its last day)."""
@@ -51,11 +52,9 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 CRORE = Decimal(10000000)
 DEFAULT_TARGET = Decimal("96")
 COLUMNS = ["R1", "R2", "R3", "R0", "FM", "ILM/IPM"]
-RATE_COLUMN = {rid: rate_classes.COLUMN_OF_CLASS[cls] for rid, cls in rate_classes.CLASS_OF_RATE_ID.items()}  # one column per rate class (core/rate_classes.py)
 NO_MONEY_RATES = {6, 7, 8, 15, 13, 14, 19, 20}  # lump sums, metres and kilometres: not hours x a rate
 # Where the system and the hand-made workbook disagree; the system's figure is used. Remove an entry once it is confirmed or the rate is corrected.
 KNOWN_DIFFERENCES = [
-    "EE01, R3: the October 2026 workbook priced R3 at 1,124,630 a day; the system's contract rate is 42,174 an hour (1,012,176 a day). The system's rate is used.",
     "SK02, R2: the workbook has three R2 columns (R2-A 972,000, R2-B 918,000, R2-C 864,000 a day) and counts only R2-A as productive; the system's contract has one R2 rate (972,000 a day, the same as R2-A), so any R2-B or R2-C hours cannot be told apart and all R2 hours are shown in one R2 column. Hours were only ever booked on R2-A in Aug-Oct 2026, so the figures agree.",
     "Productivity: in the workbook FM counts as productive for EE01 and SK02 but not for EE05 (Axom Rhino); the system counts it for every rig (every class except R0 counts), the same rule as the Rig Operations dashboard (to be confirmed).",
 ]
@@ -78,30 +77,122 @@ def plan_for(rig_id, month):
     return RigMonthPlan.objects.filter(rig_id=rig_id, month=month).first()
 
 
+DEFAULT_WEIGHTS = (Decimal(85), Decimal(15), Decimal(0))
+
+
+def weights_for(rig_id, month, contract_id, plan=None):
+    """((R1 %, R2 %, R3 %), where they come from): the month's own plan when it sets them, else the weights of the rig's latest earlier month that set them
+    (carried over, as long as the rig is still on the same project), else the default 85 / 15 / 0. Nothing has to be typed each month."""
+    plan = plan if plan is not None else plan_for(rig_id, month)
+    if plan is not None and plan.r1_pct is not None:
+        return (_d(plan.r1_pct), _d(plan.r2_pct), _d(plan.r3_pct)), "set for this month"
+    prev = RigMonthPlan.objects.filter(rig_id=rig_id, month__lt=month, r1_pct__isnull=False).order_by("-month").first()
+    if prev is not None and contract_id is not None:
+        prev_last = prev.month.replace(day=calendar.monthrange(prev.month.year, prev.month.month)[1])
+        if current_contract(rig_id, prev_last) == contract_id:
+            return (_d(prev.r1_pct), _d(prev.r2_pct), _d(prev.r3_pct)), f"carried over from {prev.month:%b %Y}"
+    return DEFAULT_WEIGHTS, "default 85 / 15 / 0"
+
+
+def project_start_from_reports(rig_id, contract_id):
+    """The day the rig STARTED on the project: the date of its first daily drilling report on that project (None when it has not reported on it yet)."""
+    from django.db.models import Min
+
+    return DrillingDtl.objects.filter(rig_id=rig_id, drilling_hdr__contract_id=contract_id).aggregate(d=Min("drilling_dtl_dt"))["d"]
+
+
 def project_days(rig_id, contract_id, first, last):
-    """(first day, last day, number of days) the rig is on its project within the month: from the day it starts (not before the 1st) to the day it
-    ends (not after the last); (None, None, 0) when it is not on a project at all that month."""
+    """(first day, last day, number of days) the rig is on its project within the month. It starts on the date of its FIRST DAILY DRILLING REPORT on the project (the
+    drilling records are where the start is logged); only while it has not reported on the project yet is the start of its project line used (a rig that is about to
+    start, so the month can be planned). It ends on the line's end date or the project's end date, else the month's last day. (None, None, 0) when it is not on the
+    project at all that month."""
     line = ProjectContractDtl.objects.filter(rig_id=rig_id, contract_id=contract_id).select_related("contract").order_by("-rig_active_from").first()
     if line is None:
         return None, None, 0
-    start = max(first, line.rig_active_from)
+    started = project_start_from_reports(rig_id, contract_id) or line.rig_active_from
+    start = max(first, started)
     stop = line.rig_active_to or line.contract.prj_end_dt or last
     end = min(last, stop)
     return (start, end, (end - start).days + 1) if end >= start else (None, None, 0)
 
 
 RATE_IPM = (7, 8)  # IPM - Lateral, IPM - Adjacent
+MOVE_TYPE = {RATE_ILM: "ILM", 7: "IPM", 8: "IPM"}
+MOVE_GAP_DAYS = 3  # rig-move hours on days up to this many days apart are one move; a longer break starts another
 
 
-def month_moves(rig_id, contract_id, first, last):
-    """The rig moves of the month: the wells it started on the project that month and are paid as a move (Rate Type ILM, IPM - Lateral or IPM - Adjacent):
-    [{"date", "well", "type": "ILM" or "IPM", "rate_id", "km"}] in date order."""
+def move_rate_ids():
+    return tuple(rate_classes.rate_ids_of(rate_classes.RIG_MOVE)) or (RATE_ILM,) + RATE_IPM
+
+
+def actual_moves(rig_id):
+    """Every rig move of the rig and what it earns, from the LOGGED hours only (all dates, so a move that crosses a month end is whole). A move is a run of days with
+    rig-move hours (rate of the Rig Move class: ILM, IPM) no more than MOVE_GAP_DAYS apart; the daily reports of a move are logged on the well it moves to (and the
+    first day on the well it leaves), so its type, km and project come from the well whose Rate Type is ILM / IPM and whose anchor-down date falls in the run (or
+    a day either side), else from the well most of the run's hours are logged on and the rate of the hours.
+    [{"hdr_id", "date" (first day of hours), "last" (last day), "well", "type" ("ILM" or "IPM"), "rate_id", "contract_id", "km", "hours" (all hours logged), "by_day" {date: hours},
+      "amount" (rupees, None when not known), "note", "mis_hour" (rupees an hour = amount / hours logged; None when there is no amount or no hours)}] in date order.
+    The amount is the ILM terms over the move's own km (flat up to X km, then a price per km), or the project's IPM rate; it is spread over the hours logged so
+    far, so while a move is still running it is all earned over the hours to date, and each new hour lowers the hourly figure (earlier days and months follow)."""
+    ids = move_rate_ids()
+    day_hrs = defaultdict(lambda: defaultdict(Decimal))  # day -> hdr id -> hours
+    day_rate = defaultdict(lambda: defaultdict(Decimal))  # day -> rate id -> hours
+    for day, hdr_id, rid, dur in DrillingDtlOps.objects.filter(drilling_dtl__rig_id=rig_id, prj_drilling_rate__drilling_rate_id__in=ids).values_list(
+        "drilling_dtl__drilling_dtl_dt", "drilling_dtl__drilling_hdr_id", "prj_drilling_rate__drilling_rate_id", "duration"
+    ):
+        day_hrs[day][hdr_id] += _d(dur)
+        day_rate[day][rid] += _d(dur)
+    if not day_hrs:
+        return []
+    runs, cur = [], []
+    for day in sorted(day_hrs):
+        if cur and (day - cur[-1]).days > MOVE_GAP_DAYS:
+            runs.append(cur)
+            cur = []
+        cur.append(day)
+    runs.append(cur)
+    hdrs = {h.pk: h for h in DrillingHdr.objects.filter(rig_id=rig_id, drilling_rate_id__in=ids) if h.first_anchor_down_dt is not None}
+    every_hdr = {h.pk: h for h in DrillingHdr.objects.filter(pk__in={k for d in day_hrs.values() for k in d if k is not None})}
+    cache, out = {}, []
+    for run in runs:
+        lo, hi = run[0] - datetime.timedelta(days=1), run[-1] + datetime.timedelta(days=1)
+        starting = sorted((h for h in hdrs.values() if lo <= h.first_anchor_down_dt.date() <= hi), key=lambda h: h.first_anchor_down_dt)
+        per_hdr = defaultdict(Decimal)
+        per_rate = defaultdict(Decimal)
+        by_day = {}
+        for day in run:
+            by_day[day] = sum(day_hrs[day].values(), Decimal(0))
+            for k, v in day_hrs[day].items():
+                per_hdr[k] += v
+            for k, v in day_rate[day].items():
+                per_rate[k] += v
+        hdr = starting[-1] if starting else every_hdr.get(max((k for k in per_hdr if k is not None), key=lambda k: per_hdr[k], default=None))
+        rate_id = hdr.drilling_rate_id if hdr is not None and hdr.drilling_rate_id in ids else max(per_rate, key=lambda k: per_rate[k])
+        contract_id = hdr.contract_id if hdr is not None else None
+        mv = {
+            "hdr_id": hdr.pk if hdr is not None else None, "date": run[0], "last": run[-1], "well": (hdr.location or "") if hdr is not None else "", "type": MOVE_TYPE.get(rate_id, "ILM"),
+            "rate_id": rate_id, "contract_id": contract_id, "km": _d(hdr.distance_covered_kms_knots) if hdr is not None else Decimal(0), "hours": sum(by_day.values(), Decimal(0)), "by_day": by_day,
+        }
+        if contract_id not in cache:
+            cache[contract_id] = (contract_rates(rig_id, contract_id) if contract_id else {}, IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first() if contract_id else None)
+        rates, term = cache[contract_id]
+        if mv["type"] == "ILM":
+            mv["amount"], mv["note"] = ilm_amount(rig_id, contract_id, mv["km"], rates, term)
+        else:
+            rate = rates.get(rate_id, Decimal(0))
+            mv["amount"], mv["note"] = (rate, f"the project's IPM rate {rate:,.0f}") if rate else (None, "the project's IPM rate is 0")
+        mv["mis_hour"] = (mv["amount"] / mv["hours"]) if mv["amount"] is not None and mv["hours"] else None
+        out.append(mv)
+    return out
+
+
+def moves_of_month(moves, first, last):
+    """The moves that have hours in the month, with `hours_month` (the logged hours that fall in the month)."""
     out = []
-    for h in DrillingHdr.objects.filter(
-        rig_id=rig_id, contract_id=contract_id, drilling_rate_id__in=(RATE_ILM,) + RATE_IPM,
-        first_anchor_down_dt__gte=datetime.datetime.combine(first, datetime.time.min), first_anchor_down_dt__lte=datetime.datetime.combine(last, datetime.time.max),
-    ).order_by("first_anchor_down_dt"):
-        out.append({"date": h.first_anchor_down_dt.date(), "well": h.location or "", "type": "IPM" if h.drilling_rate_id in RATE_IPM else "ILM", "rate_id": h.drilling_rate_id, "km": _d(h.distance_covered_kms_knots)})
+    for mv in moves:
+        in_month = sum((h for d, h in mv["by_day"].items() if first <= d <= last), Decimal(0))
+        if in_month:
+            out.append({**mv, "hours_month": in_month})
     return out
 
 
@@ -109,10 +200,14 @@ def contract_rates(rig_id, contract_id):
     return {r.drilling_rate_id: _d(r.rate) for r in ProjectDrillingRate.objects.filter(rig_id=rig_id, contract_id=contract_id) if r.rate is not None}
 
 
-def ilm_amount(rig_id, contract_id, km, rates):
+_UNSET = object()
+
+
+def ilm_amount(rig_id, contract_id, km, rates, term=_UNSET):
     """(amount in rupees or None, source text): the flat amount + (km - upto km) x the price per km. Without ILM Rate Terms the project's own ILM rate is the
     flat amount and there is no per-km price; with neither, None."""
-    term = IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first()
+    if term is _UNSET:
+        term = IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first()
     if term is not None:
         flat = _d(term.flat_amount) if term.flat_amount is not None else rates.get(RATE_ILM, Decimal(0))
         if not flat:
@@ -124,68 +219,78 @@ def ilm_amount(rig_id, contract_id, km, rates):
     return None, "no ILM Rate Terms and the project's ILM rate is 0"
 
 
-def projection_for(rig_id, contract_id, first, last, plan, actual_ilm_days):
-    """The calculated projection of the rig for the month and the working behind it (see the module notes). The moves of the month are priced as:
-      * ILM moves: the ILM terms applied to the kilometres of the ILM moves together (flat amount + km beyond the flat limit x the price per km);
-        [to be confirmed with Arjun: per move instead of the month's total];
-      * IPM moves: the project's IPM rate of the move's rate type, each;
-      * no move recorded yet but ILM days planned: the ILM flat amount (a move that has not started).
-    The moves count in the projection only when ILM days are planned (the ILM days are the days those moves take)."""
+def planned_moves_of(plan):
+    return list(plan.planned_moves.all()) if plan is not None and plan.pk else []
+
+
+def projection_for(rig_id, contract_id, first, last, plan, moves=None):
+    """The calculated projection of the rig for the month and the working behind it (see the module notes). The month's PLANNED moves (Rig Month Plans: any number,
+    in hours) are priced one by one: an ILM by the ILM terms over its km (the planned km, else the km of the matching move in the drilling records), an IPM at
+    the project's rate of its type. Their hours come out of the month's normal hours:
+        projection = (days on the project - planned move hours / 24) x the normal day + the planned moves' amounts.
+    `moves` = actual_moves(rig_id) (done here when not given), used for the km of a planned ILM and to warn about a recorded move that is not planned."""
     out = {
-        "value": None, "days": 0, "ilm_days": Decimal(0), "non_ilm_days": Decimal(0), "normal_day": None, "weights": None, "km": Decimal(0), "ilm_amount": None, "ilm_note": "",
-        "mis_cr": None, "start": None, "end": None, "problem": "", "warnings": [], "moves": [],
+        "value": None, "days": 0, "ilm_days": Decimal(0), "ilm_hours": Decimal(0), "non_ilm_days": Decimal(0), "normal_day": None, "weights": None, "km": Decimal(0), "ilm_amount": None,
+        "ilm_note": "", "start": None, "end": None, "problem": "", "warnings": [], "moves": [], "planned": [], "weights_source": "",
     }
     if contract_id is None:
         out["problem"] = "no active project with rates"
         return out
     rates = contract_rates(rig_id, contract_id)
     start, end, days = project_days(rig_id, contract_id, first, last)
-    pct = (_d(plan.r1_pct), _d(plan.r2_pct), _d(plan.r3_pct)) if plan else (Decimal(85), Decimal(15), Decimal(0))
+    pct, weights_source = weights_for(rig_id, first, contract_id, plan)
     normal = Decimal(24) * (pct[0] * rates.get(RATE_R1, Decimal(0)) + pct[1] * rates.get(RATE_R2, Decimal(0)) + pct[2] * rates.get(RATE_R3, Decimal(0))) / 100
-    ilm_days = _d(plan.ilm_days) if plan else Decimal(0)
-    non = _d(plan.non_ilm_days) if plan and plan.non_ilm_days is not None else max(Decimal(0), Decimal(days) - ilm_days)
-
-    moves = month_moves(rig_id, contract_id, first, last)
-    ilm_moves = [mv for mv in moves if mv["type"] == "ILM"]
-    ipm_moves = [mv for mv in moves if mv["type"] == "IPM"]
-    ilm_km = sum((mv["km"] for mv in ilm_moves), Decimal(0))
-    parts, notes = [], []
-    if ilm_moves or (not moves and ilm_days > 0):
-        amount, note = ilm_amount(rig_id, contract_id, ilm_km, rates)
+    if moves is None:
+        moves = actual_moves(rig_id)
+    month_moves = moves_of_month(moves, first, last)
+    recorded_ilm = [mv for mv in month_moves if mv["type"] == "ILM" and first <= mv["date"] <= last]
+    planned, notes, parts, ilm_km, ilm_n = [], [], [], Decimal(0), 0
+    problem = ""
+    for pm in planned_moves_of(plan):
+        typ = MOVE_TYPE.get(pm.move_rate_id, "ILM")
+        hours = _d(pm.planned_hours)
+        km_source = ""
+        km = Decimal(0)
+        if typ == "ILM":
+            if pm.planned_km is not None:
+                km, km_source = _d(pm.planned_km), "planned"
+            elif ilm_n < len(recorded_ilm):
+                km, km_source = recorded_ilm[ilm_n]["km"], "from the drilling records"
+            else:
+                km_source = "no km yet"
+            ilm_n += 1
+            amount, note = ilm_amount(rig_id, contract_id, km, rates)
+            ilm_km += km
+        else:
+            rate = rates.get(pm.move_rate_id, Decimal(0))
+            amount, note = (rate, f"the project's IPM rate {rate:,.0f}") if rate else (None, "the project's IPM rate is 0")
         if amount is None:
-            notes.append(note)
+            problem = problem or f"a planned {typ} move has no known amount ({note})"
         else:
             parts.append(amount)
-            notes.append(note if ilm_moves else note + " (no move recorded yet)")
-    for mv in ipm_moves:
-        rate = rates.get(mv["rate_id"], Decimal(0))
-        mv["amount"] = rate
-        if rate:
-            parts.append(rate)
-            notes.append(f"IPM move {mv['date']:%d %b}: the project's IPM rate {rate:,.0f}")
-        else:
-            notes.append(f"IPM move {mv['date']:%d %b}: the project's IPM rate is 0")
-    for mv in ilm_moves:
-        mv["amount"] = None  # an ILM move's amount comes from the terms over the month's ILM km (shown as the total)
+        notes.append(f"{typ} {float(hours):g} h" + (f", {float(km):g} km ({km_source})" if typ == "ILM" else "") + f": {note}")
+        planned.append({"id": pm.pk, "rate_id": pm.move_rate_id, "type": typ, "hours": hours, "km": km if typ == "ILM" else None, "km_source": km_source, "amount": amount, "note": note, "mis_hour": (amount / hours) if amount is not None and hours else None, "text": pm.note})
+    plan_hours = sum((p["hours"] for p in planned), Decimal(0))
+    ilm_days = plan_hours / 24
+    non = _d(plan.non_ilm_days) if plan and plan.non_ilm_days is not None else max(Decimal(0), Decimal(days) - ilm_days)
     amount_total = sum(parts, Decimal(0)) if parts else None
-    basis = ilm_days if ilm_days > 0 else actual_ilm_days
-    out.update({"days": days, "ilm_days": ilm_days, "non_ilm_days": non, "normal_day": normal, "weights": pct, "km": ilm_km, "ilm_amount": amount_total, "ilm_note": "; ".join(notes), "start": start, "end": end, "moves": moves})
-    if amount_total is not None and basis > 0:
-        out["mis_cr"] = amount_total / CRORE / basis
-    total = non * normal
-    if ilm_days > 0:
-        if amount_total is None:
-            out["problem"] = "ILM days are planned but the amount of the move is not known (" + "; ".join(notes) + ")"
-        else:
-            total += amount_total
-    elif moves:
-        out["warnings"].append("a move is recorded this month (" + ", ".join(f"{mv['type']} {mv['date']:%d %b}" for mv in moves) + ") but no ILM days are planned, so it is not in the projection")
-    out["value"] = total / CRORE
+    out.update({
+        "days": days, "ilm_days": ilm_days, "ilm_hours": plan_hours, "non_ilm_days": non, "normal_day": normal, "weights": pct, "weights_source": weights_source, "km": ilm_km, "ilm_amount": amount_total,
+        "ilm_note": "; ".join(notes), "start": start, "end": end, "moves": month_moves, "planned": planned,
+    })
+    if plan_hours > 24 * days and days:
+        out["warnings"].append(f"the planned moves take {float(plan_hours):g} hours but the rig has only {days * 24} hours on its project this month")
+    total = non * normal + (amount_total or Decimal(0))
+    if problem:
+        out["problem"] = problem
+    if not planned and month_moves:
+        out["warnings"].append("a move is recorded this month (" + ", ".join(f"{mv['type']} {mv['date']:%d %b}" for mv in month_moves) + ") but no move is planned, so it is not in the projection")
+    out["value"] = None if problem else total / CRORE
     return out
 
 
 def ilm_activity(rig_id, first, last):
-    """True when the rig recorded ILM/IPM hours or started a move in the month (so a month with no ILM days entered is probably 'not entered yet')."""
+    """True when the rig recorded ILM/IPM hours or started a move in the month (so a month with no planned move entered is probably 'not entered yet')."""
     hours = DrillingDtlOps.objects.filter(
         drilling_dtl__rig_id=rig_id, drilling_dtl__drilling_dtl_dt__gte=first, drilling_dtl__drilling_dtl_dt__lte=last, prj_drilling_rate__drilling_rate_id__in=(RATE_ILM,) + RATE_IPM
     ).exists()
@@ -196,20 +301,19 @@ def ilm_activity(rig_id, first, last):
 
 
 def unconfirmed_ilm(first):
-    """[rig name] whose month `first` is not closed, has ILM/IPM activity and no ILM days entered: the ILM days still have to be entered or confirmed as 0."""
+    """[rig name] whose month `first` is not closed, has ILM/IPM activity and no planned move entered: the moves still have to be planned or confirmed as none."""
     last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
     out = []
     for rid in sorted(set(DrillingDtl.objects.filter(drilling_dtl_dt__gte=first, drilling_dtl_dt__lte=last).values_list("rig_id", flat=True))):
         plan = RigMonthPlan.objects.filter(rig_id=rid, month=first).first()
-        if (plan is None or (plan.closed_on is None and not plan.ilm_days)) and ilm_activity(rid, first, last):
+        if (plan is None or (plan.closed_on is None and not planned_moves_of(plan))) and ilm_activity(rid, first, last):
             out.append(MstRig.objects.get(pk=rid).rig_name)
     return out
 
 
 def close_month(first, note="", user_id=None, rig_ids=None, auto=False):
-    """Closes the month: makes sure every rig that reported in it has its Rig Month Plan row (ILM days 0 when nobody entered any) and marks the row closed, so the
-    month's ILM day count is final. A row that is already closed is left alone (safe to run again). With auto=True (the daily report's own run) a rig that
-    had ILM/IPM activity but has no ILM days entered is NOT closed: it is left open for someone to enter or confirm the days. Returns (closed now, [rig names
+    """Closes the month: makes sure every rig that reported in it has its Rig Month Plan row and marks the row closed, so its plan is locked (revenue still follows the daily reports). A row that is already closed is left alone (safe to run again). With auto=True (the daily report's own run) a rig that
+    had ILM/IPM activity but has no planned move entered is NOT closed: it is left open for someone to enter or confirm there is none. Returns (closed now, [rig names
     left open])."""
     from django.utils import timezone
 
@@ -224,14 +328,14 @@ def close_month(first, note="", user_id=None, rig_ids=None, auto=False):
         plan = RigMonthPlan.objects.filter(rig_id=rid, month=first).first()
         if plan is not None and plan.closed_on is not None:
             continue
-        if auto and (plan is None or not plan.ilm_days) and ilm_activity(rid, first, last):
+        if auto and (plan is None or not planned_moves_of(plan)) and ilm_activity(rid, first, last):
             left.append(MstRig.objects.get(pk=rid).rig_name)
             continue
         if plan is None:
-            plan = RigMonthPlan.objects.create(rig_id=rid, month=first, ilm_days=0, cr_user_id=user_id or 0, cr_dt=timezone.now())
+            plan = RigMonthPlan.objects.create(rig_id=rid, month=first, cr_user_id=user_id or 0, cr_dt=timezone.now())
         plan.closed_on, plan.closed_by, plan.closed_note = datetime.date.today(), user_id, (note or "")[:200]
         plan.save(update_fields=["closed_on", "closed_by", "closed_note"])
-        _audit._create(user_id, "system" if user_id is None else "", "close", "reports.rig_performance_masters", _audit.entity_label("reports.rig_performance_masters"), plan.pk, f"{plan.rig.rig_name} {first:%b %Y}", {"closed_on": {"old": None, "new": str(plan.closed_on)}, "ilm_days": {"old": None, "new": str(plan.ilm_days)}}, None, target=plan, note=note or "closed")
+        _audit._create(user_id, "system" if user_id is None else "", "close", "reports.rig_performance_masters", _audit.entity_label("reports.rig_performance_masters"), plan.pk, f"{plan.rig.rig_name} {first:%b %Y}", {"closed_on": {"old": None, "new": str(plan.closed_on)}, "planned_moves": {"old": None, "new": f"{len(planned_moves_of(plan))} planned"}}, None, target=plan, note=note or "closed")
         closed += 1
     return closed, left
 
@@ -239,6 +343,11 @@ def close_month(first, note="", user_id=None, rig_ids=None, auto=False):
 def price_on(day):
     p = DieselPrice.objects.filter(valid_from__lte=day).exclude(valid_to__lt=day).order_by("-valid_from", "-price_id").first()
     return _d(p.price_per_litre) if p else None
+
+
+def hours_cols(hours):
+    """The column names that have hours in the month."""
+    return {c for day in hours.values() for c, v in day.items() if v}
 
 
 def collect(end):
@@ -252,7 +361,6 @@ def collect(end):
         rig = MstRig.objects.get(pk=rid)
         plan = plan_for(rid, first)
         contract = current_contract(rid, end)
-        actual_ilm_days = Decimal(0)
         reports = {r.drilling_dtl_dt: r for r in DrillingDtl.objects.filter(rig_id=rid, drilling_dtl_dt__gte=first, drilling_dtl_dt__lte=end)}
         hours = defaultdict(lambda: defaultdict(Decimal))
         money = defaultdict(Decimal)
@@ -262,17 +370,26 @@ def collect(end):
             day, dur = o.drilling_dtl.drilling_dtl_dt, _d(o.duration)
             pr = o.prj_drilling_rate
             rate_id = pr.drilling_rate_id if pr is not None else None
-            col = RATE_COLUMN.get(rate_id, "Other")
+            col = rate_classes.column_of(rate_id) or "Other"
             hours[day][col] += dur
             if pr is not None and rate_id not in NO_MONEY_RATES and pr.rate is not None:
                 money[day] += dur * _d(pr.rate)
                 rates_used[pr.drilling_rate.rate_code] = _d(pr.rate)
         has_other = any(h.get("Other") for h in hours.values())
-        actual_ilm_days = sum((h.get("ILM/IPM", Decimal(0)) for h in hours.values()), Decimal(0)) / 24
-        proj = projection_for(rid, contract, first, last, plan, actual_ilm_days)
+        moves = actual_moves(rid)
+        proj = projection_for(rid, contract, first, last, plan, moves)
+        ilm_rev = defaultdict(Decimal)  # crore earned by the move hours of each day: hours x the move's amount / all hours logged on the move
+        ilm_hrs = defaultdict(Decimal)  # hours of each day that have an earning move
+        for mv in moves:
+            if mv["mis_hour"] is None:
+                continue
+            for d, hrs in mv["by_day"].items():
+                ilm_rev[d] += hrs * mv["mis_hour"] / CRORE
+                ilm_hrs[d] += hrs
         stock = {d: closing for d, _o, _r, _c, closing in diesel_stock_by_day(rid, project_start(rid, contract, end) if contract else None)}
         st = {"target": TARGET_PCT, "fm": FM_PRODUCTIVE}
-        cols = COLUMNS + (["Other"] if has_other else [])
+        extra = sorted(c for c in hours_cols(hours) if c not in COLUMNS and c != "Other")  # separate Standby columns (R2-A, R2-B ...) when the project has such rates
+        cols = COLUMNS[:2] + extra + COLUMNS[2:] + (["Other"] if has_other else [])
         rows = []
         for day in days:
             if day not in reports:
@@ -280,14 +397,10 @@ def collect(end):
                 continue
             h = {c: hours[day].get(c, Decimal(0)) for c in cols}
             total = sum(h.values(), Decimal(0))
-            prod_hours = h["R1"] + h["R2"] + h["R3"] + h["ILM/IPM"] + (h["FM"] if st["fm"] else Decimal(0))
+            prod_hours = h["R1"] + h["R2"] + sum((h[c] for c in extra), Decimal(0)) + h["R3"] + h["ILM/IPM"] + (h["FM"] if st["fm"] else Decimal(0))
             rev = money[day] / CRORE
-            ilm_missing = False
-            if h["ILM/IPM"]:
-                if proj["mis_cr"] is None:
-                    ilm_missing = True
-                else:
-                    rev += proj["mis_cr"] * h["ILM/IPM"] / 24
+            rev += ilm_rev.get(day, Decimal(0))
+            ilm_missing = h["ILM/IPM"] - ilm_hrs.get(day, Decimal(0)) > Decimal("0.005")  # move hours with no move amount (or no move) to earn from
             litres = reports[day].consumption_diesel
             rows.append({
                 "day": day, "reported": True, "hours": h, "total": total, "prod": (prod_hours / total) if total else None, "revenue": rev,
@@ -336,8 +449,8 @@ def notes_lines(data):
             continue
         w = pj["weights"]
         lines.append((
-            f"{rg['name']}: {float(pj['non_ilm_days']):g} non-ILM days x {float(pj['normal_day']):,.0f} a day (R1 {float(w[0]):g}%, R2 {float(w[1]):g}%, R3 {float(w[2]):g}%) + "
-            + (f"moves {float(pj['ilm_amount']):,.0f} ({pj['ilm_note']}; {float(pj['km']):g} ILM km, {float(pj['ilm_days']):g} ILM/IPM days)" if pj["ilm_days"] > 0 and pj["ilm_amount"] is not None else "no ILM days")
+            f"{rg['name']}: {float(pj['non_ilm_days']):g} normal days x {float(pj['normal_day']):,.0f} a day (R1 {float(w[0]):g}%, R2 {float(w[1]):g}%, R3 {float(w[2]):g}%: {pj['weights_source']}) + "
+            + (f"planned moves {float(pj['ilm_amount']):,.0f} ({pj['ilm_note']}; {float(pj['ilm_hours']):g} planned ILM/IPM hours)" if pj["ilm_hours"] > 0 and pj["ilm_amount"] is not None else "no moves planned")
             + f" = {float(pj['value']):.4f} Cr; on the project {pj['start']:%d %b} to {pj['end']:%d %b} ({pj['days']} days)" + ("; plan: " + (rg["plan"].note or "set in Rig Month Plans") if rg["plan"] else "; no Rig Month Plan row (defaults)"), False))
     for rg in data["rigs"]:
         for w in rg["proj"]["warnings"]:
@@ -567,7 +680,7 @@ def build_mail(alert, now):
             notes.append(f"{rg['name']}: ILM/IPM hours were reported but the ILM amount is not known (ILM Rate Terms), so their revenue is not counted.")
     previous = (end.replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
     for name in unconfirmed_ilm(previous):
-        notes.append(f"{name}: ILM/IPM was recorded in {previous:%B %Y} but its ILM days are not entered, so that month is not closed yet.")
+        notes.append(f"{name}: ILM/IPM was recorded in {previous:%B %Y} but no move is planned for it, so that month is not closed yet.")
     if data["prices"].get(end) is None:
         notes.append("No diesel price is set for this date, so the diesel cost is blank.")
     notes += [t for t in KNOWN_DIFFERENCES if any(t.startswith(rg["name"]) for rg in data["rigs"])]
@@ -595,7 +708,7 @@ class RigPerformanceJob(ScheduledReportJob):
         return build_mail(alert, now)
 
     def send_report(self, alert, setup, now, designated=True):
-        """As every report job, and then the month that has just ended is closed (its ILM day count becomes final), unless a rig still has to enter its ILM days."""
+        """As every report job, and then the month that has just ended is closed (its plan becomes locked), unless a rig still has to plan its moves."""
         out = super().send_report(alert, setup, now, designated)
         try:
             previous = (now.date().replace(day=1) - datetime.timedelta(days=1)).replace(day=1)

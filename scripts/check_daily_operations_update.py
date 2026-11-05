@@ -78,10 +78,12 @@ ok("a 0-trip rig does not break the speed (shows 0)", all(p for p in [m.rig_page
 from core.models import DrillingDtlOps, DrillingHdr
 rid, cid = m.collect_pdf(today)[0]
 ok("Gnc_Get_Prj_Drilling_Rate gives the project's rate row", m.gnc_get_prj_drilling_rate(1, cid, rid) is not None and m.gnc_get_prj_drilling_rate(999, cid, rid) is None)
+_a = datetime.datetime(2026, 1, 1, 6)
+ok("Fnc_Get_Days_On_Well is the legacy function, quirks included (one day = '1 Days 0000 Hrs', 7:05 = '7:5')", m.fnc_get_days_on_well(datetime.datetime(2026, 1, 2, 6), _a) == "1 Days 0000 Hrs" and m.fnc_get_days_on_well(datetime.datetime(2026, 3, 10, 13, 5), _a) == "2 Months 9 Days 7:5 Hrs" and m.fnc_get_days_on_well(datetime.datetime(2027, 2, 3, 9), _a) == "1 Year 1 Months 2 Days 3:00 Hrs" and m.fnc_get_days_on_well(_a, None) == "-")
 first_day = day.replace(day=1)
 tot = m.fnc_get_average_revenue(rid, cid, day, day, None)
 one = m._revenue_of_day(rid, cid, day, None)
-ok("Fnc_Get_Average_Revenue for one day matches the day's revenue", tot is not None and abs(Decimal(tot) - one) < Decimal("0.01"), f"{tot} vs {one}")
+ok("Fnc_Get_Average_Revenue for one day matches the day's revenue", abs(Decimal(tot or 0) - one) < Decimal("0.01"), f"{tot} vs {one}")  # None = nothing to add up (a day with no activity lines)
 ok("Fnc_Get_Average_Revenue of a range is the sum of its days", abs(Decimal(m.fnc_get_average_revenue(rid, cid, day - datetime.timedelta(days=1), day, None)) - (m._revenue_of_day(rid, cid, day, None) + m._revenue_of_day(rid, cid, day - datetime.timedelta(days=1), None))) < Decimal("0.01"))
 ok("no dates or nothing to add gives None", m.fnc_get_average_revenue(rid, cid, None, day, None) is None and m.fnc_get_average_revenue(rid, cid, datetime.date(2001, 1, 1), datetime.date(2001, 1, 2), None) is None)
 series = m.diesel_stock_by_day(rid, m.project_start(rid, cid, day))

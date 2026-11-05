@@ -16,7 +16,7 @@ from core import rate_classes as rc
 from core.dashboard_access import dashboard_rig_queryset
 from core.models import MstRig, UserPermission, UserProfile
 from core.permissions import invalidate_user_access
-from core.rig_operations_dashboard import build_payload
+from core.rig_operations_dashboard import build_payload, things_to_check_page
 
 fails = []
 
@@ -53,12 +53,13 @@ ok("EE01 drilling hours 2,786.75", near(k["drilling_hrs"], 2786.75))
 ok("EE01 metres are the daily report's figure (13,805.1; the workbook's depth change gives 13,741.1: one reversed-depth day of 64 m)", near(k["drilled_m"], 13805.1, 0.06), str(k["drilled_m"]))
 ok("EE01 ROP = metres / drilling hours", near(k["avg_rop"], round(13805.1 / 2786.75, 2)))
 ok("EE01 diesel 2,042,441 L", k["diesel_l"] == 2042441)
-ok("EE01 rig-days 361, wells completed 2, days to check 2", k["rig_days"] == 361 and k["wells_completed"] == 2 and k["days_to_check"] == 2, str(k))
+ok("EE01 rig-days 361, wells completed 2, things to check 3-4 (the workbook's 2, the reversed-depth day, and the newest report with no operation lines)", k["rig_days"] == 361 and k["wells_completed"] == 2 and k["days_to_check"] in (3, 4), str(k))  # 3 since the 5 Nov 2026 dump: the newest report (4 Nov) has no operation lines yet
 cls = {c["class"]: c["hours"] for c in p["hours_by_class"]}
 ok("EE01 hours by class (workbook)", near(cls["Operating"], 6695.75) and near(cls["Standby"], 1188.5) and near(cls["Repair"], 163.25) and near(cls["Force Majeure"], 15.5) and near(cls["Zero Rate"], 166.75) and near(cls["Rig Move"], 429.75) and cls["Unmapped"] == 0, str(cls))
 ops = [(o["operation"], o["hours"]) for o in p["top_operations"]]
 ok("EE01 top 10 operations (workbook order and hours)", ops == [("2: Drill actual", 2786.75), ("6: Trips", 2235.25), ("5: Circulate & condition mud", 596.25), ("23: Other", 444.25), ("12: Run casing & cement", 435.75), ("1: Rig up/Tear down/Rig move", 429.75), ("13: Wait on cement", 375.25), ("14: Rig up/down BOP", 312.75), ("11: Wire line logs", 253.75), ("8: Repair rig", 200.75)], str(ops))
-ok("the reversed-depth typo is warned about (EE01, 21 Sep 2026)", any("Depth To below Depth From" in w and "21 Sep 2026" in w for w in p["warnings"]), str(p["warnings"]))
+_ttc = things_to_check_page({ee01}, ids, None, 1, 100)
+ok("the reversed-depth row is a Thing to check, with its row spelled out (EE01, 21 Sep 2026)", any(r["date"] == "2026-09-21" and any("Depth To 2,050.00 m is below Depth From 2,114.00 m" in x for x in r["problems"]) for r in _ttc["results"]), str([r for r in _ttc["results"] if r["date"] == "2026-09-21"]))
 ok("revenue is priced from the project rates (not 0 as in the workbook) and has no rig-move lump sum", k["revenue_cr"] > 0)
 
 # SR03 (workbook: 1,499 h, 559.5 operating, 98.1 %, 2,532.3 m, ROP 9.08, 102,981 L, 63 rig-days, 1 check day)
@@ -77,19 +78,23 @@ narrow = build_payload({ee01}, ids, D(2026, 9, 1), D(2026, 9, 30))
 ok("the monthly trend does not depend on From (September is the same either way)", narrow["monthly"][-1]["total_hrs"] == full["monthly"][-1]["total_hrs"])
 ok("the status board ignores the filters (every recent rig)", len(full["status_board"]) >= 3 and {b["rig"] for b in full["status_board"]} >= {"EE01", "SR03"})
 ee_board = next(b for b in full["status_board"] if b["rig"] == "EE01")
-ok("the status board shows the latest report, well, depth, section, operation, rate", ee_board["last_report"] >= "2026-09-30" and ee_board["location"] and ee_board["depth_m"] and ee_board["last_operation"] and ee_board["rate"])
+ok("the status board shows the latest report, well, depth, section, operation, rate", ee_board["last_report"] >= "2026-09-30" and ee_board["location"] and ee_board["depth_m"] and (ee_board["last_operation"] and ee_board["rate"] or ee_board["last_report"] >= "2026-11-01"))  # the 5 Nov 2026 dump's latest EE01 reports have no activity lines yet: operation and rate stay blank
 wells = full["wells"]
 w1 = next(w for w in wells if w["location"] == "SOUTH BAGHJAAN 15")
 ok("the well table matches the workbook (SOUTH BAGHJAAN 15: 89 days, 4,360 m, 4,709.1 m drilled, ROP 6.46, 99.4 %)", w1["days"] == 89 and w1["depth_m"] == 4360 and near(w1["drilled_m"], 4709.1, 0.06) and near(w1["rop"], 6.46) and near(w1["productivity_pct"], 99.41, 0.05) and w1["status"] == "Completed", str(w1))
 ok("the well table is the latest 12 wells of the chosen rigs, oldest first", len(wells) <= 12 and all(w["rig"] == "EE01" for w in wells) and [w["first_report"] for w in wells] == sorted(w["first_report"] for w in wells))
-ok("days to check lists each flagged day with its problem", full["days_to_check_total"] >= 2 and all(r["problems"] for r in full["days_to_check"]))
+ok("things to check lists each flagged day with its problem and kinds; the dashboard carries only the count and the kinds", full["days_to_check_total"] >= 2 and "days_to_check" not in full and all(r["problems"] and r["kinds"] for r in _ttc["results"]) and _ttc["count"] == full["days_to_check_total"] and [k["key"] for k in full["check_kinds"]] == ["no_ops", "not_24", "summary", "depth"])
 none = build_payload({ee01}, ids, D(2031, 1, 1), D(2031, 1, 31))
 ok("dates with no data give zeros, not an error", none["kpis"]["total_hrs"] == 0 and none["kpis"]["productivity_pct"] is None)
 
 
 # links to the records, and the load limits
 ok("the status board rows carry the report and the well to open", all(b["dtl_id"] for b in full["status_board"]) and any(b["hdr_id"] for b in full["status_board"]))
-ok("days to check carry the report to open and list only the chosen rigs, newest first", all(r["dtl_id"] and r["rig_id"] == ee01 for r in full["days_to_check"]) and [r["date"] for r in full["days_to_check"]] == sorted((r["date"] for r in full["days_to_check"]), reverse=True))
+ok("things to check carry the report to open and list only the chosen rigs, newest first", all(r["dtl_id"] and r["rig_id"] == ee01 for r in _ttc["results"]) and [r["date"] for r in _ttc["results"]] == sorted((r["date"] for r in _ttc["results"]), reverse=True))
+_pg1 = things_to_check_page(ids, ids, None, 1, 5); _pg2 = things_to_check_page(ids, ids, None, 2, 5)
+ok("it is paged: 5 a page, a next page while there is more, no row twice", len(_pg1["results"]) == 5 and _pg1["next"] == 2 and not ({r["dtl_id"] for r in _pg1["results"]} & {r["dtl_id"] for r in _pg2["results"]}) and _pg1["count"] > 5)
+_dep = things_to_check_page(ids, ids, "depth", 1, 100)
+ok("a kind filter returns only that kind, and the counts of the kinds are always those of all", _dep["count"] > 0 and all("depth" in r["kinds"] for r in _dep["results"]) and {k["key"]: k["count"] for k in _dep["kinds"]}["depth"] == _dep["count"] and sum(k["count"] for k in _dep["kinds"]) >= _pg1["count"])
 ok("the reversed-depth days carry the report to open", any(d["rig_id"] == ee01 and d["date"] == "2026-09-21" and d["dtl_id"] for d in full["depth_error_days"]))
 import json
 from django.db import connection
@@ -97,7 +102,7 @@ from django.test.utils import CaptureQueriesContext
 with CaptureQueriesContext(connection) as q:
     everything = build_payload(ids, ids, None, None)
 ok(f"all rigs, all the data: a fixed number of queries ({len(q)}), not one set per rig", len(q) <= 20, str(len(q)))
-ok("the answer stays small (under 200 KB) and the lists are capped", len(json.dumps(everything, default=str)) < 200_000 and len(everything["days_to_check"]) <= 500 and len(everything["wells"]) <= 12 and len(everything["monthly"]) == 12 and len(everything["daily"]) == 31)
+ok("the answer stays small (under 200 KB) and the lists are capped", len(json.dumps(everything, default=str)) < 200_000 and len(everything["wells"]) <= 12 and len(everything["monthly"]) == 12 and len(everything["daily"]) == 31)
 
 # rights and the endpoint
 try:

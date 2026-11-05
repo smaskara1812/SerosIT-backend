@@ -85,6 +85,7 @@ from .models import (
     ProjectDrillingRate,
     IlmRateTerm,
     RigMonthPlan,
+    RigToEmailMapping,
     ReportingStructure,
     TravelEligibility,
     UserProfile,
@@ -209,6 +210,7 @@ from .masters_serializers import (
     MstCurrencySerializer,
     IlmRateTermSerializer,
     RigMonthPlanSerializer,
+    RigToEmailMappingSerializer,
     MstDrillingOperationSerializer,
     MstDrillingRateSerializer,
     MstDrillingSectionSerializer,
@@ -2033,6 +2035,14 @@ class MstCompanyViewSet(BaseMasterViewSet):
     ]
     search_fields = ["company_name", "company_abrv", "company_code"]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get("owns_rigs") == "1":
+            # only the companies that own a rig (an open Cost Centre To Company Mapping on a cost centre of a rig): the ones the per-company mails
+            # (Drilling Info Status) are made for
+            qs = qs.filter(cost_centre_mappings__mapping_to__isnull=True, cost_centre_mappings__cost_centre__rig__isnull=False).distinct()
+        return qs
+
 
 class CostCentreToCompanyMappingViewSet(BaseMasterViewSet):
     queryset = CostCentreToCompanyMapping.objects.select_related("company", "cost_centre").all()
@@ -2300,7 +2310,9 @@ class ProjectDrillingRateViewSet(BaseMasterViewSet):
             qs = qs.filter(rig_id=rig_id)
         ilm = self.request.query_params.get("ilm")
         if ilm == "1":
-            qs = qs.filter(drilling_rate_id__in=self._ILM_RATE_IDS)
+            from .rate_classes import added_standby_ids
+
+            qs = qs.filter(drilling_rate_id__in=self._ILM_RATE_IDS | added_standby_ids())  # R2-A / B / C ... go where R2 goes
         elif ilm == "0":
             qs = qs.exclude(drilling_rate_id__in=self._ILM_EXCLUDE_IDS).filter(drilling_rate__rate_active="Y")
         return qs.order_by("-contract__prj_start_dt", "drilling_rate__rate_code")
@@ -2317,7 +2329,15 @@ class MstDrillingOperationViewSet(BaseMasterViewSet):
     serializer_class = MstDrillingOperationSerializer
     entity_key = "masters.drilling_operations"
     name_field = "drilling_ops_name"
-    search_fields = ["drilling_ops_name"]
+    lookup_fields = ("drilling_ops_code_no", "display_label")  # the Drilling Report's Operation dropdown shows "6. Trips"
+    search_fields = ["drilling_ops_name", "drilling_ops_code_no"]
+
+    def get_queryset(self):
+        qs = self._apply_filterable_fields(self._apply_active_filter(self.queryset))
+        ordering = self.request.query_params.get("ordering")
+        if ordering == "name":
+            return qs.order_by("drilling_ops_name")
+        return qs.order_by("-drilling_ops_code_no" if ordering == "-code" else "drilling_ops_code_no")  # by number, as the legacy list was
 
     @action(detail=False, methods=["get"], url_path="check-code")
     def check_code(self, request):
@@ -3108,7 +3128,7 @@ class DieselPriceViewSet(BaseMasterViewSet):
 
 
 class RigMonthPlanViewSet(BaseMasterViewSet):
-    """Per rig and month: the ILM days, the non-ILM days (empty = automatic) and the weights of the normal day's revenue."""
+    """Per rig and month: the normal days (empty = automatic) and the weights of the normal day's revenue. The planned rig moves (hours) are entered on Reports > Rig Performance > Masters."""
 
     queryset = RigMonthPlan.objects.select_related("rig")
     serializer_class = RigMonthPlanSerializer
@@ -3118,14 +3138,14 @@ class RigMonthPlanViewSet(BaseMasterViewSet):
     filterable_fields = ["rig"]
 
     def get_queryset(self):
-        return self.queryset.order_by("-month", "rig__rig_name")
+        return self._apply_filterable_fields(self._apply_active_filter(self.queryset)).order_by("-month", "rig__rig_name")
 
     def label_for(self, instance):
         return f"{instance.rig.rig_name} {instance.month:%b %Y}"
 
     def destroy(self, request, *args, **kwargs):
         if self.get_object().closed_on is not None:
-            return Response({"detail": "This month is closed: its ILM days are final. Reopen it first (Reports > Rig Performance > Masters)."}, status=400)
+            return Response({"detail": "This month is closed: its plan is locked. Reopen it first (Reports > Rig Performance > Masters)."}, status=400)
         return super().destroy(request, *args, **kwargs)
 
 
@@ -3140,7 +3160,25 @@ class IlmRateTermViewSet(BaseMasterViewSet):
     filterable_fields = ["rig"]
 
     def get_queryset(self):
-        return self.queryset.order_by("rig__rig_name", "-contract__prj_start_dt")
+        return self._apply_filterable_fields(self._apply_active_filter(self.queryset)).order_by("rig__rig_name", "-contract__prj_start_dt")
 
     def label_for(self, instance):
         return f"{instance.rig.rig_name} {instance.contract.prj_contract_no}"
+
+
+class RigToEmailMappingViewSet(BaseMasterViewSet):
+    """Who gets an alert's mail for one rig (To / Cc / Bcc, from a date until a date). Private: it holds people's addresses."""
+
+    queryset = RigToEmailMapping.objects.select_related("rig", "user", "alert", "company")
+    serializer_class = RigToEmailMappingSerializer
+    entity_key = "masters.rig_alert_recipients"
+    lookup = False
+    date_active_field = "to_dt"  # receiving now = To is blank or not yet passed
+    search_fields = ["rig__rig_name", "alert__alert_name", "user__user_name", "user__user_login_id", "user__user_email"]
+    filterable_fields = ["rig", "alert"]
+
+    def get_queryset(self):
+        return self._apply_filterable_fields(self._apply_active_filter(self.queryset)).order_by("alert__alert_name", "rig__rig_name", "addressee_type", "user__user_name")
+
+    def label_for(self, instance):
+        return f"{instance.rig.rig_name if instance.rig_id else 'any rig'} / {instance.alert.alert_name if instance.alert_id else 'any alert'} / {instance.user.user_login_id}"

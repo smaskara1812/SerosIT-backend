@@ -2174,6 +2174,8 @@ class MstDrillingRate(models.Model):
     rate_code = models.CharField(max_length=20)
     rate_description = models.CharField(max_length=50, null=True, blank=True)
     rate_active = models.CharField(max_length=1, default="Y")
+    # Which kind of time this rate's hours are (core/rate_classes.py): Operating, Standby, Repair, Zero Rate, Force Majeure, Rig Move. Blank = billing item.
+    rate_class = models.CharField(max_length=20, null=True, blank=True)
     cr_user_id = models.IntegerField()
     cr_dt = models.DateTimeField()
     mod_user_id = models.IntegerField(null=True, blank=True)
@@ -4979,11 +4981,13 @@ class RigMonthPlan(models.Model):
     plan_id = models.AutoField(primary_key=True)
     rig = models.ForeignKey("MstRig", on_delete=models.CASCADE, db_column="rig_id", related_name="month_plans")
     month = models.DateField()  # the 1st of the month
-    ilm_days = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+    # The month's planned rig moves are the child rows of RigPlannedMove (hours, not days).
     non_ilm_days = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
-    r1_pct = models.DecimalField(max_digits=5, decimal_places=2, default=85)
-    r2_pct = models.DecimalField(max_digits=5, decimal_places=2, default=15)
-    r3_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # The weights of the normal day are OPTIONAL: left empty they carry over from the rig's latest earlier month that set them on the same project, else the
+    # default 85 / 15 / 0 (core/rig_performance_month.py weights_for). They are typed only for a month that differs; the three go together and add up to 100.
+    r1_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    r2_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    r3_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     note = models.CharField(max_length=200, blank=True, default="")
     # A month is closed after its last day (automatically by the first report of the next month, or by hand): its ILM day count is then final, so a later
     # look at the month shows the projection it had. Changing a closed month needs Reopen with a reason (audit history). closed_on empty = open.
@@ -4998,6 +5002,24 @@ class RigMonthPlan(models.Model):
     class Meta:
         db_table = "rig_month_plan"
         unique_together = [("rig", "month")]
+
+
+class RigPlannedMove(models.Model):
+    """One rig move (ILM or IPM) planned for a rig in a month, entered in HOURS: Arjun can add several in a month. The projection prices each on its own: an ILM
+    by the rig's ILM Rate Terms over its km (flat up to X km, then a price per km), an IPM at the project's rate of that type; its planned hours come out of
+    the month's normal hours. planned_km empty = the km recorded for the move in the drilling records (the first ILM started in the month for the first planned
+    ILM, and so on), else 0. What is earned is NOT taken from here: the actual revenue follows the hours logged in the daily reports."""
+
+    move_id = models.AutoField(primary_key=True)
+    plan = models.ForeignKey(RigMonthPlan, on_delete=models.CASCADE, db_column="plan_id", related_name="planned_moves")
+    move_rate_id = models.IntegerField()  # the Drilling Rate: 6 ILM, 7 IPM - Lateral, 8 IPM - Adjacent
+    planned_hours = models.DecimalField(max_digits=7, decimal_places=2)
+    planned_km = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    note = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        db_table = "rig_planned_move"
+        ordering = ["move_id"]
 
 
 class IlmRateTerm(models.Model):
@@ -5022,3 +5044,25 @@ class IlmRateTerm(models.Model):
     class Meta:
         db_table = "ilm_rate_term"
         unique_together = [("rig", "contract")]
+
+
+class RigToEmailMapping(models.Model):
+    """Who gets an alert's mail for ONE rig (legacy eos.Rig_To_Email_Mapping): a user as To, Cc or Bcc of an alert, for a rig, from a date until a date (blank = still).
+    The alert's own recipients (Alert To Users) are added to these by the mails that work per rig (the legacy Prc_Rig_To_Email_Mapping_Email_Config), for example
+    Drilling Info: Daily Not Entered (alert 231). Company is used by the alerts that filter by company (legacy alert 244)."""
+
+    rig_to_email_mapping_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey(MstRig, db_column="rig_id", on_delete=models.PROTECT, null=True, blank=True, related_name="alert_recipients")
+    user = models.ForeignKey("MstUser", db_column="user_id", on_delete=models.PROTECT, related_name="rig_alert_recipients")
+    alert = models.ForeignKey("MailAlertDtl", db_column="alert_id", on_delete=models.PROTECT, null=True, blank=True, related_name="rig_recipients")
+    company = models.ForeignKey(MstCompany, db_column="company_id", on_delete=models.PROTECT, null=True, blank=True, related_name="+")
+    addressee_type = models.CharField(max_length=1, null=True, blank=True)  # T, C or B
+    from_dt = models.DateField()
+    to_dt = models.DateField(null=True, blank=True)
+    cr_user_id = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_to_email_mapping"

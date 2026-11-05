@@ -21,7 +21,8 @@ Definitions, all over the chosen calendar year and the chosen rigs:
                             diesel; it is not a data-quality score.
   Outlier day               a rig-day whose diesel (or water) is at least OUTLIER_FACTOR times that
                             rig's median day in the year, and at least the minimum below; usually a
-                            mistyped number, so each one links to its daily report.
+                            mistyped number, so each one links to its daily report. A report that is
+                            APPROVED is not flagged any more (its approver has checked it).
 
 The current year is compared with the same stretch of last year, not all of it.
 Rig scope is the same as every other drilling dashboard (dashboard_access).
@@ -155,8 +156,8 @@ class FuelWaterDashboardView(APIView):
         # Outlier days: far above that rig's own median day
         outliers = []
         per_rig = {}
-        for pk, rid, dt, dsl, wtr in cur.values_list("pk", "rig_id", "drilling_dtl_dt", "consumption_diesel", "consumption_water"):
-            per_rig.setdefault(rid, []).append((pk, dt, _f(dsl), _f(wtr)))
+        for pk, rid, dt, dsl, wtr, appr in cur.values_list("pk", "rig_id", "drilling_dtl_dt", "consumption_diesel", "consumption_water", "l1_approval_status"):
+            per_rig.setdefault(rid, []).append((pk, dt, _f(dsl), _f(wtr), appr))
         for rid, days in per_rig.items():
             for kind, idx in (("diesel", 2), ("water", 3)):
                 vals = [d[idx] for d in days if d[idx] > 0]
@@ -164,6 +165,8 @@ class FuelWaterDashboardView(APIView):
                     continue
                 med = statistics.median(vals)
                 for d in days:
+                    if d[4] == "A":
+                        continue  # an approved report has been checked by its approver: it is no longer flagged (it still counts in the median and the totals)
                     if d[idx] >= OUTLIER_MIN[kind] and d[idx] >= OUTLIER_FACTOR * med:
                         outliers.append(
                             {

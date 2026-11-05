@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from openpyxl import load_workbook
 from rest_framework.test import APIClient
+from core import rig_performance_month as m
 from core.models import IlmRateTerm, RigMonthPlan, UserPermission, UserProfile
 from core.permissions import invalidate_user_access
 
@@ -62,12 +63,16 @@ try:
         ok("the notes are included", any("Projection working" in n["text"] for n in d["notes"]))
         fut = viewer.get(base + "?month=2099-01").json()
         ok("a month that has not started gives a message, not an error", fut["final"] is None and "not started" in fut["message"])
-        none = viewer.get(base + "?month=2026-11").json()
-        ok("a month with no reports says so", none["final"] is None and "no daily drilling report" in none["message"], str(none.get("message")))
+        from core.models import DrillingDtl as _Dtl
+        _months = {(d.year, d.month) for d in _Dtl.objects.filter(drilling_dtl_dt__gte=datetime.date(2020, 1, 1)).values_list("drilling_dtl_dt", flat=True)}
+        _empty = next((f"{y}-{mo:02d}" for y in range(2020, datetime.date.today().year + 1) for mo in range(1, 13) if (y, mo) not in _months and datetime.date(y, mo, 1) <= datetime.date.today()), None)
+        EMPTY = _empty or "2026-11"  # a past month with no daily report at all (the 5 Nov 2026 data has reports in every month since 2020)
+        none = viewer.get(base + f"?month={EMPTY}").json()
+        ok("a month with no reports says so", _empty is None or (none["final"] is None and "no daily drilling report" in none["message"]), str(none.get("message")))
 
         x = exporter.get(base + "download/?month=2026-10")
         ok("the Excel download is the month's workbook", x.status_code == 200 and "Rig_Performance-October-2026.xlsx" in x["Content-Disposition"] and "FINAL-OCT-26" in load_workbook(io.BytesIO(x.content)).sheetnames)
-        ok("a month with nothing downloads as a 404 message", exporter.get(base + "download/?month=2026-11").status_code == 404)
+        ok("a month with nothing downloads as a 404 message", _empty is None or exporter.get(base + f"download/?month={EMPTY}").status_code == 404)
 
         rs = viewer.get(base + "rate-sheet/?month=2026-10").json()
         ee01 = next(r for r in rs["rigs"] if r["name"] == "EE01")
@@ -78,30 +83,30 @@ try:
         # editing in place (Edit on the Masters page)
         editor = mk("rpp_edit", {M: "view edit"})
         rig_id, contract_id = ee01["rig_id"], ee01["contract_id"]
-        body = {"rig": rig_id, "month": "2026-10", "ilm_days": "5", "non_ilm_days": "", "r1_pct": "80", "r2_pct": "20", "r3_pct": "0", "note": "check"}
+        body = {"rig": rig_id, "month": "2026-10", "moves": [{"rate_id": 6, "hours": "120", "km": ""}], "non_ilm_days": "", "r1_pct": "80", "r2_pct": "20", "r3_pct": "0", "note": "check"}
         ok("a viewer cannot save a plan or ILM terms", viewer.put(base + "plan/", body, format="json").status_code == 403 and viewer.put(base + "ilm-terms/", {"rig": rig_id, "contract": contract_id, "upto_km": "30"}, format="json").status_code == 403)
         RigMonthPlan.objects.filter(rig_id=rig_id).delete()
         IlmRateTerm.objects.filter(rig_id=rig_id).delete()
         r = editor.put(base + "plan/", body, format="json")
         ok("an editor can save the plan (created)", r.status_code == 200 and r.json()["created"] is True, r.content[:200])
-        r = editor.put(base + "plan/", {**body, "ilm_days": "6"}, format="json")
+        r = editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "144", "km": ""}]}, format="json")
         ok("saving again updates the same row", r.status_code == 200 and r.json()["created"] is False and RigMonthPlan.objects.filter(rig_id=rig_id).count() == 1)
         ok("a bad plan is refused with a message (weights not 100)", editor.put(base + "plan/", {**body, "r1_pct": "50"}, format="json").status_code == 400 and "100" in editor.put(base + "plan/", {**body, "r1_pct": "50"}, format="json").json()["detail"])
-        ok("too many days are refused", editor.put(base + "plan/", {**body, "ilm_days": "40"}, format="json").status_code == 400)
+        ok("too many hours are refused", editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "960", "km": ""}]}, format="json").status_code == 400)
         r = editor.put(base + "ilm-terms/", {"rig": rig_id, "contract": contract_id, "upto_km": "30", "flat_amount": "4000000", "extra_per_km": "50000"}, format="json")
         ok("an editor can save ILM terms", r.status_code == 200 and IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).count() == 1, r.content[:200])
         ok("negative ILM terms are refused", editor.put(base + "ilm-terms/", {"rig": rig_id, "contract": contract_id, "upto_km": "-1"}, format="json").status_code == 400)
         e2 = next(x for x in editor.get(base + "rate-sheet/?month=2026-10").json()["rigs"] if x["name"] == "EE01")
-        ok("the rate sheet shows the saved plan and recalculates", e2["plan"]["exists"] and e2["plan"]["ilm_days"] == 6 and e2["plan"]["r1_pct"] == 80 and e2["ilm"]["term"]["flat_amount"] == 4000000 and e2["non_ilm_days"] == 25 and abs(e2["ilm"]["mis_cr"] - 4000000 / 1e7 / 6) < 0.0001, str(e2["plan"]))
+        ok("the rate sheet shows the saved plan and recalculates", e2["plan"]["exists"] and e2["plan"]["moves"][0]["hours"] == 144 and e2["plan"]["r1_pct"] == 80 and e2["ilm"]["term"]["flat_amount"] == 4000000 and e2["non_ilm_days"] == 25 and abs(e2["planned_moves"][0]["mis_hour"] - 4000000 / 144) < 0.01, str(e2["plan"]))
         from core.models import SysAuditLog as AuditLog
         ok("the changes are in the audit history", AuditLog.objects.filter(entity="reports.rig_performance_masters").count() >= 2)
 
         # closing and reopening a month (the month must have ended)
         RigMonthPlan.objects.filter(rig_id=rig_id).delete()
         r = editor.post(base + "plan/close/", {"rig": rig_id, "month": "2026-10"}, format="json")
-        ok("an ended month can be closed (ILM days 0 when none entered)", r.status_code == 200 and RigMonthPlan.objects.get(rig_id=rig_id, month=datetime.date(2026, 10, 1)).closed_on is not None, r.content[:200])
+        ok("an ended month can be closed (no planned moves needed)", r.status_code == 200 and RigMonthPlan.objects.get(rig_id=rig_id, month=datetime.date(2026, 10, 1)).closed_on is not None, r.content[:200])
         ok("closing it again is refused", editor.post(base + "plan/close/", {"rig": rig_id, "month": "2026-10"}, format="json").status_code == 409)
-        r = editor.put(base + "plan/", {**body, "ilm_days": "2"}, format="json")
+        r = editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "48", "km": ""}]}, format="json")
         ok("a closed month cannot be changed", r.status_code == 400 and "closed" in r.json()["detail"], r.content[:200])
         sheet = next(x for x in editor.get(base + "rate-sheet/?month=2026-10").json()["rigs"] if x["name"] == "EE01")
         ok("the rate sheet shows it as closed, with the history", sheet["closed"] and sheet["closed"]["on"] and sheet["can_close"] is False and isinstance(sheet["history"], list), str(sheet["closed"]))
@@ -109,13 +114,16 @@ try:
         ok("reopening needs a reason", editor.post(base + "plan/reopen/", {"rig": rig_id, "month": "2026-10", "reason": " "}, format="json").status_code == 400)
         ok("a closed month can be reopened with a reason", editor.post(base + "plan/reopen/", {"rig": rig_id, "month": "2026-10", "reason": "check"}, format="json").status_code == 200 and RigMonthPlan.objects.get(rig_id=rig_id, month=datetime.date(2026, 10, 1)).closed_on is None)
         ok("the reopening is in the audit history", AuditLog.objects.filter(entity="reports.rig_performance_masters", action="reopen", note="check").exists())
-        ok("after reopening it can be changed again", editor.put(base + "plan/", {**body, "ilm_days": "2"}, format="json").status_code == 200)
+        ok("after reopening it can be changed again", editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "48", "km": ""}]}, format="json").status_code == 200)
         ok("a month that has not ended cannot be closed", editor.post(base + "plan/close/", {"rig": rig_id, "month": f"{datetime.date.today():%Y-%m}"}, format="json").status_code == 409)
         from core.models import ProjectContractDtl
         ProjectContractDtl.objects.filter(rig_id=rig_id, contract_id=contract_id).update(rig_active_from=datetime.date(2026, 10, 16))
-        r = editor.put(base + "plan/", {**body, "ilm_days": "17"}, format="json")
-        ok("ILM days beyond the days on the project are refused (project from 16 Oct = 16 days)", r.status_code == 400 and "16 days" in r.json()["detail"], r.content[:200])
-        ok("ILM days within the project's days are accepted", editor.put(base + "plan/", {**body, "ilm_days": "3"}, format="json").status_code == 200)
+        _real_start = m.project_start_from_reports
+        m.project_start_from_reports = lambda *a: None  # not reported on it yet: the line's start counts
+        r = editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "408", "km": ""}]}, format="json")
+        ok("Planned hours beyond the hours on the project are refused (project from 16 Oct = 16 days = 384 hours)", r.status_code == 400 and "16 days" in r.json()["detail"] and "408" in r.json()["detail"], r.content[:200])
+        ok("Planned hours within the project's hours are accepted", editor.put(base + "plan/", {**body, "moves": [{"rate_id": 6, "hours": "72", "km": ""}]}, format="json").status_code == 200)
+        m.project_start_from_reports = _real_start
 
         # months where a rig reported but its project line does not cover the month used to fail the whole report (Mar 2024)
         for mon in ("2024-03", "2023-07", "2022-05"):
@@ -129,6 +137,22 @@ try:
         with CaptureQueriesContext(connection) as qc:
             viewer.get(base + "?month=2024-03")
         ok(f"a busy month (7 rigs, Mar 2024) loads with a bounded number of queries ({len(qc)}), not one per activity line", len(qc) < 400, str(len(qc)))
+
+        # the rate sheet lists the working rigs from the 1st of a month, before any report (planning), and only the working ones
+        today = datetime.date.today()
+        cur = f"{today:%Y-%m}"
+        cs = viewer.get(base + f"rate-sheet/?month={cur}").json()
+        names = [x["name"] for x in cs["rigs"]]
+        ok("the current month lists the working rigs (EE01, SK02, Axom Rhino) even before their reports", {"EE01", "SK02", "Axom Rhino"} <= set(names), str(names))
+        ok("rigs with an old open-ended line and no recent report are left out", not ({"Essar Wildcat", "DR01", "CR01", "WR02", "SK1", "WR005", "New Projects - Rig"} & set(names)), str(names))
+        ee = next(x for x in cs["rigs"] if x["name"] == "EE01")
+        ok("the current month shows its rates and a projection from the plan (also for a rig that has not reported yet)", ee["projection_cr"] > 0 and ee["can_close"] is False and ee["rig_id"] and ee["contract_id"], str(ee["projection_cr"]))
+        ok("a month that has not started is still refused", viewer.get(base + "rate-sheet/?month=2099-01").json()["rigs"] == [])
+
+        RigMonthPlan.objects.filter(rig_id=ee["rig_id"]).delete()
+        r = editor.put(base + "plan/", {"rig": ee["rig_id"], "month": cur, "moves": [{"rate_id": 6, "hours": "120"}], "non_ilm_days": "", "r1_pct": "85", "r2_pct": "15", "r3_pct": "0", "note": "planned"}, format="json")
+        after = next(x for x in editor.get(base + f"rate-sheet/?month={cur}").json()["rigs"] if x["name"] == "EE01")
+        ok("A move can be planned for a rig before its first report, and the projection follows", r.status_code == 200 and after["ilm_days"] == 5 and after["projection_cr"] < ee["projection_cr"], f"{r.status_code} {after['projection_cr']} {ee['projection_cr']}")
         raise Rollback
 except Rollback:
     pass

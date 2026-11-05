@@ -231,10 +231,16 @@ def recipients_preview(job, as_of, snapshot=""):
 
     setup = job.setup(as_of) or {}
     alert = setup.get("alert")
-    entries = resolve_alert_recipients_detailed(alert["id"], as_of) if alert else []
+    # a job that also reads Rig Alert Recipients (one mail per rig or per company) lists those people too, each labelled with where it comes from
+    entries = (job.recipients_detailed(as_of) if hasattr(job, "recipients_detailed") else resolve_alert_recipients_detailed(alert["id"], as_of)) if alert else []
+    links = dict(setup.get("links", {}))
+    if alert and getattr(job, "uses_rig_recipients", False):
+        from urllib.parse import quote
+
+        links["rig_recipients"] = f"/masters/rig-alert-recipients?alert={alert['id']}&alertName={quote(alert.get('name') or '', safe='')}"
     counts = {k: sum(1 for e in entries if e["type"] == k) for k in ("to", "cc", "bcc")}
     return {
-        "job": job.key, "job_name": job.name, "as_of": as_of, "alert": alert, "from_name": setup.get("from_name", ""), "from_address": setup.get("from_address", ""), "links": setup.get("links", {}), "subject": setup.get("subject", ""),
+        "job": job.key, "job_name": job.name, "as_of": as_of, "alert": alert, "from_name": setup.get("from_name", ""), "from_address": setup.get("from_address", ""), "links": links, "subject": setup.get("subject", ""),
         "sender": (setup.get("smtp") or {}).get("sender"), "recipients": entries, "counts": counts, "snapshot": snapshot or "",
         "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO), "warnings": setup.get("warnings", []),
     }

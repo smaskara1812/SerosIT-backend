@@ -10,10 +10,10 @@ Definitions, chosen so that every page of the system agrees (5 Nov 2026; the two
   Productive hours * the classes of core/rate_classes.py (every class except Zero Rate); Productivity % = productive hours / all hours; Operating % = R1 hours / all.
   Revenue            hours x the rate per hour of the operation's own project rate row (Project Drilling Rates), for the classes that are billed per hour (not
                      rig moves: ILM/IPM lump sums are not included, as in the workbook), in crore.
-  Hours              from the operations (duration), never from the daily buckets, which are only reconciled against them in Days to check.
+  Hours              from the operations (duration), never from the daily buckets, which are only reconciled against them in Things to check.
   Wells completed    wells whose completion date (Drilling Information) falls in the dates.
-  Rig-days           the rig's daily reports in the dates (a report with no operation lines counts, and is flagged in Days to check).
-  Days to check      days where the operations do not add up to 24 hours, or the daily buckets (+ force majeure) differ from the operations; the latest 730
+  Rig-days           the rig's daily reports in the dates (a report with no operation lines counts, and is flagged in Things to check).
+  Things to check    days where the operations do not add up to 24 hours, the daily buckets (+ force majeure) differ from the operations, or a Drill actual row has a Depth To below its Depth From; the latest 730
                      days of data, for the chosen rigs, whatever the dates.
 Scope per widget as in the spec: tiles, class hours and top operations follow rig + dates; the rig comparison follows the dates only; the monthly trend is the 12
 months ending at the To month and the daily trend the 31 days ending at To (both follow the rigs); the status board follows neither; the well table follows the
@@ -38,8 +38,9 @@ CRORE = 10_000_000.0
 CHECK_WINDOW_DAYS = 730
 RECENT_RIG_DAYS = 400  # the status board lists rigs that reported in the last ~13 months
 WELLS_SHOWN = 12
-FM_IDS = rc.RATE_IDS_OF_CLASS[rc.FORCE_MAJEURE]
 MONTH_FMT = "%Y-%m"
+# The kinds of thing the Things to check list can show (a day can have several): the filters of the list
+CHECK_KINDS = [("no_ops", "No operation lines"), ("not_24", "Hours not 24"), ("summary", "Summary differs"), ("depth", "Depth reversed")]
 
 
 def _f(v):
@@ -87,6 +88,55 @@ def _add_months(first, n):
     return datetime.date(y, m + 1, 1)
 
 
+def check_rows_for(accessible_ids, data_max, rigs):
+    """Everything that is to be checked in the latest CHECK_WINDOW_DAYS of data, for every accessible rig: (rows, per-rig counts). One row per rig-day:
+    {rig_id, rig, date, ops_hours, summary_hours, problems [texts], kinds [keys of CHECK_KINDS], dtl_id}. Used by the dashboard's tile (the count) and by the Things to
+    check page (the list, paged)."""
+    check_from = data_max - datetime.timedelta(days=CHECK_WINDOW_DAYS)
+    day_ops_hours = {}
+    for row in (
+        DrillingDtlOps.objects.filter(drilling_dtl__rig_id__in=accessible_ids, drilling_dtl__drilling_dtl_dt__gte=check_from)
+        .values("drilling_dtl_id")
+        .annotate(
+            h=Sum("duration"),
+            fm=Sum(Case(When(prj_drilling_rate__drilling_rate_id__in=rc.rate_ids_of(rc.FORCE_MAJEURE), then=F("duration")), default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=2))),
+        )
+    ):
+        day_ops_hours[row["drilling_dtl_id"]] = (_f(row["h"]), _f(row["fm"]))
+    # Drill actual rows whose Depth To is below the Depth From (a typo, or a hole drilled back): they count as negative metres, so the day is to be checked
+    reversed_rows = defaultdict(list)  # drilling_dtl_id -> ["18:00-06:00: Depth From 2,114.00 m, Depth To 2,050.00 m"]
+    for dtl_id, t_from, t_to, d_from_v, d_to_v in DrillingDtlOps.objects.filter(
+        drilling_dtl__rig_id__in=accessible_ids, drilling_dtl__drilling_dtl_dt__gte=check_from, drilling_ops_id=DRILL_ACTUAL_OPS_ID, depth_from__isnull=False, depth_to__isnull=False, depth_to__lt=F("depth_from")
+    ).values_list("drilling_dtl_id", "time_from", "time_to", "depth_from", "depth_to"):
+        when = f"{t_from:%H:%M}-{t_to:%H:%M}" if t_from and t_to else "a row"
+        reversed_rows[dtl_id].append(f"Drill actual {when}: Depth To {d_to_v:,.2f} m is below Depth From {d_from_v:,.2f} m")
+    check_rows = []
+    check_days = defaultdict(int)
+    for d in DrillingDtl.objects.filter(rig_id__in=accessible_ids, drilling_dtl_dt__gte=check_from).values(
+        "drilling_dtl_id", "rig_id", "drilling_dtl_dt", "operating_hrs", "standby_hrs", "repair_service_hrs", "repair_rate_hrs", "zero_rate_hrs", "rig_move_hrs"
+    ):
+        h, fm = day_ops_hours.get(d["drilling_dtl_id"], (0.0, 0.0))
+        buckets = sum(_f(d[k]) for k in ("operating_hrs", "standby_hrs", "repair_service_hrs", "repair_rate_hrs", "zero_rate_hrs", "rig_move_hrs"))
+        flags, kinds = [], []
+        if h == 0:
+            flags.append("no operation lines")
+            kinds.append("no_ops")
+        else:
+            if abs(h - 24) > 0.005:
+                flags.append("operations add up to %s h, not 24" % round(h, 2))
+                kinds.append("not_24")
+            if abs(buckets + fm - h) > 0.005:
+                flags.append("daily summary %s h differs from the operations %s h" % (round(buckets + fm, 2), round(h, 2)))
+                kinds.append("summary")
+        if reversed_rows.get(d["drilling_dtl_id"]):
+            flags.extend(reversed_rows[d["drilling_dtl_id"]])
+            kinds.append("depth")
+        if flags:
+            check_days[d["rig_id"]] += 1
+            check_rows.append({"rig_id": d["rig_id"], "rig": rigs.get(d["rig_id"], ""), "date": d["drilling_dtl_dt"].isoformat(), "ops_hours": round(h, 2), "summary_hours": round(buckets + fm, 2), "problems": flags, "kinds": kinds, "dtl_id": d["drilling_dtl_id"]})
+    return check_rows, check_days
+
+
 def build_payload(rig_ids, accessible_ids, d_from, d_to):
     """The dashboard as data. rig_ids = the chosen rigs (a subset of accessible_ids); d_from / d_to may be None (all the data)."""
     accessible_ids = set(accessible_ids)
@@ -113,10 +163,11 @@ def build_payload(rig_ids, accessible_ids, d_from, d_to):
     all_ops = _Agg()  # in the dates, chosen rigs
     depth_errors = 0
     depth_error_days = set()
+    depth_error_rows = {}  # (rig id, day) -> ["07:00-09:30: 1,200 m to 1,150 m", ...]
     ops = DrillingDtlOps.objects.filter(
         drilling_dtl__rig_id__in=accessible_ids, drilling_dtl__drilling_dtl_dt__gte=fetch_from, drilling_dtl__drilling_dtl_dt__lte=d_to
-    ).values_list("drilling_dtl__rig_id", "drilling_dtl__drilling_dtl_dt", "prj_drilling_rate__drilling_rate_id", "prj_drilling_rate__rate", "drilling_ops_id", "duration", "depth_from", "depth_to", "drilling_dtl_id")
-    for rig_id, day, rate_id, rate, ops_id, duration, depth_from, depth_to, dtl_id in ops.iterator(chunk_size=5000):
+    ).values_list("drilling_dtl__rig_id", "drilling_dtl__drilling_dtl_dt", "prj_drilling_rate__drilling_rate_id", "prj_drilling_rate__rate", "drilling_ops_id", "duration", "depth_from", "depth_to", "drilling_dtl_id", "time_from", "time_to")
+    for rig_id, day, rate_id, rate, ops_id, duration, depth_from, depth_to, dtl_id, t_from, t_to in ops.iterator(chunk_size=5000):
         hours = _f(duration)
         cls = rc.class_of(rate_id)
         revenue = hours * _f(rate) if (cls in rc.PRICED_CLASSES and rate is not None) else 0.0
@@ -129,6 +180,8 @@ def build_payload(rig_ids, accessible_ids, d_from, d_to):
                 if ops_id == DRILL_ACTUAL_OPS_ID and depth_to is not None and depth_from is not None and depth_to < depth_from:
                     depth_errors += 1
                     depth_error_days.add((rig_id, day, dtl_id))
+                    when = f"{t_from:%H:%M}-{t_to:%H:%M}" if t_from and t_to else "a row"
+                    depth_error_rows.setdefault((rig_id, day), []).append(f"{when}, Drill actual: Depth From {depth_from:,.2f} m, Depth To {depth_to:,.2f} m")
         if chosen:
             if month_first <= day < _add_months(month_end_first, 1):
                 monthly[_month_start(day)].add(hours, cls, ops_id, revenue)
@@ -164,36 +217,8 @@ def build_payload(rig_ids, accessible_ids, d_from, d_to):
     ).values_list("rig_id", "drilling_hdr_id"):
         done[rid] += 1
 
-    # ── days to check (the latest 730 days of data, the chosen rigs for the tile, every rig for the comparison) ──
-    check_from = data_max - datetime.timedelta(days=CHECK_WINDOW_DAYS)
-    day_ops_hours = {}
-    for row in (
-        DrillingDtlOps.objects.filter(drilling_dtl__rig_id__in=accessible_ids, drilling_dtl__drilling_dtl_dt__gte=check_from)
-        .values("drilling_dtl_id")
-        .annotate(
-            h=Sum("duration"),
-            fm=Sum(Case(When(prj_drilling_rate__drilling_rate_id__in=FM_IDS, then=F("duration")), default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=2))),
-        )
-    ):
-        day_ops_hours[row["drilling_dtl_id"]] = (_f(row["h"]), _f(row["fm"]))
-    check_rows = []
-    check_days = defaultdict(int)
-    for d in DrillingDtl.objects.filter(rig_id__in=accessible_ids, drilling_dtl_dt__gte=check_from).values(
-        "drilling_dtl_id", "rig_id", "drilling_dtl_dt", "operating_hrs", "standby_hrs", "repair_service_hrs", "repair_rate_hrs", "zero_rate_hrs", "rig_move_hrs"
-    ):
-        h, fm = day_ops_hours.get(d["drilling_dtl_id"], (0.0, 0.0))
-        buckets = sum(_f(d[k]) for k in ("operating_hrs", "standby_hrs", "repair_service_hrs", "repair_rate_hrs", "zero_rate_hrs", "rig_move_hrs"))
-        flags = []
-        if h == 0:
-            flags.append("no operation lines")
-        else:
-            if abs(h - 24) > 0.005:
-                flags.append("operations add up to %s h, not 24" % round(h, 2))
-            if abs(buckets + fm - h) > 0.005:
-                flags.append("daily summary %s h differs from the operations %s h" % (round(buckets + fm, 2), round(h, 2)))
-        if flags:
-            check_days[d["rig_id"]] += 1
-            check_rows.append({"rig_id": d["rig_id"], "rig": rigs.get(d["rig_id"], ""), "date": d["drilling_dtl_dt"].isoformat(), "ops_hours": round(h, 2), "summary_hours": round(buckets + fm, 2), "problems": flags, "dtl_id": d["drilling_dtl_id"]})
+    # ── things to check: the count here, the list on its own page (things_to_check_page) ──
+    check_rows, check_days = check_rows_for(accessible_ids, data_max, rigs)
     # the list shows the chosen rigs' flagged days, newest first (the comparison's per-rig counts cover every rig)
     chosen_check = sorted((r for r in check_rows if r["rig_id"] in rig_ids), key=lambda r: (r["date"], r["rig"]), reverse=True)
 
@@ -216,15 +241,12 @@ def build_payload(rig_ids, accessible_ids, d_from, d_to):
     unmapped = all_ops.by_class.get(rc.UNMAPPED, 0.0)
     if unmapped:
         warnings.append(f"{unmapped:,.2f} hrs have a rate type that is not a time class (Other, meterage, MOB, KMS): they count in the total hours but are not productive.")
-    if depth_errors:
-        days = ", ".join(f"{rigs.get(r, r)} {d:%d %b %Y}" for r, d, _i in sorted(depth_error_days, key=lambda x: (str(rigs.get(x[0])), x[1]))[:6])
-        warnings.append(f"{depth_errors} drilling row(s) have Depth To below Depth From (possible typo): {days}. The metres count the typed difference.")
     no_rev = [rigs.get(r, str(r)) for r in sorted(rig_ids, key=lambda x: rigs.get(x, "")) if per_rig[r].hours and not per_rig[r].revenue]
     if no_rev:
         warnings.append("Revenue is 0 for: " + ", ".join(no_rev) + " - no rate per hour in Project Drilling Rates.")
     no_ops = [(rigs.get(r["rig_id"]), r["date"]) for r in check_rows if "no operation lines" in r["problems"] and r["rig_id"] in rig_ids and d_from.isoformat() <= r["date"] <= d_to.isoformat()]
     if no_ops:
-        warnings.append(f"{len(no_ops)} daily report(s) in these dates have no operation lines, so their hours are missing (see Days to check).")
+        warnings.append(f"{len(no_ops)} daily report(s) in these dates have no operation lines, so their hours are missing (see Things to check).")
 
     # ── status board (a fixed number of queries, however many rigs there are) ──
     recent_from = data_max - datetime.timedelta(days=RECENT_RIG_DAYS)
@@ -333,10 +355,33 @@ def build_payload(rig_ids, accessible_ids, d_from, d_to):
     return {
         "data_through": data_max.isoformat(), "from": d_from.isoformat(), "to": d_to.isoformat(), "rigs": [{"rig_id": i, "rig_name": n} for i, n in sorted(rigs.items(), key=lambda x: x[1])],
         "selected_rig_ids": sorted(rig_ids), "kpis": kpis, "warnings": warnings, "status_board": board, "comparison": comparison, "monthly": months, "daily": days,
-        "hours_by_class": classes, "top_operations": top_ops, "wells": well_rows, "days_to_check": chosen_check[:500], "days_to_check_total": len(chosen_check),
+        "hours_by_class": classes, "top_operations": top_ops, "wells": well_rows, "days_to_check_total": len(chosen_check),
+        "check_kinds": [{"key": k, "label": lab, "count": sum(1 for r in chosen_check if k in r["kinds"])} for k, lab in CHECK_KINDS],
         "productive_rule": rc.rule_text(),
         "depth_error_days": [{"rig_id": r, "rig": rigs.get(r, ""), "date": d.isoformat(), "dtl_id": i} for r, d, i in sorted(depth_error_days, key=lambda x: (str(rigs.get(x[0])), x[1]))[:20]],
     }
+
+
+PAGE_SIZE = 25
+
+
+def things_to_check_page(rig_ids, accessible_ids, kind=None, page=1, page_size=PAGE_SIZE):
+    """One page of the Things to check list for the chosen rigs, newest first, optionally of one kind: {count, results, kinds (with counts, for the chosen rigs), page, page_size, next}."""
+    accessible_ids = set(accessible_ids)
+    rig_ids = set(rig_ids) & accessible_ids
+    rigs = {r.rig_id: r.rig_name for r in dashboard_rig_queryset().filter(rig_id__in=accessible_ids)}
+    data_max = DrillingDtl.objects.filter(rig_id__in=accessible_ids).aggregate(m=Max("drilling_dtl_dt"))["m"]
+    if data_max is None:
+        return {"count": 0, "results": [], "kinds": [{"key": k, "label": lab, "count": 0} for k, lab in CHECK_KINDS], "page": 1, "page_size": page_size, "next": None, "window_days": CHECK_WINDOW_DAYS}
+    rows, _days = check_rows_for(accessible_ids, data_max, rigs)
+    mine = sorted((r for r in rows if r["rig_id"] in rig_ids), key=lambda r: (r["date"], r["rig"]), reverse=True)
+    kinds = [{"key": k, "label": lab, "count": sum(1 for r in mine if k in r["kinds"])} for k, lab in CHECK_KINDS]
+    if kind in {k for k, _ in CHECK_KINDS}:
+        mine = [r for r in mine if kind in r["kinds"]]
+    page_size = max(1, min(int(page_size or PAGE_SIZE), 100))
+    page = max(1, int(page or 1))
+    chunk = mine[(page - 1) * page_size: page * page_size]
+    return {"count": len(mine), "results": chunk, "kinds": kinds, "page": page, "page_size": page_size, "next": page + 1 if page * page_size < len(mine) else None, "window_days": CHECK_WINDOW_DAYS}
 
 
 def _date(v):
@@ -359,3 +404,23 @@ class RigOperationsDashboardView(APIView):
         requested = request.query_params.get("rigs")
         chosen = {int(x) for x in requested.split(",") if x.strip().isdigit()} & accessible_ids if requested else set(accessible_ids)
         return Response(build_payload(chosen or accessible_ids, accessible_ids, _date(request.query_params.get("from")), _date(request.query_params.get("to"))))
+
+
+class RigOperationsThingsToCheckView(APIView):
+    """The Things to check list on its own page: GET ?rigs=1,2&kind=depth&page=1&page_size=25. Same right and the same rigs as the dashboard."""
+
+    permission_classes = [HasMenuPermission]
+    entity_key = "dashboards.rig_operations"
+
+    def get(self, request):
+        accessible = get_accessible_rig_ids(request)
+        rig_qs = dashboard_rig_queryset()
+        if accessible is not None:
+            rig_qs = rig_qs.filter(rig_id__in=accessible)
+        accessible_ids = {r.rig_id for r in rig_qs}
+        requested = request.query_params.get("rigs")
+        chosen = {int(x) for x in requested.split(",") if x.strip().isdigit()} & accessible_ids if requested else set(accessible_ids)
+        qp = request.query_params
+        page = qp.get("page") if (qp.get("page") or "").isdigit() else 1
+        size = qp.get("page_size") if (qp.get("page_size") or "").isdigit() else PAGE_SIZE
+        return Response(things_to_check_page(chosen or accessible_ids, accessible_ids, qp.get("kind"), page, size))
