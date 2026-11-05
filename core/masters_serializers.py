@@ -1,3 +1,4 @@
+import calendar
 import os
 import re
 from django.conf import settings
@@ -108,7 +109,10 @@ from .models import (
     MstLocation,
     ProjectContract,
     ProjectContractDtl,
+    DieselPrice,
     ProjectDrillingRate,
+    IlmRateTerm,
+    RigMonthPlan,
     ReportingStructure,
     TravelEligibility,
     MstItAssetType,
@@ -2192,3 +2196,114 @@ class FsEmpCurStatusSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data["fs_emp_active"] = _yes_no(instance.fs_emp_active)
         return data
+
+
+def _first_of_month(value):
+    return value.replace(day=1) if value else value
+
+
+class DieselPriceSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DieselPrice
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        end = f" to {obj.valid_to:%d %b %Y}" if obj.valid_to else " onwards"
+        return f"{obj.price_per_litre} per litre, from {obj.valid_from:%d %b %Y}{end}"
+
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        price, start, end = get("price_per_litre"), get("valid_from"), get("valid_to")
+        if price is not None and price <= 0:
+            raise serializers.ValidationError({"price_per_litre": "The price must be more than 0."})
+        if start and end and end < start:
+            raise serializers.ValidationError({"valid_to": "The last day cannot be before the first day."})
+        return attrs
+
+
+class RigMonthPlanSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RigMonthPlan
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt", "closed_on", "closed_by", "closed_note"]
+
+    def get_display_name(self, obj):
+        return f"{obj.rig.rig_name} — {obj.month:%b %Y}"
+
+    def validate(self, attrs):
+        inst = self.instance
+        if "month" in attrs:
+            attrs["month"] = _first_of_month(attrs["month"])  # any day of the month is accepted; it is kept as the 1st
+        if inst is not None and inst.closed_on is not None:
+            raise serializers.ValidationError({"month": "This month is closed: its ILM days are final. Reopen it first (Reports > Rig Performance > Masters)."})
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        rig, month = get("rig"), get("month")
+        days_in_month = calendar.monthrange(month.year, month.month)[1] if month else 31
+        for name, label in (("ilm_days", "ILM days"), ("non_ilm_days", "Non-ILM days")):
+            v = get(name)
+            if v is not None and not (0 <= v <= days_in_month):
+                raise serializers.ValidationError({name: f"{label} must be from 0 to the {days_in_month} days of the month."})
+        ilm, non = get("ilm_days") or 0, get("non_ilm_days")
+        if non is not None and ilm + non > days_in_month:
+            raise serializers.ValidationError({"non_ilm_days": f"ILM days and non-ILM days together are more than the {days_in_month} days of the month."})
+        if rig and month:
+            # the ILM days are days of the rig's project: not more than it has that month
+            from .daily_operations_update import current_contract
+            from .rig_performance_month import project_days
+
+            last = month.replace(day=days_in_month)
+            contract = current_contract(rig.rig_id, last)
+            on_project = project_days(rig.rig_id, contract, month, last)[2] if contract else 0
+            if contract and (ilm or 0) > on_project:
+                raise serializers.ValidationError({"ilm_days": f"ILM days cannot be more than the {on_project} days this rig is on its project in {month:%B %Y}."})
+        pcts = [get("r1_pct"), get("r2_pct"), get("r3_pct")]
+        if any(v is None or v < 0 for v in pcts):
+            raise serializers.ValidationError({"r1_pct": "The percentages cannot be negative."})
+        if sum(pcts) != 100:
+            raise serializers.ValidationError({"r1_pct": "R1, R2 and R3 percentages must add up to 100."})
+        if rig and month and fields_changed(inst, attrs, "rig", "month"):
+            repeats = RigMonthPlan.objects.filter(rig=rig, month=month)
+            if inst is not None:
+                repeats = repeats.exclude(pk=inst.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"month": "This rig already has a plan for this month. Edit that row."})
+        return attrs
+
+
+class IlmRateTermSerializer(serializers.ModelSerializer):
+    rig_name = serializers.CharField(source="rig.rig_name", read_only=True, default="")
+    contract_no = serializers.CharField(source="contract.prj_contract_no", read_only=True, default="")
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = IlmRateTerm
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def get_display_name(self, obj):
+        return f"{obj.rig.rig_name} — {obj.contract.prj_contract_no}"
+
+    def validate(self, attrs):
+        inst = self.instance
+        get = lambda name: attrs.get(name, getattr(inst, name, None))
+        if (get("upto_km") or 0) < 0:
+            raise serializers.ValidationError({"upto_km": "The kilometres cannot be negative."})
+        if (get("extra_per_km") or 0) < 0:
+            raise serializers.ValidationError({"extra_per_km": "The amount cannot be negative."})
+        if get("flat_amount") is not None and get("flat_amount") < 0:
+            raise serializers.ValidationError({"flat_amount": "The amount cannot be negative."})
+        rig, contract = get("rig"), get("contract")
+        if rig and contract and fields_changed(inst, attrs, "rig", "contract"):
+            repeats = IlmRateTerm.objects.filter(rig=rig, contract=contract)
+            if inst is not None:
+                repeats = repeats.exclude(pk=inst.pk)
+            if repeats.exists():
+                raise serializers.ValidationError({"contract": "This rig already has ILM terms on this project. Edit that row."})
+        return attrs

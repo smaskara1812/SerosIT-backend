@@ -168,7 +168,7 @@ try:
         r = full.post("/api/admin/report-mails/activity_monitor/test-send/", {"email": "me@example.test"}, format="json")
         ok("a test goes to one address, marked [Test], with the Excel, and does not move Next Mail", r.status_code == 200 and len(sent) == 1 and sent[0]["to"] == ["me@example.test"] and sent[0]["subject"].startswith("[Test] ") and sent[0]["attachments"] and MailAlertDtl.objects.get(pk=ALERT).next_mail_dt == DT(2026, 10, 20, 15, 37, 52), str(r.content[:150]))
         sm = full.get("/api/admin/scheduled-mails/").json()
-        ok("Scheduled Mails lists the six automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions"}, str({j["key"] for j in sm["jobs"]}))
+        ok("Scheduled Mails lists the eight automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions", "daily_operations_update", "rig_performance"}, str({j["key"] for j in sm["jobs"]}))
         raise Rollback()
 except Rollback:
     pass

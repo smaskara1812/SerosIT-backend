@@ -47,6 +47,7 @@ class ReportMail:
     attachments: list = field(default_factory=list)  # [(file name, bytes, mime type)]
     empty: bool = False  # nothing to report: the mail says so and has no attachment
     summary: str = ""  # one line about what was in it, kept on the Scheduled Mails item
+    inline_images: list = field(default_factory=list)  # [(content id, bytes, "png")] pictures shown inside the mail body as src="cid:..."
 
 
 def next_after(base, freq, today, hour):
@@ -201,7 +202,7 @@ class ScheduledReportJob(JobBase):
                 r = setup["recipients"]
                 result = mailer.send_scheduled_email(
                     mail.subject, mail.html, mail.text, to=r["to"], cc=r["cc"], bcc=r["bcc"], from_name=setup["from_name"], trigger=f"{self.report_name}: {alert.alert_name}"[:200],
-                    trigger_code=self.trigger_code, designated=designated, alert_id=alert.alert_id, attachments=mail.attachments, env_account=False,
+                    trigger_code=self.trigger_code, designated=designated, alert_id=alert.alert_id, attachments=mail.attachments, inline_images=mail.inline_images, env_account=False,
                 )
                 result["recipients"] = ", ".join([*r["to"], *(f"cc:{a}" for a in r["cc"]), *(f"bcc:{a}" for a in r["bcc"])])
                 if not result["ok"]:

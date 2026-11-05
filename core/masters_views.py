@@ -81,7 +81,10 @@ from .models import (
     MstLocation,
     ProjectContract,
     ProjectContractDtl,
+    DieselPrice,
     ProjectDrillingRate,
+    IlmRateTerm,
+    RigMonthPlan,
     ReportingStructure,
     TravelEligibility,
     UserProfile,
@@ -202,7 +205,10 @@ from .masters_serializers import (
     MstUserSerializer,
     MstUserFsCatgMappingSerializer,
     MstUserRigMappingSerializer,
+    DieselPriceSerializer,
     MstCurrencySerializer,
+    IlmRateTermSerializer,
+    RigMonthPlanSerializer,
     MstDrillingOperationSerializer,
     MstDrillingRateSerializer,
     MstDrillingSectionSerializer,
@@ -3081,3 +3087,60 @@ class MstActivityViewSet(BaseMasterViewSet):
     name_field = "activity_name"
     active_field = "activity_active"
     search_fields = ["activity_name"]
+
+
+# ───────────── Rig Performance masters (the inputs of the daily Rig Performance mail: core/rig_performance_month.py) ─────────────
+class DieselPriceViewSet(BaseMasterViewSet):
+    """The diesel price per litre by date range. The price of a day is the row that covers it (the latest start when two do)."""
+
+    queryset = DieselPrice.objects.all()
+    serializer_class = DieselPriceSerializer
+    entity_key = "masters.diesel_prices"
+    date_active_field = "valid_to"
+    lookup = False  # commercial figures: never offered as a dropdown source
+    search_fields = ["note"]
+
+    def get_queryset(self):
+        return self._apply_active_filter(self.queryset).order_by("-valid_from", "-price_id")
+
+    def label_for(self, instance):
+        return f"{instance.price_per_litre} from {instance.valid_from:%d %b %Y}"
+
+
+class RigMonthPlanViewSet(BaseMasterViewSet):
+    """Per rig and month: the ILM days, the non-ILM days (empty = automatic) and the weights of the normal day's revenue."""
+
+    queryset = RigMonthPlan.objects.select_related("rig")
+    serializer_class = RigMonthPlanSerializer
+    entity_key = "masters.rig_month_plans"
+    lookup = False
+    search_fields = ["rig__rig_name", "note"]
+    filterable_fields = ["rig"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("-month", "rig__rig_name")
+
+    def label_for(self, instance):
+        return f"{instance.rig.rig_name} {instance.month:%b %Y}"
+
+    def destroy(self, request, *args, **kwargs):
+        if self.get_object().closed_on is not None:
+            return Response({"detail": "This month is closed: its ILM days are final. Reopen it first (Reports > Rig Performance > Masters)."}, status=400)
+        return super().destroy(request, *args, **kwargs)
+
+
+class IlmRateTermViewSet(BaseMasterViewSet):
+    """Per rig and project: the kilometres covered by the flat ILM amount, and the price per kilometre beyond."""
+
+    queryset = IlmRateTerm.objects.select_related("rig", "contract")
+    serializer_class = IlmRateTermSerializer
+    entity_key = "masters.ilm_rate_terms"
+    lookup = False
+    search_fields = ["rig__rig_name", "contract__prj_contract_no", "note"]
+    filterable_fields = ["rig"]
+
+    def get_queryset(self):
+        return self.queryset.order_by("rig__rig_name", "-contract__prj_start_dt")
+
+    def label_for(self, instance):
+        return f"{instance.rig.rig_name} {instance.contract.prj_contract_no}"

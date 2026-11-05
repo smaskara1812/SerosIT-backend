@@ -44,6 +44,8 @@ TRIGGER_POINTS = {
             "send_rig_rate_breakup_mail": "Send Rig Rate Break-Up mail",
             "send_activity_monitor_mail": "Send Activity Monitor mail",
             "send_open_incident_actions_mail": "Send Open Incident Actions mail",
+            "send_daily_operations_update_mail": "Send Daily Operations Update mail",
+            "send_rig_performance_mail": "Send Rig Performance mail",
         },
     ),
 }

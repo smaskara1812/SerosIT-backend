@@ -108,7 +108,7 @@ def test_send_api(request, key):
     mail = job.build(alert, datetime.datetime.now())
     res = mailer.send_scheduled_email(
         "[Test] " + mail.subject, mail.html, mail.text, to=[to], from_name=setup["from_name"], trigger=f"{job.report_name} test to {to}", trigger_code=job.trigger_code + ".test",
-        designated=True, alert_id=alert.alert_id, attachments=mail.attachments, env_account=False,
+        designated=True, alert_id=alert.alert_id, attachments=mail.attachments, inline_images=mail.inline_images, env_account=False,
     )
     _audit.record_action(request, "update", MENU_KEY, "test", f"{job.report_name} test mail to {to}", {"result": {"old": None, "new": "sent" if res["ok"] else "failed"}})
     return Response(

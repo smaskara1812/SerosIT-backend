@@ -4947,3 +4947,78 @@ class SchedHeartbeat(models.Model):
 
     class Meta:
         db_table = "sched_heartbeat"
+
+
+class DieselPrice(models.Model):
+    """The diesel price per litre in force over a period (Rig Performance cost). A supply deal gives a price for a stretch of dates (for example
+    a price secured for six months from a start date); the price for a day is the row whose period covers it (the latest start when two do).
+    valid_to empty = until a newer row starts. Kept as rows, never overwritten, so an old month always costs at the price of that time."""
+
+    price_id = models.AutoField(primary_key=True)
+    price_per_litre = models.DecimalField(max_digits=10, decimal_places=2)
+    valid_from = models.DateField()
+    valid_to = models.DateField(null=True, blank=True)
+    note = models.CharField(max_length=200, blank=True, default="")
+    cr_user_id = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "diesel_price"
+        ordering = ["-valid_from", "-price_id"]
+
+
+class RigMonthPlan(models.Model):
+    """What Arjun decides for one rig in one month of the Rig Performance report: how many days are ILM days and how many are normal (non-ILM) days,
+    and how the normal day's revenue is weighed from the rates (by default 85 % of the R1 rate and 15 % of the R2 rate; it can be changed per rig and
+    month). non_ilm_days empty = automatic: the days the rig is on its project in the month (so a rig that starts on the 15th, or ends on the 10th, counts
+    only those days) less the ILM days. A rig with no row here has no ILM days, the default weights and automatic days. The projection of the month is
+    calculated from this and the project's rates (core/rig_performance_month.py); nothing in it is typed as a projection."""
+
+    plan_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey("MstRig", on_delete=models.CASCADE, db_column="rig_id", related_name="month_plans")
+    month = models.DateField()  # the 1st of the month
+    ilm_days = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+    non_ilm_days = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    r1_pct = models.DecimalField(max_digits=5, decimal_places=2, default=85)
+    r2_pct = models.DecimalField(max_digits=5, decimal_places=2, default=15)
+    r3_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    note = models.CharField(max_length=200, blank=True, default="")
+    # A month is closed after its last day (automatically by the first report of the next month, or by hand): its ILM day count is then final, so a later
+    # look at the month shows the projection it had. Changing a closed month needs Reopen with a reason (audit history). closed_on empty = open.
+    closed_on = models.DateField(null=True, blank=True)
+    closed_by = models.IntegerField(null=True, blank=True)  # user id; empty when the system closed it
+    closed_note = models.CharField(max_length=200, blank=True, default="")
+    cr_user_id = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "rig_month_plan"
+        unique_together = [("rig", "month")]
+
+
+class IlmRateTerm(models.Model):
+    """How an ILM (rig move) is paid on a rig's project: a flat amount for the first upto_km kilometres, then extra_per_km for every kilometre beyond.
+    The flat amount is typed here when the contract's own ILM rate (Project Drilling Rates) does not hold it; left empty, the project's ILM rate is used.
+    The kilometres of a month come from the drilling records (the distance covered of the wells started that month), the ILM amount of the month is
+    flat + (km - upto_km) x extra_per_km when km is over upto_km, and the MIS per day is that amount divided by the ILM days. Separate from the rig's
+    other rates so that every project and rig can have its own terms."""
+
+    term_id = models.AutoField(primary_key=True)
+    rig = models.ForeignKey("MstRig", on_delete=models.CASCADE, db_column="rig_id", related_name="ilm_terms")
+    contract = models.ForeignKey("ProjectContract", on_delete=models.CASCADE, db_column="prj_contract_id", related_name="ilm_terms")
+    upto_km = models.DecimalField(max_digits=8, decimal_places=2)
+    flat_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    extra_per_km = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    note = models.CharField(max_length=200, blank=True, default="")
+    cr_user_id = models.IntegerField(default=0)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ilm_rate_term"
+        unique_together = [("rig", "contract")]

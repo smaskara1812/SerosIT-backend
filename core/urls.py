@@ -6,7 +6,7 @@ from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
 from . import birthday_views, holiday_views, report_mail_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
-from . import approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
+from . import rig_performance_views, approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
     IncidentActionViewSet,
     IncidentDetailViewSet,
@@ -37,6 +37,7 @@ from .drilling_performance_dashboard import DrillingPerformanceDashboardView
 from .compliance_radar import ComplianceDigestView, ComplianceRadarExportView, ComplianceRadarView
 from .fleet_operating_dashboard import FleetOperatingDashboardView
 from .fuel_water_dashboard import FuelWaterDashboardView
+from .rig_operations_dashboard import RigOperationsDashboardView
 from .rig_moves_dashboard import RigMovesDashboardView
 from .safety_performance_dashboard import SafetyPerformanceDashboardView
 from .contract_exposure_dashboard import ContractExposureDashboardView
@@ -297,6 +298,9 @@ router.register(
 )
 router.register("masters/vendors", masters_views.MstxVendorViewSet, basename="mstx-vendor")
 router.register("masters/signable-docs", masters_views.MstSignableDocViewSet, basename="mst-signable-doc")
+router.register("masters/diesel-prices", masters_views.DieselPriceViewSet, basename="diesel-price")
+router.register("masters/rig-month-plans", masters_views.RigMonthPlanViewSet, basename="rig-month-plan")
+router.register("masters/ilm-rate-terms", masters_views.IlmRateTermViewSet, basename="ilm-rate-term")
 router.register("masters/vendor-types", masters_views.MstVendorTypeViewSet, basename="mst-vendor-type")
 router.register("it-asset/it-assets", masters_views.MstItAssetViewSet, basename="it-asset")
 router.register(
@@ -401,6 +405,7 @@ urlpatterns = [
     path("dashboard/digest/", ComplianceDigestView.as_view(), name="dashboard_digest"),
     path("dashboards/safety-performance/", SafetyPerformanceDashboardView.as_view(), name="dashboards_safety_performance"),
     path("dashboards/fuel-water/", FuelWaterDashboardView.as_view(), name="dashboards_fuel_water"),
+    path("dashboards/rig-operations/", RigOperationsDashboardView.as_view(), name="dashboards_rig_operations"),
     path("dashboards/rig-moves/", RigMovesDashboardView.as_view(), name="dashboards_rig_moves"),
     path(
         "dashboards/fleet-operating-picture/",
@@ -574,6 +579,13 @@ urlpatterns = [
     path("admin/scheduled-mails/jobs/<str:job_key>/<str:state>/", scheduled_mails_views.job_switch_api, name="scheduled_mails_job_switch"),
     path("admin/scheduled-mails/<int:item_id>/email/", scheduled_mails_views.item_email_api, name="scheduled_mail_email"),
     path("admin/scheduled-mails/<int:item_id>/recipients/", scheduled_mails_views.item_recipients_api, name="scheduled_mail_recipients"),
+    path("reports/rig-performance/", rig_performance_views.report_api, name="rig_performance_report"),
+    path("reports/rig-performance/download/", rig_performance_views.report_download_api, name="rig_performance_download"),
+    path("reports/rig-performance/rate-sheet/", rig_performance_views.rate_sheet_api, name="rig_performance_rate_sheet"),
+    path("reports/rig-performance/plan/", rig_performance_views.plan_api, name="rig_performance_plan"),
+    path("reports/rig-performance/ilm-terms/", rig_performance_views.ilm_terms_api, name="rig_performance_ilm_terms"),
+    path("reports/rig-performance/plan/reopen/", rig_performance_views.reopen_api, name="rig_performance_reopen"),
+    path("reports/rig-performance/plan/close/", rig_performance_views.close_api, name="rig_performance_close"),
     path("admin/report-mails/", report_mail_views.reports_api, name="report_mails"),
     path("admin/report-mails/<str:key>/download/", report_mail_views.download_api, name="report_mail_download"),
     path("admin/report-mails/<str:key>/test-send/", report_mail_views.test_send_api, name="report_mail_test_send"),

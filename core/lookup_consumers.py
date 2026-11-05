@@ -227,6 +227,7 @@ LOOKUP_CONSUMERS = {
     "masters.project_contract": (
         "drilling.drilling_information",
         "masters.drilling_work_shift",
+        "masters.ilm_rate_terms",
         "masters.project_drilling_rates",
     ),
     "masters.project_drilling_rates": (
@@ -271,7 +272,9 @@ LOOKUP_CONSUMERS = {
         "masters.cost_centres",
         "masters.fs_emp_cur_status",
         "masters.fs_employees",
+        "masters.ilm_rate_terms",
         "masters.project_contract",
+        "masters.rig_month_plans",
         "masters.rig_site_mapping",
         "masters.user_rig_mapping",
         "qhse.activity_monitor",
