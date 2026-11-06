@@ -82,18 +82,25 @@ def fnc_get_average_revenue(rig_id, contract_id, from_date, to_date, first_entry
     if from_date is None or to_date is None:
         return None
     parts = []
+    memo = {}  # the rate of each rate type is looked up once per call, not once per activity row (thousands of queries for a year)
+
+    def rate_of(rate_type_id):
+        if rate_type_id not in memo:
+            memo[rate_type_id] = gnc_get_prj_drilling_rate(rate_type_id, contract_id, rig_id)
+        return memo[rate_type_id]
+
     rows = DrillingDtlOps.objects.filter(
         drilling_dtl__rig_id=rig_id, drilling_dtl__drilling_hdr__contract_id=contract_id, drilling_dtl__drilling_dtl_dt__gte=from_date, drilling_dtl__drilling_dtl_dt__lte=to_date
     ).exclude(prj_drilling_rate__drilling_rate_id__in=ILM_IPM_RATES).values("prj_drilling_rate__drilling_rate_id", "drilling_ops_id", "duration", "depth_from", "depth_to")
     for r in rows:
         rid = r["prj_drilling_rate__drilling_rate_id"]
         qty = (r["depth_to"] or 0) - (r["depth_from"] or 0) if r["drilling_ops_id"] == 2 and rid in METERAGE_RATES else r["duration"]
-        rate = gnc_get_prj_drilling_rate(rid, contract_id, rig_id)
+        rate = rate_of(rid)
         parts.append((rate or 0) * (qty or 0) if qty is not None else None)
-    kms = gnc_get_prj_drilling_rate(RATE_KMS, contract_id, rig_id)
+    kms = rate_of(RATE_KMS)
     for h in DrillingHdr.objects.filter(rig_id=rig_id, contract_id=contract_id, drilling_rate_id__in=ILM_IPM_RATES).exclude(pk=first_entry_hdr_id):
         if _date(h.first_anchor_down_dt) <= to_date and (_date(h.drilling_completion_dt) if h.drilling_completion_dt else to_date) >= from_date:
-            lump = gnc_get_prj_drilling_rate(h.drilling_rate_id, contract_id, rig_id)
+            lump = rate_of(h.drilling_rate_id)
             parts.append(lump + h.distance_covered_kms_knots * kms if lump is not None and kms is not None and h.distance_covered_kms_knots is not None else None)
     parts = [p for p in parts if p is not None]
     return sum(parts, Decimal(0)) if parts else None

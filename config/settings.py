@@ -304,6 +304,12 @@ SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # aft
 # Scheduled Mails and in the logs). The error mail goes out through the default account.
 SCHEDULER_ERROR_MAIL_TO = [a.strip() for a in os.getenv("SCHEDULER_ERROR_MAIL_TO", "").split(",") if a.strip()]
 
+# Mail redirect, for a test, staging or UAT machine: with MAIL_REDIRECT=True EVERY mail the application sends (approvals, automatic mails, reports, error mails, test
+# sends) goes only to the addresses in MAIL_REDIRECT_TO (comma separated), whoever is set as the recipient in the data. The mail says in its body, and in its
+# subject, who it was meant for. If it is on and MAIL_REDIRECT_TO is empty nothing is sent at all (never the real people). Leave it False in production.
+MAIL_REDIRECT = os.getenv("MAIL_REDIRECT", "False").strip().lower() in ("1", "true", "yes", "on")
+MAIL_REDIRECT_TO = [a.strip() for a in os.getenv("MAIL_REDIRECT_TO", "").split(",") if a.strip()]
+
 # ── Log files ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # backend/logs/ (or LOG_DIR): scheduler-<date>.log (every hourly run), automation_errors-<date>.log (every error, with its traceback) and
 # django-<date>.log. One file per day, kept LOG_KEEP_DAYS days. Passwords are never logged.

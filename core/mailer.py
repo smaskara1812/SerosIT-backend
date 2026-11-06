@@ -19,11 +19,46 @@ Two entry points:
 
 import logging
 import threading
+from html import escape as html_escape
 
 from django.conf import settings
 from django.core.mail import EmailMessage, get_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _intended(to, cc, bcc):
+    parts = []
+    if to:
+        parts.append("To: " + ", ".join(to))
+    if cc:
+        parts.append("Cc: " + ", ".join(cc))
+    if bcc:
+        parts.append("Bcc: " + ", ".join(bcc))
+    return "; ".join(parts) or "nobody"
+
+
+def redirect_mail(subject, to, cc, bcc, html=None, text=None):
+    """Mail redirect (settings.MAIL_REDIRECT). Returns (subject, to, cc, bcc, html, text, blocked):
+    off: everything unchanged. On: the mail goes only to MAIL_REDIRECT_TO (as To, no Cc or Bcc), the subject starts with [Redirected], and the body begins with a notice
+    naming who the mail was meant for. On with no address set: blocked is a sentence saying so and nothing may be sent."""
+    if not settings.MAIL_REDIRECT:
+        return subject, to, cc, bcc, html, text, ""
+    if not settings.MAIL_REDIRECT_TO:
+        return subject, to, cc, bcc, html, text, "Mail redirect is on (MAIL_REDIRECT) but MAIL_REDIRECT_TO is empty, so nothing was sent."
+    meant = _intended(to, cc, bcc)
+    note_text = f"[Redirected mail] This mail was meant for: {meant}. It was sent to you instead because mail redirect is switched on for this server.\n\n"
+    note_html = (
+        '<div style="border:1px solid #e8900c;background:#fff8e6;color:#7c420d;padding:8px 12px;margin:0 0 14px;font:12px Verdana,Tahoma,Arial,sans-serif">'
+        f"<b>Redirected mail.</b> This mail was meant for: {html_escape(meant)}. It was sent to you instead because mail redirect is switched on for this server.</div>"
+    )
+    if html is not None:
+        i = html.lower().find("<body")
+        j = html.find(">", i) + 1 if i >= 0 else 0
+        html = html[:j] + note_html + html[j:]
+    if text is not None:
+        text = note_text + text
+    return f"[Redirected] {subject}", list(settings.MAIL_REDIRECT_TO), [], [], html, text, ""
 
 
 def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html, attachments):
@@ -94,6 +129,13 @@ def send_notification_email(
     to = [a for a in (to or []) if a]
     cc = [a for a in (cc or []) if a]
     bcc = [a for a in (bcc or []) if a]
+    blocked = ""
+    if to or cc or bcc:
+        # Mail redirect: on a test machine every mail goes to the addresses in MAIL_REDIRECT_TO only (see redirect_mail)
+        if is_html:
+            subject, to, cc, bcc, body, _t, blocked = redirect_mail(subject, to, cc, bcc, html=body)
+        else:
+            subject, to, cc, bcc, _h, body, blocked = redirect_mail(subject, to, cc, bcc, text=body)
     recipients_display = ", ".join([*to, *(f"cc:{a}" for a in cc), *(f"bcc:{a}" for a in bcc)])
 
     success = False
@@ -101,7 +143,9 @@ def send_notification_email(
     error = ""
     from_used = from_email or auth_user or settings.DEFAULT_FROM_EMAIL or ""
 
-    if not (to or cc or bcc):
+    if blocked:
+        error = blocked
+    elif not (to or cc or bcc):
         error = "No recipients"
     else:
         if auth_user and auth_password:
@@ -321,6 +365,9 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     from .models import EmailLog
 
     to, cc, bcc = ([a for a in (x or []) if a] for x in (to, cc, bcc))
+    blocked = ""
+    if to or cc or bcc:
+        subject, to, cc, bcc, html, text, blocked = redirect_mail(subject, to, cc, bcc, html=html, text=text)  # mail redirect (MAIL_REDIRECT)
     recipients_display = ", ".join([*to, *(f"cc:{a}" for a in cc), *(f"bcc:{a}" for a in bcc)])
     attempts = []
     if designated:
@@ -333,7 +380,9 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
 
     ok, used, errors = False, "", []
     from_used = attempts[0][1]["from_address"]  # the account tried first; replaced by the one that actually sent it
-    if not (to or cc or bcc):
+    if blocked:
+        errors.append(blocked)
+    elif not (to or cc or bcc):
         errors.append("No recipients")
     else:
         for label, smtp in attempts:
@@ -350,7 +399,7 @@ def send_scheduled_email(subject, html, text, to=None, cc=None, bcc=None, from_n
     error = "; ".join(errors) if not ok else ""
     if ok and errors:
         _sched_log.warning("scheduled mail %r went out with the %s account after: %s", trigger_code or subject, used, "; ".join(errors))
-    if not ok and errors == ["No recipients"]:
+    if not ok and (errors == ["No recipients"] or (blocked and errors == [blocked])):
         _sched_log.error("scheduled mail %r has no recipients: nothing was sent", trigger_code or subject)
 
     log_id = None

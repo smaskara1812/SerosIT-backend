@@ -93,6 +93,8 @@ class ScheduledReportJob(JobBase):
             "smtp": {"designated": False, "designated_host": "", "default_host": settings.EMAIL_HOST, "sender": None},
             "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO),
         }
+        if settings.MAIL_REDIRECT:
+            out["warnings"].append("Mail redirect is ON for this server: every mail goes only to " + (", ".join(settings.MAIL_REDIRECT_TO) or "nobody (MAIL_REDIRECT_TO is empty, so nothing is sent)") + ", with the intended people named in the mail.")
         if not trig:
             out["warnings"].append(f"No trigger row connects the {self.report_name} to an alert. Add one in Masters > Notification Triggers (Automation → the {self.report_name} action).")
             return out

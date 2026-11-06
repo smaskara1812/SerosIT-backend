@@ -63,11 +63,18 @@ TODAY = NOW.date()
 YESTERDAY = TODAY - datetime.timedelta(days=1)
 ALERT = 231
 JOB = di.JOB
+
+
+def run_job(alert, setup, now):
+    """JOB.send_report, then the Email Log rows it wrote are dated as the test's own day (the check runs on a fixed day, the log stamps the real clock)."""
+    res = JOB.send_report(alert, setup, now)
+    EmailLog.objects.filter(trigger_code=di.TRIGGER_CODE).update(sent_dt=NOW)
+    return res
 KEY = "masters.rig_alert_recipients"
 try:
     with transaction.atomic():
         a = MailAlertDtl.objects.get(pk=ALERT)
-        ok("alert 231 is Drilling Info : Daily Not Entered, window 30 (updated 5 Nov 2026)", a.alert_name == "Drilling Info : Daily Not Entered" and a.alert_window == 30, str(a.alert_window))
+        ok("alert 231 is the Drilling Info Daily Not Entered alert, window 30 (updated 5 Nov 2026)", "Not Entered" in a.alert_name and a.alert_window == 30, f"{a.alert_name} {a.alert_window}")
         SchedItem.objects.filter(job_key=di.JOB_KEY).delete()
         NotificationTrigger.objects.filter(entity_key="automation", action=di.ACTION).delete()
         EmailLog.objects.filter(trigger_code=di.TRIGGER_CODE).delete()
@@ -103,15 +110,15 @@ try:
         ok("the Report Mails preview lists the rig rows too", any(e["source"].startswith("Rig Alert Recipients (SK01)") for e in JOB.recipients_detailed(TODAY)) or JOB.alert() is None)
 
         print("C. the mail")
-        ensure = di.ensure_setup()
-        ok("the setup command logic creates the job row and the trigger (by the alert's name), once", ensure and not di.ensure_setup() and NotificationTrigger.objects.filter(entity_key="automation", action=di.ACTION, alert_id=ALERT).count() == 1, str(ensure))
+        ensure = di.ensure_setup(ALERT)
+        ok("the setup command logic creates the job row and the trigger, once", ensure and not di.ensure_setup(ALERT) and NotificationTrigger.objects.filter(entity_key="automation", action=di.ACTION, alert_id=ALERT).count() == 1, str(ensure))
         from core.scheduled_mails_views import recipients_preview
         pv = recipients_preview(JOB, TODAY)
         ok("the recipients preview lists the rig rows too and links to Rig Alert Recipients", any(e["source"].startswith("Rig Alert Recipients (SK01)") for e in pv["recipients"]) and "rig-alert-recipients?alert=231" in pv["links"].get("rig_recipients", ""), str({e["source"] for e in pv["recipients"]})[:300])
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_active="Y")
         a = MailAlertDtl.objects.get(pk=ALERT)
         sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         names = [n for _i, n in di.missing_rigs(TODAY, 30)]
         ok("one mail per missing rig, none for the others", err == "" and len(sent) == len(names) and len(sent) >= 1, f"{err} {len(sent)} {names}")
         m = next(x for x in sent if "SK01" in x["html"])
@@ -123,35 +130,40 @@ try:
         print("D. retry, no To, nothing missing")
         sent.clear(); EmailLog.objects.filter(trigger_code=di.TRIGGER_CODE).delete()
         fail_for.add("SK01")
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a rig whose mail fails is reported, the other rigs' mails go", "SK01" in err and "smtp down" in err.replace("smtp down", "smtp down") and len(sent) == len(names) - 1, f"{err} {len(sent)}")
         fail_for.clear(); sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("the retry mails only the rig that failed, nobody twice", err == "" and len(sent) == 1 and "SK01" in sent[0]["html"], f"{err} {len(sent)} {mail.summary}")
         sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a third run sends nothing at all, and says the rig was mailed earlier", err == "" and not sent and "already mailed earlier" in mail.summary, mail.summary)
         EmailLog.objects.filter(trigger_code=di.TRIGGER_CODE).delete()
         MailAlertToUser.objects.filter(alert_id=ALERT, addressee_type="T").delete()
         RigToEmailMapping.objects.filter(alert_id=ALERT, addressee_type="T", rig_id=sk01).delete()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a rig with no To address is reported (and not mailed); the error names it", "SK01: no To address" in err, err)
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_window=1)
         a1 = MailAlertDtl.objects.get(pk=ALERT)
         sent.clear()
-        err, res, mail = JOB.send_report(a1, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a1, JOB.get_setup(TODAY), NOW)
         ok("nothing missing: no mail, no error, and the summary says so", err == "" and not sent and "nothing sent" in mail.summary, f"{err} {mail.summary} {sent}")
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_window=30, alert_active="")
-        err, res, mail = JOB.send_report(MailAlertDtl.objects.get(pk=ALERT), JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(MailAlertDtl.objects.get(pk=ALERT), JOB.get_setup(TODAY), NOW)
         ok("an alert that is not active sends nothing and says why", "switched off" in err)
 
         pm = JOB.preview_mails(MailAlertDtl.objects.get(pk=ALERT), NOW)
+        n_now = len(JOB.preview_mails(MailAlertDtl.objects.get(pk=ALERT), datetime.datetime.now()))  # the test button works on the real clock
         ok("a test makes the real mails (not an empty one): 1 here, each with a body", len(pm) == 1 and all(m.html and m.text and "Seros-IT Auto Alert" in m.html for m in pm), str([m.subject for m in pm]))
         RK = "admin.report_mails"
         tester = mk("tt_edit", {RK: "view edit"})
         sent.clear()
         r = tester.post(f"/api/admin/report-mails/{JOB.key}/test-send/", {"email": "me@example.test"}, format="json")
-        ok("Send a test sends every one of them to the tester only, marked [Test]", r.status_code == 200 and r.json()["count"] == 1 and len(sent) == 1 and all(m["to"] == ["me@example.test"] and not m["cc"] and not m["bcc"] and m["subject"].startswith("[Test] ") and "Seros-IT Auto Alert" in m["html"] for m in sent), f"{r.status_code} {r.content[:200]}")
+        ok("Send a test sends every one of them to the tester only, marked [Test]", r.status_code == 200 and r.json()["count"] == n_now and len(sent) == n_now and all(m["to"] == ["me@example.test"] and not m["cc"] and not m["bcc"] and m["subject"].startswith("[Test] ") and "Seros-IT Auto Alert" in m["html"] for m in sent), f"{r.status_code} {r.content[:200]}")
+        from openpyxl import load_workbook as _lw
+        import io as _io
+        _dl = JOB.build(MailAlertDtl.objects.get(pk=ALERT), NOW)
+        ok("Download report gives an Excel file of what a run would send now (the mails themselves have no attachment), not an error", len(_dl.attachments) == 1 and _dl.attachments[0][0].startswith("Drilling_Info_Not_Entered") and _dl.attachments[0][0].endswith(".xlsx") and _lw(_io.BytesIO(_dl.attachments[0][1])).active.max_row >= 2)
         print("E. error-mail addresses, the job in the scheduler")
         from core import scheduler
         ok("the job is registered with the scheduler", scheduler.JOBS.get(di.JOB_KEY) is JOB)

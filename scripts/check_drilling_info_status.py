@@ -59,6 +59,13 @@ NOW = DT(2026, 11, 5, 11, 0, 5)
 TODAY = NOW.date()
 ALERT = 244
 JOB = ds.JOB
+
+
+def run_job(alert, setup, now):
+    """JOB.send_report, then the Email Log rows it wrote are dated as the test's own day (the check runs on a fixed day, the log stamps the real clock)."""
+    res = JOB.send_report(alert, setup, now)
+    EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE).update(sent_dt=NOW)
+    return res
 KEY = "masters.rig_alert_recipients"
 try:
     with transaction.atomic():
@@ -96,7 +103,7 @@ try:
         ok("a company's rows are not mixed with another company's", set(map(str.lower, r_sepl["to"] + r_sepl["cc"])).isdisjoint({"ranvir.singh@seros.co.in"}) and "ranvir.singh@seros.co.in" in [e.lower() for e in r_sosil["cc"]], str(r_sosil))
 
         print("C. the mails")
-        ds.ensure_setup()
+        ds.ensure_setup(ALERT)
         from core.scheduled_mails_views import recipients_preview
         pv = recipients_preview(JOB, TODAY)
         srcs = {e["source"] for e in pv["recipients"]}
@@ -104,29 +111,29 @@ try:
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_active="Y")
         a = MailAlertDtl.objects.get(pk=ALERT)
         sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("one mail per company, every day, whether or not a rig is late", err == "" and len(sent) == 3 and all(m["subject"] == "Drilling Info Status" for m in sent), f"{err} {len(sent)}")
         m = next(x for x in sent if "Axom Rhino" in x["html"])
         ok("the SOSIL mail has only its rig, goes to its recipients through the default account", "SK01" not in m["html"] and m["to"] and m["host"] == "smtp.default.test" and m["from_name"] == "", str(m["to"]))
         ok("the Email Log has one row per mail", EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE, success=True).count() == 3)
         sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("run again the same day: nobody is mailed twice", err == "" and not sent and "already mailed earlier" in mail.summary, mail.summary)
         EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE).delete(); sent.clear(); fail_for.add("Axom Rhino")
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a company whose mail fails is reported; the others go", "SOSIL" in err and len(sent) == 2, f"{err} {len(sent)}")
         fail_for.clear(); sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("the retry sends only that company", err == "" and len(sent) == 1 and "Axom Rhino" in sent[0]["html"], f"{err} {len(sent)}")
         EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE).delete()
         from core.models import MailAlertToUser
         MailAlertToUser.objects.filter(alert_id=ALERT, addressee_type="T").delete()
         RigToEmailMapping.objects.filter(alert_id=ALERT, company_id=sosil, addressee_type="T").delete()
         sent.clear()
-        err, res, mail = JOB.send_report(a, JOB.get_setup(TODAY), NOW)
+        err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a company with no To address is reported and not mailed; the other companies still go", "SOSIL: no To address" in err and len(sent) == 2, f"{err} {len(sent)}")
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_active="")
-        err, _r, _m = JOB.send_report(MailAlertDtl.objects.get(pk=ALERT), JOB.get_setup(TODAY), NOW)
+        err, _r, _m = run_job(MailAlertDtl.objects.get(pk=ALERT), JOB.get_setup(TODAY), NOW)
         ok("an alert that is not active sends nothing and says why", "switched off" in err)
         from core import scheduler
         ok("the job is registered with the scheduler", scheduler.JOBS.get(ds.JOB_KEY) is JOB)
@@ -138,6 +145,10 @@ try:
         sent.clear()
         r = tester.post(f"/api/admin/report-mails/{JOB.key}/test-send/", {"email": "me@example.test"}, format="json")
         ok("Send a test sends every one of them to the tester only, marked [Test]", r.status_code == 200 and r.json()["count"] == 3 and len(sent) == 3 and all(m["to"] == ["me@example.test"] and not m["cc"] and not m["bcc"] and m["subject"].startswith("[Test] ") and "Seros-IT Auto Alert" in m["html"] for m in sent), f"{r.status_code} {r.content[:200]}")
+        from openpyxl import load_workbook as _lw
+        import io as _io
+        _dl = JOB.build(MailAlertDtl.objects.get(pk=ALERT), NOW)
+        ok("Download report gives an Excel file of what a run would send now (the mails themselves have no attachment), not an error", len(_dl.attachments) == 1 and _dl.attachments[0][0].startswith("Drilling_Info_Status") and _dl.attachments[0][0].endswith(".xlsx") and _lw(_io.BytesIO(_dl.attachments[0][1])).active.max_row >= 2)
         print("D. Rig Alert Recipients: a rig or a company")
         full = mk("ds_edit", {KEY: "view add edit delete"})
         url = "/api/masters/rig-alert-recipients/"

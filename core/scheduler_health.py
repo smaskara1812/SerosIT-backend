@@ -120,6 +120,7 @@ def evaluate(now=None):
         title, level = "The scheduler service was stopped on purpose", "warning"
     return {
         "level": level, "title": title, "state": state, "age": age, "mode": settings.SCHEDULER_MODE, "problems": problems, "counts": c,
+        "mail_redirect": {"on": bool(settings.MAIL_REDIRECT), "to": list(settings.MAIL_REDIRECT_TO)},
         "heartbeat": {
             "last_alive_at": hb.last_alive_at, "last_run_at": hb.last_service_tick_at, "last_manual_at": hb.last_manual_tick_at, "last_run_ok": hb.last_tick_ok, "last_run_message": hb.last_message,
             "started_at": hb.started_at, "stopped_at": hb.stopped_at, "host": hb.service_host, "pid": hb.service_pid,

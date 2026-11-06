@@ -99,6 +99,38 @@ def _text(rig, day):
     return f"Seros-IT Auto Alert\n\nDrilling Information has not been updated for Rig : {rig}\nNo daily drilling report is entered for {day:%d %b %Y}.\n\n* This is an automated mail. Please do not reply."
 
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _workbook(title, headers, rows, empty_note):
+    """A small Excel file of what a run would send now, for the Download report button (the mails themselves have no attachment)."""
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for r in rows:
+        ws.append(r)
+    if not rows:
+        ws.append([empty_note])
+    for i, h in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = max(14, min(60, max([len(str(h))] + [len(str(r[i - 1])) for r in rows]) + 2))
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            if isinstance(c.value, datetime.date):
+                c.number_format = "DD-MMM-YYYY"
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
 class DrillingInfoNotEnteredJob(ScheduledReportJob):
     key = JOB_KEY
     name = "Drilling Info: Daily Not Entered"
@@ -114,7 +146,13 @@ class DrillingInfoNotEnteredJob(ScheduledReportJob):
         today = now.date()
         rigs = missing_rigs(today, window_days(alert))
         names = ", ".join(n for _i, n in rigs)
-        return ReportMail(alert.mail_subject or "Drilling Info Not Updated.", "", "", [], not rigs, f"{len(rigs)} rig(s) without yesterday's report: {names}" if rigs else "Every rig has yesterday's report: nothing sent")
+        yesterday = today - datetime.timedelta(days=1)
+        rows = []
+        for rid, rig in rigs:
+            rec = recipients_for_rig(alert.alert_id, rid, today)
+            rows.append([rig, yesterday, "; ".join(rec["to"]), "; ".join(rec["cc"]), "; ".join(rec["bcc"])])
+        sheet = _workbook("Not entered", ["Rig", "Missing report for", "To", "Cc", "Bcc"], rows, f"Every checked rig has the report for {yesterday:%d %b %Y}: nothing would be sent.")
+        return ReportMail(alert.mail_subject or "Drilling Info Not Updated.", "", "", [(f"Drilling_Info_Not_Entered_{now:%d_%m_%Y}.xlsx", sheet, XLSX)], not rigs, f"{len(rigs)} rig(s) without yesterday's report: {names}" if rigs else "Every rig has yesterday's report: nothing sent")
 
     def preview_mails(self, alert, now):
         """The test: one real mail per rig that is missing yesterday's report. When no rig is missing, one EXAMPLE mail for the first checked rig, so the mail can still be seen."""

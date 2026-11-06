@@ -105,9 +105,19 @@ class DrillingInfoStatusJob(ScheduledReportJob):
     uses_rig_recipients = True  # the preview and the pages also list / link Rig Alert Recipients
 
     def build(self, alert, now):
-        groups = by_company(status_rows(now.date()))
+        from .drilling_info_not_entered import _workbook, XLSX
+        from .drilling_info_not_entered import recipients_for_company as _rc
+
+        today = now.date()
+        groups = by_company(status_rows(today))
         names = ", ".join(n for _c, n, _r in groups)
-        return ReportMail(alert.mail_subject or "Drilling Info Status", "", "", [], not groups, f"{len(groups)} company mail(s): {names}" if groups else "No rig is on a project: nothing sent")
+        rows = []
+        for cid, company, rs in groups:
+            rec = _rc(alert.alert_id, cid, today)
+            for r in rs:
+                rows.append([r["company"], r["rig"], r["contract_no"], r["prj_start"], r["anchor"], r["last"], r["days"] or None, "; ".join(rec["to"]), "; ".join(rec["cc"]), "; ".join(rec["bcc"])])
+        sheet = _workbook("Drilling Info Status", HEADERS + ["To", "Cc", "Bcc"], rows, "No rig is on a project: nothing would be sent.")
+        return ReportMail(alert.mail_subject or "Drilling Info Status", "", "", [(f"Drilling_Info_Status_{now:%d_%m_%Y}.xlsx", sheet, XLSX)], not groups, f"{len(groups)} company mail(s): {names}" if groups else "No rig is on a project: nothing sent")
 
     def preview_mails(self, alert, now):
         """The test: one real mail per company, as the real run sends them."""
