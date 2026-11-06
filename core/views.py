@@ -1206,3 +1206,54 @@ def admin_login_security_unlock_api(request):
     removed = login_guard.unlock(username)
     _audit.log_auth("login_unlocked", request.user.username, request, extra={"unlocked": username, "rows": removed})
     return Response({"success": True, "removed": removed})
+
+
+# ── Mail redirect (App Admin only; no rights can be given for it) ──────────────────────────────────────────────────────────
+MAIL_REDIRECT_PHRASE = "CONFIRM REDIRECT UPDATE"
+
+
+def _redirect_payload():
+    from . import mailer
+    from .models import MailRedirectSetting
+
+    on, to, source = mailer.redirect_state()
+    row = MailRedirectSetting.objects.filter(pk=1).first()
+    return {"on": on, "to": to, "source": source, "env": {"on": bool(settings.MAIL_REDIRECT), "to": list(settings.MAIL_REDIRECT_TO)},
+            "changed_by": row.changed_by if row else "", "changed_at": row.changed_at if row else None, "phrase": MAIL_REDIRECT_PHRASE}
+
+
+@api_view(["GET", "PUT"])
+@permission_classes([IsAppAdmin])
+def admin_mail_redirect_api(request):
+    """GET: the redirect as it is now. PUT {enabled, redirect_to: [addresses], confirm: "CONFIRM REDIRECT UPDATE"}: saves it. The page row wins over .env."""
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+    from django.utils import timezone
+
+    from . import audit as _audit
+    from . import mailer
+    from .models import MailRedirectSetting
+    from .notice_board import poster_name
+
+    if request.method == "GET":
+        return Response(_redirect_payload())
+    d = request.data or {}
+    if (d.get("confirm") or "").strip() != MAIL_REDIRECT_PHRASE:
+        return Response({"detail": f"Type {MAIL_REDIRECT_PHRASE} exactly to confirm."}, status=400)
+    raw = d.get("redirect_to") or []
+    if isinstance(raw, str):
+        raw = raw.replace("\n", ",").replace(";", ",").split(",")
+    addrs = list(dict.fromkeys(a.strip() for a in raw if a and a.strip()))
+    for a in addrs:
+        try:
+            validate_email(a)
+        except ValidationError:
+            return Response({"detail": f"'{a}' is not a valid e-mail address."}, status=400)
+    enabled = bool(d.get("enabled"))
+    if enabled and not addrs:
+        return Response({"detail": "Add at least one address before switching the redirect on, or no mail could be sent."}, status=400)
+    old_on, old_to, _ = mailer.redirect_state()
+    MailRedirectSetting.objects.update_or_create(pk=1, defaults={"enabled": enabled, "redirect_to": ", ".join(addrs), "changed_by": poster_name(request.user)[:100], "changed_at": timezone.now()})
+    mailer.clear_redirect_cache()
+    _audit.record_action(request, "update", "mail_redirect", 1, "Mail redirect", {"enabled": {"old": old_on, "new": enabled}, "redirect_to": {"old": ", ".join(old_to), "new": ", ".join(addrs)}})
+    return Response(_redirect_payload())

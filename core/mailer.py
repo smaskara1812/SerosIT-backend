@@ -38,13 +38,41 @@ def _intended(to, cc, bcc):
     return "; ".join(parts) or "nobody"
 
 
+_REDIRECT_CACHE = {"at": 0.0, "row": None}
+_REDIRECT_TTL = 10  # seconds: the server and the scheduler service are separate processes; a change made on the page reaches the other within this time
+
+
+def clear_redirect_cache():
+    _REDIRECT_CACHE["at"] = 0.0
+
+
+def redirect_state():
+    """-> (on, [addresses], source). source is "page" when an App Admin has set it on the Mail Redirect page (that row wins), else "env" (MAIL_REDIRECT / MAIL_REDIRECT_TO)."""
+    import time
+
+    from .models import MailRedirectSetting
+
+    if time.monotonic() - _REDIRECT_CACHE["at"] > _REDIRECT_TTL:
+        try:
+            row = MailRedirectSetting.objects.filter(pk=1).first()
+            _REDIRECT_CACHE["row"] = (bool(row.enabled), [a.strip() for a in (row.redirect_to or "").split(",") if a.strip()]) if row else None
+        except Exception:  # the table is not there yet (migration not run): the .env decides
+            _REDIRECT_CACHE["row"] = None
+        _REDIRECT_CACHE["at"] = time.monotonic()
+    row = _REDIRECT_CACHE["row"]
+    if row is not None:
+        return row[0], list(row[1]), "page"
+    return bool(settings.MAIL_REDIRECT), list(settings.MAIL_REDIRECT_TO), "env"
+
+
 def redirect_mail(subject, to, cc, bcc, html=None, text=None):
     """Mail redirect (settings.MAIL_REDIRECT). Returns (subject, to, cc, bcc, html, text, blocked):
     off: everything unchanged. On: the mail goes only to MAIL_REDIRECT_TO (as To, no Cc or Bcc), the subject starts with [Redirected], and the body begins with a notice
     naming who the mail was meant for. On with no address set: blocked is a sentence saying so and nothing may be sent."""
-    if not settings.MAIL_REDIRECT:
+    on, targets, _src = redirect_state()
+    if not on:
         return subject, to, cc, bcc, html, text, ""
-    if not settings.MAIL_REDIRECT_TO:
+    if not targets:
         return subject, to, cc, bcc, html, text, "Mail redirect is on (MAIL_REDIRECT) but MAIL_REDIRECT_TO is empty, so nothing was sent."
     meant = _intended(to, cc, bcc)
     note_text = f"[Redirected mail] This mail was meant for: {meant}. It was sent to you instead because mail redirect is switched on for this server.\n\n"
@@ -58,7 +86,7 @@ def redirect_mail(subject, to, cc, bcc, html=None, text=None):
         html = html[:j] + note_html + html[j:]
     if text is not None:
         text = note_text + text
-    return f"[Redirected] {subject}", list(settings.MAIL_REDIRECT_TO), [], [], html, text, ""
+    return f"[Redirected] {subject}", list(targets), [], [], html, text, ""
 
 
 def _send_via(subject, body, to, cc, bcc, from_email, auth_user, auth_password, is_html, attachments):

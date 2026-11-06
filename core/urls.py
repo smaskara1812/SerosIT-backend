@@ -601,6 +601,7 @@ urlpatterns = [
     path("admin/banner-assets/", assets_api, name="banner_assets"),
     path("admin/banner-assets/<int:asset_id>/", asset_detail_api, name="banner_asset_detail"),
     path("banner/assets/<int:asset_id>/file/", asset_file_api, name="banner_asset_file"),
+    path("admin/mail-redirect/", views.admin_mail_redirect_api, name="admin_mail_redirect"),
     path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),
     path("admin/email-log/", views.admin_email_log_list_api, name="admin_email_log_list"),
     path("admin/email-log/<int:pk>/body/", views.admin_email_log_body_api, name="admin_email_log_body"),

@@ -5076,3 +5076,16 @@ class RigToEmailMapping(models.Model):
 
     class Meta:
         db_table = "rig_to_email_mapping"
+
+
+class MailRedirectSetting(models.Model):
+    """One row, id 1: the mail redirect as an App Admin set it on the Mail Redirect page. With no row, the .env values (MAIL_REDIRECT, MAIL_REDIRECT_TO) apply."""
+
+    mail_redirect_id = models.IntegerField(primary_key=True)
+    enabled = models.BooleanField(default=False)
+    redirect_to = models.TextField(blank=True, default="")  # comma separated addresses
+    changed_by = models.CharField(max_length=100, blank=True, default="")
+    changed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mail_redirect_setting"
