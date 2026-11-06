@@ -5,7 +5,7 @@ admin.scheduled_mails): View to see, Edit to act. The work itself is done by cor
 import datetime
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -15,7 +15,7 @@ from . import audit as _audit
 from . import birthday_mailer, holiday_mailer, scheduler
 from . import scheduler_health as scheduler_health_module
 from .birthday_views import scheduler_health
-from .models import BirthdayTemplate, EmailLog, SchedItem, SchedJob
+from .models import BirthdayTemplate, EmailLog, NotificationTrigger, SchedItem, SchedJob
 from .notice_board import poster_name
 from .permissions import holds_a_right_on
 
@@ -50,12 +50,24 @@ def _row(i, names, max_attempts):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def scheduled_mails_api(request):
-    """?section=upcoming|today|earlier  &job=<key>  &status=<status>  &q=<text>  &page=<n>  &page_size=<n>"""
+    """?section=upcoming|today|earlier  &job=<key>  &status=<status>  &q=<text>  &page=<n>  &page_size=<n>  &part=list|panel
+    The page needs two things that change at different speeds: the LIST of mails (changes with every tab, filter and page) and the PANEL above it (the scheduler's health
+    and the automations: changes slowly). part=list answers only the list, part=panel only the panel, no part both (as before). Switching tabs asks for the list alone."""
     if not _may(request, "view"):
         return _deny()
     now = datetime.datetime.now()
     today = now.date()
     q = request.query_params
+    part = q.get("part", "")
+    out = {}
+    if part in ("", "list"):
+        out.update(_list_part(q, today))
+    if part in ("", "panel"):
+        out.update(_panel_part(now, today))
+    return Response(out)
+
+
+def _list_part(q, today):
     section = q.get("section", "upcoming")
     qs = SchedItem.objects.all()
     if q.get("job"):
@@ -64,49 +76,60 @@ def scheduled_mails_api(request):
         qs = qs.filter(status=q["status"])
     if q.get("q"):
         qs = qs.filter(Q(label__icontains=q["q"]) | Q(last_error__icontains=q["q"]))
-    sections = {
-        "upcoming": qs.filter(send_date__gte=today, send_date__lte=today + datetime.timedelta(days=7)).exclude(status__in=("sent", "cancelled")).order_by("due_at", "item_id"),
-        "today": qs.filter(send_date=today).exclude(status="cancelled").order_by("due_at", "item_id"),
-        "earlier": qs.filter(send_date__lt=today).order_by("-send_date", "-due_at", "-item_id"),
-    }
-    chosen = sections.get(section, sections["upcoming"])
+    in_upcoming = Q(send_date__gte=today, send_date__lte=today + datetime.timedelta(days=7)) & ~Q(status__in=("sent", "cancelled"))
+    in_today = Q(send_date=today) & ~Q(status="cancelled")
+    in_earlier = Q(send_date__lt=today)
+    where = {"upcoming": in_upcoming, "today": in_today, "earlier": in_earlier}
+    order = {"upcoming": ("due_at", "item_id"), "today": ("due_at", "item_id"), "earlier": ("-send_date", "-due_at", "-item_id")}
+    if section not in where:
+        section = "upcoming"
     try:
         size = min(200, max(1, int(q.get("page_size", 50))))
         page = max(1, int(q.get("page", 1)))
     except ValueError:
         size, page = 50, 1
-    total = chosen.count()
+    # the three tab counts in ONE query (they used to be three), and the list page itself
+    counts = qs.aggregate(upcoming=Count("pk", filter=in_upcoming), today=Count("pk", filter=in_today), earlier=Count("pk", filter=in_earlier))
     max_attempts = 1 + settings.SCHEDULER_MAX_RETRIES
     names = {k: j.name for k, j in scheduler.JOBS.items()}
-    rows = [_row(i, names, max_attempts) for i in chosen[(page - 1) * size : page * size]]
+    rows = [_row(i, names, max_attempts) for i in qs.filter(where[section]).order_by(*order[section])[(page - 1) * size : page * size]]
+    return {
+        "section": section, "count": counts[section], "page": page, "page_size": size, "results": rows, "counts": counts,
+        "max_attempts": max_attempts, "statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
+    }
+
+
+def _panel_part(now, today):
+    """The scheduler's health, its recent problems and the automations (switches, schedules, counts). A fixed, small number of queries however many automations there are:
+    the per-automation counts are grouped queries, and a report mail's setup is read once (it used to be read twice, each time asking for the alert's sender several times)."""
     base = SchedItem.objects.all()
+    rows = {r.job_key: r for r in SchedJob.objects.all()}
+
+    def per_job(qs):
+        return {r["job_key"]: r["n"] for r in qs.values("job_key").annotate(n=Count("pk"))}
+
+    failed = per_job(base.filter(status="failed"))
+    sent_today = per_job(base.filter(send_date=today, status="sent"))
+    planned = per_job(base.filter(status="planned", send_date__gte=today))
+    overdue = per_job(base.filter(status="planned", send_date__lt=today))
+    trigs = {(t.entity_key, t.action): t for t in NotificationTrigger.objects.filter(entity_key__in={j.trigger_entity for j in scheduler.JOBS.values() if getattr(j, "trigger_entity", None)}).select_related("alert")}
     next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
     jobs = []
     for key, job in scheduler.JOBS.items():
-        row = SchedJob.objects.filter(job_key=key).first()
+        row = rows.get(key)
+        setup = job.get_setup(today, trig=trigs.get((job.trigger_entity, job.trigger_action))) if job.schedule_kind == "cycle" else None
         jobs.append({"key": key, "name": job.name, "enabled": (row.enabled == "Y") if row else True, "last_run_at": row.last_run_at if row else None,
-                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today),
-                     "failed": base.filter(job_key=key, status="failed").count(), "sent_today": base.filter(job_key=key, send_date=today, status="sent").count(),
+                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today, setup) if setup is not None else job.schedule_text(today),
+                     "failed": failed.get(key, 0), "sent_today": sent_today.get(key, 0),
                      # for the pause and resume dialogs: what pausing would leave behind
-                     "kind": job.schedule_kind, "planned": base.filter(job_key=key, status="planned", send_date__gte=today).count(),
-                     "overdue_planned": base.filter(job_key=key, status="planned", send_date__lt=today).count(), **_cycle(job, today)})
-    return Response({
+                     "kind": job.schedule_kind, "planned": planned.get(key, 0), "overdue_planned": overdue.get(key, 0),
+                     **({"next_mail_dt": setup["next_mail_dt"], "freq": setup["freq"]} if setup is not None else {})})
+    return {
         "health": scheduler_health(now), "health_events": [
             {"id": e.event_id, "kind": e.kind, "level": e.level, "started_at": e.started_at, "ended_at": e.ended_at, "detail": e.detail, "alerted": e.alerted_at is not None}
             for e in scheduler_health_module.recent_events(6)
-        ], "jobs": jobs, "section": section, "count": total, "page": page, "page_size": size, "results": rows,
-        "counts": {"upcoming": sections["upcoming"].count() if section != "upcoming" else total, "today": sections["today"].count() if section != "today" else total,
-                   "earlier": sections["earlier"].count() if section != "earlier" else total},
-        "max_attempts": max_attempts, "statuses": [{"key": k, "label": v} for k, v in STATUS_LABELS.items()],
-    })
-
-
-def _cycle(job, today):
-    """For a cycle automation (a report mail): its Next Mail and frequency, so the dialogs can say what resuming will do."""
-    if job.schedule_kind != "cycle":
-        return {}
-    st = job.get_setup(today)
-    return {"next_mail_dt": st["next_mail_dt"], "freq": st["freq"]}
+        ], "jobs": jobs,
+    }
 
 
 def _act(request, item_id, name):
@@ -225,14 +248,18 @@ def item_recipients_api(request, item_id):
     return Response(recipients_preview(job, it.send_date, it.recipients))
 
 
-def recipients_preview(job, as_of, snapshot=""):
-    """The preview payload for one job on one day (shared with the Report Mails page)."""
+def recipients_preview(job, as_of, snapshot="", setup=None, alert_obj=None):
+    """The preview payload for one job on one day (shared with the Report Mails page). A caller that already has the job's setup (and its alert) passes them in, so
+    they are not read again."""
     from .notification_triggers import resolve_alert_recipients_detailed
 
-    setup = job.setup(as_of) or {}
+    setup = (setup if setup is not None else job.setup(as_of)) or {}
     alert = setup.get("alert")
     # a job that also reads Rig Alert Recipients (one mail per rig or per company) lists those people too, each labelled with where it comes from
-    entries = (job.recipients_detailed(as_of) if hasattr(job, "recipients_detailed") else resolve_alert_recipients_detailed(alert["id"], as_of)) if alert else []
+    if alert and hasattr(job, "recipients_detailed"):
+        entries = job.recipients_detailed(as_of, alert=alert_obj) if alert_obj is not None else job.recipients_detailed(as_of)
+    else:
+        entries = resolve_alert_recipients_detailed(alert["id"], as_of) if alert else []
     links = dict(setup.get("links", {}))
     if alert and getattr(job, "uses_rig_recipients", False):
         from urllib.parse import quote

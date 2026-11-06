@@ -76,17 +76,20 @@ class ScheduledReportJob(JobBase):
         return [self.build(alert, now)]
 
     # ── setup, as the pages show it ──
-    def from_name(self, alert):
+    def from_name(self, alert, own=mailer._NOT_GIVEN):
         from . import mailer as _m
 
-        sender = _m.sender_info(alert.alert_id) if alert else None
+        sender = _m.sender_info(alert.alert_id, own=own) if alert else None
         return ((sender or {}).get("display_name") or "").strip()  # blank: the From address only, the mail server adds whatever name it uses
 
-    def get_setup(self, today=None):
+    def get_setup(self, today=None, trig=mailer._NOT_GIVEN):
+        """How this report is set up, as the pages show it. `trig` is this job's Notification Triggers row (with its alert) when the caller has already read it, or None
+        when there is none; left out, it is looked up here. A page that lists several reports reads all the triggers in one query and passes each in."""
         today = today or datetime.date.today()
         from .models import NotificationTrigger
 
-        trig = NotificationTrigger.objects.filter(entity_key=self.trigger_entity, action=self.trigger_action).select_related("alert").first()
+        if trig is mailer._NOT_GIVEN:
+            trig = NotificationTrigger.objects.filter(entity_key=self.trigger_entity, action=self.trigger_action).select_related("alert").first()
         out = {
             "trigger_found": bool(trig), "trigger_active": bool(trig and trig.notification_trigger_active == "Y"), "alert": None, "from_name": "", "from_address": mailer.sender_identity(None, False)["address"], "links": mailer.alert_links(None, ""), "subject": "",
             "send_hour": 7, "window": 0, "freq": 0, "next_mail_dt": None, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
@@ -104,10 +107,11 @@ class ScheduledReportJob(JobBase):
         out["send_hour"] = a.start_time if a.start_time is not None else 7
         out["window"], out["freq"], out["next_mail_dt"] = a.alert_window, a.alert_freq, a.next_mail_dt
         out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
-        out["smtp"]["sender"] = mailer.sender_info(a.alert_id)
-        out["from_address"] = mailer.sender_identity(a.alert_id, False)["address"]
+        own = mailer.alert_sender(a.alert_id)  # the alert's own mail account: read once, used for the three things below
+        out["smtp"]["sender"] = mailer.sender_info(a.alert_id, own=own)
+        out["from_address"] = mailer.sender_identity(a.alert_id, False, own=own)["address"]
         out["links"] = mailer.alert_links(a.alert_id, a.alert_name)
-        out["from_name"] = self.from_name(a)
+        out["from_name"] = self.from_name(a, own=own)
         if out["smtp"]["sender"] and out["smtp"]["sender"]["broken"]:
             out["warnings"].append("The sender set for this alert cannot be used: " + out["smtp"]["sender"]["broken"] + ". The default account is used instead.")
         if not out["trigger_active"]:
@@ -127,12 +131,12 @@ class ScheduledReportJob(JobBase):
     def setup(self, today=None):
         return self.get_setup(today)
 
-    def recipients_detailed(self, as_of=None):
-        a = self.alert()
+    def recipients_detailed(self, as_of=None, alert=None):
+        a = alert or self.alert()
         return resolve_alert_recipients_detailed(a.alert_id, as_of) if a else []
 
-    def schedule_text(self, today):
-        s = self.get_setup(today)
+    def schedule_text(self, today, setup=None):
+        s = setup if setup is not None else self.get_setup(today)
         if not s["alert"]:
             return "Not connected to an alert yet"
         nxt = f"{s['next_mail_dt']:%d %b %Y} at {s['send_hour']:02d}:00" if s["next_mail_dt"] else "no date set"

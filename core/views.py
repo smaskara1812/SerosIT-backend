@@ -739,7 +739,6 @@ def admin_email_log_list_api(request):
         qs.order_by("-sent_dt")[(page - 1) * size : page * size].values(
             "email_log_id",
             "subject",
-            "body",
             "recipients",
             "from_address",
             "trigger",
@@ -765,6 +764,16 @@ def admin_email_log_list_api(request):
             "pages": (total + size - 1) // size,
         }
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAppAdmin])
+def admin_email_log_body_api(request, pk):
+    """The body of one logged email. The list leaves it out (a page of 30 mails with their HTML and pictures was close to 700 KB); the page asks for it when a row is opened."""
+    body = EmailLog.objects.filter(pk=pk).values_list("body", flat=True).first()
+    if body is None:
+        return Response({"detail": "That email is no longer in the log."}, status=404)
+    return Response({"body": body})
 
 
 # ── User Management ──────────────────────────────────────────────────────────

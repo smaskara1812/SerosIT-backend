@@ -350,12 +350,23 @@ def hours_cols(hours):
     return {c for day in hours.values() for c, v in day.items() if v}
 
 
+def price_map(days):
+    """{day: price per litre or None} for these days from ONE read of the Diesel Prices table (the report used to ask for each day separately: 31 queries for a month).
+    The same rule as price_on: of the prices in force on the day, the one that started latest (then the last entered)."""
+    rows = list(DieselPrice.objects.order_by("-valid_from", "-price_id"))
+    out = {}
+    for d in days:
+        p = next((r for r in rows if r.valid_from <= d and (r.valid_to is None or r.valid_to >= d)), None)
+        out[d] = _d(p.price_per_litre) if p else None
+    return out
+
+
 def collect(end):
     """Everything the workbook and the mail show for the month ending at `end` (yesterday)."""
     first, last = month_bounds(end)
     days = [first + datetime.timedelta(days=i) for i in range((end - first).days + 1)]
     rig_ids = sorted(set(DrillingDtl.objects.filter(drilling_dtl_dt__gte=first, drilling_dtl_dt__lte=end).values_list("rig_id", flat=True)))
-    prices = {d: price_on(d) for d in days}
+    prices = price_map(days)
     rigs = []
     for rid in rig_ids:
         rig = MstRig.objects.get(pk=rid)

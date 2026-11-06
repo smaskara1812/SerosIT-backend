@@ -171,8 +171,8 @@ class DrillingInfoNotEnteredJob(ScheduledReportJob):
             out.append(ReportMail(subject, _page(rig, yesterday), _text(rig, yesterday), [], False, f"mail for {rig}"))
         return out
 
-    def recipients_detailed(self, as_of=None):
-        a = self.alert()
+    def recipients_detailed(self, as_of=None, alert=None):
+        a = alert or self.alert()
         if not a:
             return []
         as_of = as_of or datetime.date.today()

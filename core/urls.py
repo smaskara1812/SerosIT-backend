@@ -602,6 +602,7 @@ urlpatterns = [
     path("banner/assets/<int:asset_id>/file/", asset_file_api, name="banner_asset_file"),
     path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),
     path("admin/email-log/", views.admin_email_log_list_api, name="admin_email_log_list"),
+    path("admin/email-log/<int:pk>/body/", views.admin_email_log_body_api, name="admin_email_log_body"),
     # User Management
     path("admin/user-management/",views.admin_user_management_list_api,name="admin_user_management_list"),
     path("admin/user-management/<int:user_id>/",views.admin_user_management_get_api,name="admin_user_management_get"),

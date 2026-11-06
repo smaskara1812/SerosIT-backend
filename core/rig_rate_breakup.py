@@ -248,8 +248,8 @@ class RigRateBreakUpJob(ScheduledReportJob):
     def build(self, alert, now):
         return build_mail(alert, now)
 
-    def get_setup(self, today=None):
-        s = super().get_setup(today)
+    def get_setup(self, today=None, **kw):
+        s = super().get_setup(today, **kw)
         if s["alert"] and not (s["window"] or 0) >= 1:
             s["warnings"].append("The alert's Window is 0: only rigs with a daily report yesterday are included. The legacy report used 30 days; set the Window on the alert.")
         return s

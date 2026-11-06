@@ -38,9 +38,11 @@ def _report(key):
     return _reports().get(key)
 
 
-def _card(job, today):
-    s = job.get_setup(today)
-    alert = job.alert()
+def _card(job, today, trig=mailer._NOT_GIVEN):
+    """One report's card. `trig` is its Notification Triggers row (with the alert) when the list page has read them all in one query. The setup is read once and shared
+    with the recipients preview and the schedule text."""
+    s = job.get_setup(today, trig=trig)
+    alert = (trig.alert if trig is not None else None) if trig is not mailer._NOT_GIVEN else job.alert()
     effect = job.run_now_effect(alert, today)
     items = SchedItem.objects.filter(job_key=job.key).order_by("-send_date", "-item_id")[:6]
     due = None
@@ -48,10 +50,10 @@ def _card(job, today):
         due = s["next_mail_dt"]
     return {
         # the title is the alert's own name (editable in Masters > Alert Details); before the mail is connected to an alert, the report's own name
-        "key": job.key, "name": (alert.alert_name.strip() if alert is not None and (alert.alert_name or "").strip() else job.report_name), "description": job.description, "setup": s, "schedule": job.schedule_text(today),
+        "key": job.key, "name": (alert.alert_name.strip() if alert is not None and (alert.alert_name or "").strip() else job.report_name), "description": job.description, "setup": s, "schedule": job.schedule_text(today, s),
         "overdue": bool(due and due.date() < today), "run_now": effect,
         "runs": [{"id": i.item_id, "label": i.label, "send_date": i.send_date, "status": i.status, "note": i.note, "last_error": i.last_error, "sent_at": i.sent_at} for i in items],
-        "preview": recipients_preview(job, today),
+        "preview": recipients_preview(job, today, setup=s, alert_obj=alert),
     }
 
 
@@ -61,7 +63,11 @@ def reports_api(request):
     if not _may(request, "view"):
         return _deny()
     today = datetime.date.today()
-    return Response({"results": [_card(j, today) for j in _reports().values()]})
+    reports = _reports()
+    from .models import NotificationTrigger
+
+    trigs = {(t.entity_key, t.action): t for t in NotificationTrigger.objects.filter(entity_key__in={j.trigger_entity for j in reports.values()}).select_related("alert")}
+    return Response({"results": [_card(j, today, trigs.get((j.trigger_entity, j.trigger_action))) for j in reports.values()]})
 
 
 @api_view(["GET"])

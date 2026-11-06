@@ -266,11 +266,15 @@ def alert_sender(alert_id):
     return smtp
 
 
-def sender_identity(alert_id, env_account=True):
+_NOT_GIVEN = object()
+
+
+def sender_identity(alert_id, env_account=True, own=_NOT_GIVEN):
     """Who a mail for this alert is sent as, from the first account that would be tried (the alert's own, else the environment's when `env_account`,
     else the default one): {"address": From address, "account": "alert" | "designated" | "default"}. The name next to it is the alert sender's display name
     (see sender_info); with none, the mail shows the address only."""
-    own = alert_sender(alert_id)
+    if own is _NOT_GIVEN:
+        own = alert_sender(alert_id)
     if own:
         return {"address": own["from_address"], "account": "alert"}
     env = designated_smtp() if env_account else None
@@ -289,9 +293,10 @@ def alert_links(alert_id, alert_name):
     return {"recipients": f"/masters/mail-alert-to-users?alert={alert_id}&alertName={q}", "alert": f"/masters/mail-alerts?select={alert_id}&q={q}"}
 
 
-def sender_info(alert_id):
-    """What the setup panels may show about an alert's own account: server, port, user, From address and sender name. Never the password."""
-    a = alert_sender(alert_id)
+def sender_info(alert_id, own=_NOT_GIVEN):
+    """What the setup panels may show about an alert's own account: server, port, user, From address and sender name. Never the password. `own` is the account
+    when the caller has already looked it up (alert_sender), so one page does not ask the database for it again and again."""
+    a = alert_sender(alert_id) if own is _NOT_GIVEN else own
     if not a:
         return None
     return {"host": a["host"], "port": a["port"], "user": a["user"] or "", "from_address": a["from_address"], "display_name": a.get("display_name", ""), "broken": a.get("broken", "")}

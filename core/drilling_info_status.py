@@ -128,8 +128,8 @@ class DrillingInfoStatusJob(ScheduledReportJob):
             out.append(ReportMail(subject, html, text, [], False, f"mail for {company}"))
         return out
 
-    def recipients_detailed(self, as_of=None):
-        a = self.alert()
+    def recipients_detailed(self, as_of=None, alert=None):
+        a = alert or self.alert()
         if not a:
             return []
         as_of = as_of or datetime.date.today()
