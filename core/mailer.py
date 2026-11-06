@@ -243,18 +243,9 @@ def default_smtp():
     }
 
 
-def alert_sender(alert_id):
-    """The account set for this alert in Masters > Alert Senders (its one active row), as the same kind of dict the other accounts are, or None when
-    the alert has none. A stored password that cannot be read (the key it was encrypted with is gone) is marked "broken": that account is not used,
-    and the next one is tried."""
-    if not alert_id:
-        return None
+def _sender_from_row(row):
     from . import secret_box
-    from .models import AlertSenderDtl
 
-    row = AlertSenderDtl.objects.filter(alert_id=alert_id, is_active="Y").order_by("alert_sender_dtl_id").first()
-    if row is None:
-        return None
     pw = secret_box.decrypt(row.password) if row.password else None
     smtp = {
         "host": row.mail_host, "port": row.mail_port or 25, "user": row.mail_user_name or None, "password": pw or None,
@@ -264,6 +255,31 @@ def alert_sender(alert_id):
     if row.password and not pw:
         smtp["broken"] = "the stored password could not be read (is CREDENTIAL_KEY the key it was saved with?)"
     return smtp
+
+
+def alert_sender(alert_id):
+    """The account set for this alert in Masters > Alert Senders (its one active row), as the same kind of dict the other accounts are, or None when
+    the alert has none. A stored password that cannot be read (the key it was encrypted with is gone) is marked "broken": that account is not used,
+    and the next one is tried."""
+    if not alert_id:
+        return None
+    from .models import AlertSenderDtl
+
+    row = AlertSenderDtl.objects.filter(alert_id=alert_id, is_active="Y").order_by("alert_sender_dtl_id").first()
+    return _sender_from_row(row) if row is not None else None
+
+
+def alert_senders(alert_ids):
+    """alert_sender for several alerts in one query. {alert_id: account}. An alert with no active sender is absent."""
+    from .models import AlertSenderDtl
+
+    ids = [i for i in dict.fromkeys(alert_ids) if i]
+    found = {}
+    if not ids:
+        return found
+    for row in AlertSenderDtl.objects.filter(alert_id__in=ids, is_active="Y").order_by("alert_sender_dtl_id"):
+        found.setdefault(row.alert_id, _sender_from_row(row))  # the first active row, same as alert_sender
+    return found
 
 
 _NOT_GIVEN = object()

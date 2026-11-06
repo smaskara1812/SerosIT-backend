@@ -25,8 +25,8 @@ class JobBase:
         t = NotificationTrigger.objects.filter(entity_key=self.trigger_entity, action=self.trigger_action).select_related("alert").first()
         return t.alert if t else None
 
-    def schedule_text(self, today):
-        """One line for the Scheduled Mails page: when this automation goes out."""
+    def schedule_text(self, today, setup=None):
+        """One line for the Scheduled Mails page: when this automation goes out. `setup` is the alert's hour and next date when the page already has them."""
         return "Hourly"
 
     def setup(self, today=None):

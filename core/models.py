@@ -4896,6 +4896,16 @@ class SchedItem(models.Model):
     class Meta:
         db_table = "sched_item"
         constraints = [models.UniqueConstraint(fields=["job_key", "subject_key", "send_date"], name="uniq_sched_item_job_subject_day")]
+        indexes = [
+            # tab counts (send_date + status) and the Earlier list (newest day first) stay on the index instead of reading the error text and recipient snapshot
+            models.Index(fields=["send_date", "status"], name="sched_day_status"),
+            models.Index(fields=["-send_date", "-due_at", "-item_id"], name="sched_day_due"),
+            # one report's latest runs, and the per-automation counts on Scheduled Mails
+            models.Index(fields=["job_key", "-send_date", "-item_id"], name="sched_job_day"),
+            models.Index(fields=["job_key", "status", "send_date"], name="sched_job_stat_day"),
+            # overdue planned mails (the health check and the sidebar dot)
+            models.Index(fields=["status", "due_at"], name="sched_status_due"),
+        ]
 
     def __str__(self):
         return f"{self.job_key}: {self.label} on {self.send_date}"

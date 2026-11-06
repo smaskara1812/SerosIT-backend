@@ -76,10 +76,13 @@ def overdue_items(now):
     return [i for i in qs.order_by("due_at", "item_id") if i.job_key not in paused]
 
 
-def counts(now):
+def counts(now, overdue=None):
+    """overdue may be the list overdue_items already read, so a caller that also needs the oldest mail does not read it twice."""
     day = now.date() - datetime.timedelta(days=7)
+    if overdue is None:
+        overdue = overdue_items(now)
     return {
-        "overdue": len(overdue_items(now)),
+        "overdue": len(overdue),
         "failed": SchedItem.objects.filter(status="failed", send_date__gte=day).exclude(subject_key__contains=":by hand").count(),
         "missed": SchedItem.objects.filter(status="missed", send_date__gte=day).count(),
     }
@@ -106,9 +109,10 @@ def evaluate(now=None):
         down = True
         problems.append({"kind": "service_down", "level": "critical", "title": "The scheduler service was stopped and not started again",
                          "detail": f"It was stopped properly {age} minutes ago (at {hb.stopped_at:%d %b %H:%M}).", "since": hb.stopped_at})
-    c = counts(now)
-    if not down and c["overdue"]:
-        first = overdue_items(now)[0]
+    overdue = overdue_items(now)
+    c = counts(now, overdue)
+    if not down and overdue:
+        first = overdue[0]
         problems.append({"kind": "overdue", "level": "warning", "title": f"{c['overdue']} {'mail is' if c['overdue'] == 1 else 'mails are'} overdue",
                          "detail": f"Due more than {settings.SCHEDULER_OVERDUE_HOURS} hours ago and not sent. The oldest: {first.label}, due {first.due_at:%d %b %H:%M}.", "since": first.due_at})
     if hb.smtp_fail_streak >= SMTP_FAILS_BEFORE_ALERT:

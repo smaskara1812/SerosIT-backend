@@ -166,21 +166,22 @@ class DrillingInfoNotEnteredJob(ScheduledReportJob):
             rigs = [(i, MstRig.objects.get(pk=i).rig_name) for i in ids[:1]]
             example = True
         out = []
-        for _i, rig in rigs:
+        for rid, rig in rigs:
             subject = f"{base} - {rig}" + (" (example: no rig is missing right now)" if example else "")
-            out.append(ReportMail(subject, _page(rig, yesterday), _text(rig, yesterday), [], False, f"mail for {rig}"))
+            rec = recipients_for_rig(alert.alert_id, rid, today)
+            out.append(ReportMail(subject, _page(rig, yesterday), _text(rig, yesterday), [], False, f"mail for {rig}", to=rec["to"], cc=rec["cc"], bcc=rec["bcc"]))
         return out
 
-    def recipients_detailed(self, as_of=None, alert=None):
+    def recipients_detailed(self, as_of=None, alert=None, base=None):
         a = alert or self.alert()
         if not a:
             return []
         as_of = as_of or datetime.date.today()
-        out = resolve_alert_recipients_detailed(a.alert_id, as_of)
-        names = dict(MstRig.objects.values_list("rig_id", "rig_name"))
-        for r in RigToEmailMapping.objects.filter(alert_id=a.alert_id, addressee_type__in=list(KIND), from_dt__lte=as_of).select_related("user"):
-            if (r.to_dt is None or r.to_dt >= as_of) and (r.user.user_email or "").strip():
-                out.append({"type": KIND[r.addressee_type], "email": r.user.user_email.strip(), "name": (r.user.user_name or "").strip(), "source": f"Rig Alert Recipients ({names.get(r.rig_id, 'any rig')})", "from": r.from_dt, "to_date": r.to_dt})
+        out = list(base) if base is not None else resolve_alert_recipients_detailed(a.alert_id, as_of)
+        rows = [r for r in RigToEmailMapping.objects.filter(alert_id=a.alert_id, addressee_type__in=list(KIND), from_dt__lte=as_of).select_related("user") if (r.to_dt is None or r.to_dt >= as_of) and (r.user.user_email or "").strip()]
+        names = dict(MstRig.objects.filter(pk__in={r.rig_id for r in rows}).values_list("rig_id", "rig_name"))
+        for r in rows:
+            out.append({"type": KIND[r.addressee_type], "email": r.user.user_email.strip(), "name": (r.user.user_name or "").strip(), "source": f"Rig Alert Recipients ({names.get(r.rig_id, 'any rig')})", "from": r.from_dt, "to_date": r.to_dt})
         return out
 
     def _blockers(self, setup, now):
@@ -190,7 +191,7 @@ class DrillingInfoNotEnteredJob(ScheduledReportJob):
             return f"The alert '{setup['alert']['name']}' is switched off. Tick Active on it in Masters > Alert Details."
         return ""
 
-    def send_report(self, alert, setup, now, designated=True):
+    def send_report(self, alert, setup, now, designated=True, fresh=False):
         """Sends one mail per missing rig. Returns (error, result, mail) as the base class does; `result` is that of the last mail sent (None when nothing was sent)."""
         error = self._blockers(setup, now)
         if error:
@@ -202,7 +203,7 @@ class DrillingInfoNotEnteredJob(ScheduledReportJob):
         sent, skipped, problems, last, all_to = [], [], [], None, []
         for rig_id, rig in rigs:
             label = f"Drilling Info Not Entered: {rig} · {yesterday:%Y-%m-%d}"[:200]
-            if EmailLog.objects.filter(trigger=label, success=True, sent_dt__date=today).exists():
+            if not fresh and EmailLog.objects.filter(trigger=label, success=True, sent_dt__date=today).exists():
                 skipped.append(rig)  # mailed by an earlier try of this run: not again
                 continue
             subject = f"{base_subject} - {rig}"  # the rig is in the subject too, so the mails of different rigs are told apart in the inbox

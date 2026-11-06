@@ -69,24 +69,53 @@ def _alert_rows(alert_id, as_of):
     )
 
 
+def _detailed_from_rows(rows):
+    kind = {"T": "to", "C": "cc", "B": "bcc"}
+    out = []
+    for r in rows:
+        if r.addressee_type not in kind or not r.email_addr:
+            continue
+        name = (r.user.user_name.strip() if r.user_id and r.user.user_name else "") or (r.recipient_name or "")
+        out.append({
+            "type": kind[r.addressee_type], "email": r.email_addr, "name": name,
+            "source": f"Alert To Users (alert {r.alert_id}, row {r.mail_alert_to_user_id})",
+            "from": r.mail_alert_from, "to_date": r.mail_alert_to,
+        })
+    return out
+
+
 def resolve_alert_recipients_detailed(alert_id, as_of=None):
     """The recipients of one alert, each with where it comes from: [{"type": "to"|"cc"|"bcc", "email", "name", "source"}, ...], from the
     MailAlertToUser rows whose From/To window covers as_of (default today). This is the one place that decides who a mail goes to: sending uses
     it (through resolve_alert_recipients), and so does the recipients preview on the Scheduled Mails and Report Mails pages, so the preview is
     exactly what is sent. More sources (for example the rig-wise recipients of some report) are added here, each with its own `source` text."""
     as_of = as_of or date_cls.today()
-    kind = {"T": "to", "C": "cc", "B": "bcc"}
-    out = []
-    for r in _alert_rows(alert_id, as_of):
-        if r.addressee_type not in kind or not r.email_addr:
-            continue
-        name = (r.user.user_name.strip() if r.user_id and r.user.user_name else "") or (r.recipient_name or "")
-        out.append({
-            "type": kind[r.addressee_type], "email": r.email_addr, "name": name,
-            "source": f"Alert To Users (alert {alert_id}, row {r.mail_alert_to_user_id})",
-            "from": r.mail_alert_from, "to_date": r.mail_alert_to,
-        })
-    return out
+    return _detailed_from_rows(_alert_rows(alert_id, as_of))
+
+
+def resolve_many_recipients_detailed(alert_ids, as_of=None):
+    """The same as resolve_alert_recipients_detailed, for several alerts in one query. {alert_id: [entries]}. An alert with nobody is an empty list."""
+    as_of = as_of or date_cls.today()
+    ids = [i for i in dict.fromkeys(alert_ids) if i]
+    if not ids:
+        return {}
+    grouped = {}
+    rows = (
+        MailAlertToUser.objects.filter(alert_id__in=ids, mail_alert_from__lte=as_of)
+        .filter(Q(mail_alert_to__isnull=True) | Q(mail_alert_to__gte=as_of))
+        .select_related("user")
+    )
+    for r in rows:
+        grouped.setdefault(r.alert_id, []).append(r)
+    return {i: _detailed_from_rows(grouped.get(i, [])) for i in ids}
+
+
+def lists_from_detailed(entries):
+    """{to, cc, bcc} email lists from the detailed entries, deduped, in the same order."""
+    lists = {"to": [], "cc": [], "bcc": []}
+    for e in entries:
+        lists[e["type"]].append(e["email"])
+    return {k: _dedupe(v) for k, v in lists.items()}
 
 
 def resolve_alert_recipients(alert_id, as_of=None):
@@ -95,10 +124,7 @@ def resolve_alert_recipients(alert_id, as_of=None):
     as_of (defaults to today) — same date-scoping shape used elsewhere in
     this app for time-bounded config (e.g. company_branding.py). Built from
     resolve_alert_recipients_detailed, so the list and the preview agree."""
-    lists = {"to": [], "cc": [], "bcc": []}
-    for e in resolve_alert_recipients_detailed(alert_id, as_of):
-        lists[e["type"]].append(e["email"])
-    return {k: _dedupe(v) for k, v in lists.items()}
+    return lists_from_detailed(resolve_alert_recipients_detailed(alert_id, as_of))
 
 
 def trigger(entity_key, action, subject, body, sent_by_user_id=None, is_html=True, attachments=None):

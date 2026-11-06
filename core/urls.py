@@ -580,6 +580,7 @@ urlpatterns = [
     path("admin/scheduler-health/smtp-check/", scheduled_mails_views.smtp_check_api, name="scheduler_smtp_check"),
     path("admin/scheduled-mails/jobs/<str:job_key>/<str:state>/", scheduled_mails_views.job_switch_api, name="scheduled_mails_job_switch"),
     path("admin/scheduled-mails/<int:item_id>/email/", scheduled_mails_views.item_email_api, name="scheduled_mail_email"),
+    path("admin/scheduled-mails/<int:item_id>/mails/", scheduled_mails_views.item_mails_api, name="scheduled_mail_mails"),
     path("admin/scheduled-mails/<int:item_id>/recipients/", scheduled_mails_views.item_recipients_api, name="scheduled_mail_recipients"),
     path("reports/rig-performance/", rig_performance_views.report_api, name="rig_performance_report"),
     path("reports/rig-performance/download/", rig_performance_views.report_download_api, name="rig_performance_download"),

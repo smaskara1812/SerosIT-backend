@@ -148,6 +148,17 @@ try:
         sent.clear()
         err, res, mail = run_job(a1, JOB.get_setup(TODAY), NOW)
         ok("nothing missing: no mail, no error, and the summary says so", err == "" and not sent and "nothing sent" in mail.summary, f"{err} {mail.summary} {sent}")
+        # a run with nothing to send (no rig is missing) must finish cleanly, as a scheduled run, a run by hand and a resend (this crashed on 6 Nov 2026: no mail, no result)
+        from core.models import SchedItem as _SI
+        MailAlertDtl.objects.filter(pk=ALERT).update(alert_window=1, alert_active="Y")
+        for subject_key in (str(ALERT), f"{ALERT}:by hand 202611061147"):
+            it = _SI.objects.create(job_key=di.JOB_KEY, subject_key=subject_key, label="check", send_date=TODAY, due_at=NOW, status="sending", cr_dt=NOW)
+            res_ok = JOB.attempt(it, NOW)
+            it.refresh_from_db()
+            ok(f"a run with nothing to send finishes cleanly ({'by hand' if 'hand' in subject_key else 'scheduled'}): item sent, no mail, no crash", res_ok is True and it.status == "sent" and "nothing sent" in it.note, f"{res_ok} {it.status} {it.note}")
+        it = _SI.objects.create(job_key=di.JOB_KEY, subject_key=f"{ALERT}:resend check", label="check", send_date=TODAY, due_at=NOW, status="sent", cr_dt=NOW)
+        ok_r, err_r = JOB.resend(it, NOW)
+        ok("a resend with nothing to send also finishes cleanly", ok_r is True, str((ok_r, err_r)))
         MailAlertDtl.objects.filter(pk=ALERT).update(alert_window=30, alert_active="")
         err, res, mail = run_job(MailAlertDtl.objects.get(pk=ALERT), JOB.get_setup(TODAY), NOW)
         ok("an alert that is not active sends nothing and says why", "switched off" in err)

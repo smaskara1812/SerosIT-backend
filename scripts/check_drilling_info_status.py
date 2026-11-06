@@ -119,6 +119,15 @@ try:
         sent.clear()
         err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("run again the same day: nobody is mailed twice", err == "" and not sent and "already mailed earlier" in mail.summary, mail.summary)
+        # a resend (and a run started by hand) must send again: the once-a-day guard is for the automatic retries only
+        sent.clear()
+        res_fresh = JOB.send_report(a, JOB.get_setup(TODAY), NOW, fresh=True)
+        ok("a fresh send (resend, run by hand) mails every company again even though they were mailed today", res_fresh[0] == "" and len(sent) == 3, str((res_fresh[0], len(sent))))
+        from core.models import SchedItem as _SI
+        it = _SI.objects.create(job_key=ds.JOB_KEY, subject_key=str(ALERT), label="Drilling Info Status check", send_date=TODAY, due_at=NOW, status="sent", cr_dt=NOW)
+        sent.clear()
+        ok_resend, err_resend = JOB.resend(it, NOW)
+        ok("Resend on the Scheduled Mails page really sends (3 mails), and says so", ok_resend and len(sent) == 3 and EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE).count() >= 6, f"{ok_resend} {err_resend} {len(sent)}")
         EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE).delete(); sent.clear(); fail_for.add("Axom Rhino")
         err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
         ok("a company whose mail fails is reported; the others go", "SOSIL" in err and len(sent) == 2, f"{err} {len(sent)}")

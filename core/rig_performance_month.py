@@ -718,9 +718,9 @@ class RigPerformanceJob(ScheduledReportJob):
     def build(self, alert, now):
         return build_mail(alert, now)
 
-    def send_report(self, alert, setup, now, designated=True):
+    def send_report(self, alert, setup, now, designated=True, fresh=False):
         """As every report job, and then the month that has just ended is closed (its plan becomes locked), unless a rig still has to plan its moves."""
-        out = super().send_report(alert, setup, now, designated)
+        out = super().send_report(alert, setup, now, designated, fresh=fresh)
         try:
             previous = (now.date().replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
             close_month(previous, note="closed automatically at month end", auto=True)

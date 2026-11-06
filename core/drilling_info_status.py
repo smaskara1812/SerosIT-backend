@@ -123,17 +123,18 @@ class DrillingInfoStatusJob(ScheduledReportJob):
         """The test: one real mail per company, as the real run sends them."""
         subject = (alert.mail_subject or "Drilling Info Status").strip()
         out = []
-        for _cid, company, rows in by_company(status_rows(now.date())):
+        for cid, company, rows in by_company(status_rows(now.date())):
             html, text = build_company_mail(company, rows)
-            out.append(ReportMail(subject, html, text, [], False, f"mail for {company}"))
+            rec = recipients_for_company(alert.alert_id, cid, now.date())
+            out.append(ReportMail(subject, html, text, [], False, f"mail for {company}", to=rec["to"], cc=rec["cc"], bcc=rec["bcc"]))
         return out
 
-    def recipients_detailed(self, as_of=None, alert=None):
+    def recipients_detailed(self, as_of=None, alert=None, base=None):
         a = alert or self.alert()
         if not a:
             return []
         as_of = as_of or datetime.date.today()
-        out = resolve_alert_recipients_detailed(a.alert_id, as_of)
+        out = list(base) if base is not None else resolve_alert_recipients_detailed(a.alert_id, as_of)
         for r in RigToEmailMapping.objects.filter(alert_id=a.alert_id, company__isnull=False, addressee_type__in=list(KIND), from_dt__lte=as_of).select_related("user", "company"):
             if (r.to_dt is None or r.to_dt >= as_of) and (r.user.user_email or "").strip():
                 out.append({"type": KIND[r.addressee_type], "email": r.user.user_email.strip(), "name": (r.user.user_name or "").strip(), "source": f"Rig Alert Recipients ({r.company.company_abrv or r.company.company_name})", "from": r.from_dt, "to_date": r.to_dt})
@@ -146,7 +147,7 @@ class DrillingInfoStatusJob(ScheduledReportJob):
             return f"The alert '{setup['alert']['name']}' is switched off. Tick Active on it in Masters > Alert Details."
         return ""
 
-    def send_report(self, alert, setup, now, designated=True):
+    def send_report(self, alert, setup, now, designated=True, fresh=False):
         """One mail per company. Returns (error, result, mail) as the base class does; `result` is that of the last mail sent (None when nothing was sent)."""
         error = self._blockers(setup, now)
         if error:
@@ -157,7 +158,7 @@ class DrillingInfoStatusJob(ScheduledReportJob):
         sent, skipped, problems, last, all_to = [], [], [], None, []
         for company_id, company, rows in groups:
             label = f"Drilling Info Status: {company} · {today:%Y-%m-%d}"[:200]
-            if EmailLog.objects.filter(trigger=label, success=True, sent_dt__date=today).exists():
+            if not fresh and EmailLog.objects.filter(trigger=label, success=True, sent_dt__date=today).exists():
                 skipped.append(company)
                 continue
             rec = recipients_for_company(alert.alert_id, company_id, today)

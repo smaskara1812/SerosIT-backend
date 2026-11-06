@@ -379,8 +379,10 @@ class BirthdayJob(JobBase):
     trigger_entity = ENTITY_KEY
     trigger_action = ACTION
 
-    def schedule_text(self, today):
-        return f"Daily at {get_setup(today)['send_hour']:02d}:00 (checked every hour)"
+    def schedule_text(self, today, setup=None):
+        # the Scheduled Mails page already has the hour from the alert, and passes it so this line does not read the recipients and the sender again
+        hour = setup["send_hour"] if setup is not None else get_setup(today)["send_hour"]
+        return f"Daily at {hour:02d}:00 (checked every hour)"
 
     def setup(self, today=None):
         return get_setup(today)

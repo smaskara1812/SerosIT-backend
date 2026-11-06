@@ -41,6 +41,7 @@ def _row(i, names, max_attempts):
         "id": i.item_id, "job": i.job_key, "job_name": names.get(i.job_key, i.job_key), "label": i.label, "send_date": i.send_date, "due_at": i.due_at,
         "status": s, "status_label": STATUS_LABELS.get(s, s), "attempts": i.attempts, "max_attempts": max_attempts,
         "retry_pending": s == "failed" and i.attempts < max_attempts, "last_error": i.last_error, "smtp_used": i.smtp_used, "email_log_id": i.email_log_id,
+        "multi_mail": bool(getattr(scheduler.JOBS.get(i.job_key), "uses_rig_recipients", False)),
         "recipients": i.recipients, "sent_at": i.sent_at, "resend_count": i.resend_count, "skipped_by": i.skipped_by, "note": i.note,
         "template": i.template_id,
         "can": {"skip": s in ("planned", "failed", "missed"), "unskip": s == "skipped", "send_now": s in ("planned", "failed", "missed", "skipped"), "resend": s == "sent"},
@@ -88,8 +89,9 @@ def _list_part(q, today):
         page = max(1, int(q.get("page", 1)))
     except ValueError:
         size, page = 50, 1
-    # the three tab counts in ONE query (they used to be three), and the list page itself
-    counts = qs.aggregate(upcoming=Count("pk", filter=in_upcoming), today=Count("pk", filter=in_today), earlier=Count("pk", filter=in_earlier))
+    # three plain counts, not one CASE over the whole table. On SQL Server the CASE form scans every column of every row (the table is clustered on the
+    # primary key, and the rows carry the error text and the recipient snapshot). A count that only names send_date and status can use the index.
+    counts = {"upcoming": qs.filter(in_upcoming).count(), "today": qs.filter(in_today).count(), "earlier": qs.filter(in_earlier).count()}
     max_attempts = 1 + settings.SCHEDULER_MAX_RETRIES
     names = {k: j.name for k, j in scheduler.JOBS.items()}
     rows = [_row(i, names, max_attempts) for i in qs.filter(where[section]).order_by(*order[section])[(page - 1) * size : page * size]]
@@ -99,31 +101,44 @@ def _list_part(q, today):
     }
 
 
+def _light_setup(alert):
+    """The few fields an automation tile needs, taken from the alert already loaded with its trigger. The tile does not show recipients or the sender,
+    so it must not read those (that was one query per automation, and it ran again on every tab)."""
+    if alert is None:
+        return {"alert": None, "next_mail_dt": None, "freq": 0, "send_hour": 7}
+    return {
+        "alert": {"id": alert.alert_id, "name": alert.alert_name}, "next_mail_dt": alert.next_mail_dt, "freq": alert.alert_freq or 0,
+        "send_hour": alert.start_time if alert.start_time is not None else 7,
+    }
+
+
 def _panel_part(now, today):
-    """The scheduler's health, its recent problems and the automations (switches, schedules, counts). A fixed, small number of queries however many automations there are:
-    the per-automation counts are grouped queries, and a report mail's setup is read once (it used to be read twice, each time asking for the alert's sender several times)."""
+    """The scheduler's health, its recent problems and the automations (switches, schedules, counts). The per-automation counts are one grouped query.
+    A report's Next Mail and a mailer's hour come from the trigger's alert, which is read once for every automation; the recipients and the sender are not read here."""
     base = SchedItem.objects.all()
     rows = {r.job_key: r for r in SchedJob.objects.all()}
-
-    def per_job(qs):
-        return {r["job_key"]: r["n"] for r in qs.values("job_key").annotate(n=Count("pk"))}
-
-    failed = per_job(base.filter(status="failed"))
-    sent_today = per_job(base.filter(send_date=today, status="sent"))
-    planned = per_job(base.filter(status="planned", send_date__gte=today))
-    overdue = per_job(base.filter(status="planned", send_date__lt=today))
+    stats = {
+        r["job_key"]: r for r in base.values("job_key").annotate(
+            failed=Count("pk", filter=Q(status="failed")),
+            sent_today=Count("pk", filter=Q(send_date=today, status="sent")),
+            planned=Count("pk", filter=Q(status="planned", send_date__gte=today)),
+            overdue=Count("pk", filter=Q(status="planned", send_date__lt=today)),
+        )
+    }
     trigs = {(t.entity_key, t.action): t for t in NotificationTrigger.objects.filter(entity_key__in={j.trigger_entity for j in scheduler.JOBS.values() if getattr(j, "trigger_entity", None)}).select_related("alert")}
     next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
     jobs = []
     for key, job in scheduler.JOBS.items():
         row = rows.get(key)
-        setup = job.get_setup(today, trig=trigs.get((job.trigger_entity, job.trigger_action))) if job.schedule_kind == "cycle" else None
+        st = stats.get(key, {})
+        trig = trigs.get((getattr(job, "trigger_entity", None), getattr(job, "trigger_action", None))) if getattr(job, "trigger_entity", None) else None
+        light = _light_setup(trig.alert if trig is not None else None)
         jobs.append({"key": key, "name": job.name, "enabled": (row.enabled == "Y") if row else True, "last_run_at": row.last_run_at if row else None,
-                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today, setup) if setup is not None else job.schedule_text(today),
-                     "failed": failed.get(key, 0), "sent_today": sent_today.get(key, 0),
+                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today, light),
+                     "failed": st.get("failed", 0), "sent_today": st.get("sent_today", 0),
                      # for the pause and resume dialogs: what pausing would leave behind
-                     "kind": job.schedule_kind, "planned": planned.get(key, 0), "overdue_planned": overdue.get(key, 0),
-                     **({"next_mail_dt": setup["next_mail_dt"], "freq": setup["freq"]} if setup is not None else {})})
+                     "kind": job.schedule_kind, "planned": st.get("planned", 0), "overdue_planned": st.get("overdue", 0),
+                     **({"next_mail_dt": light["next_mail_dt"], "freq": light["freq"]} if job.schedule_kind == "cycle" else {})})
     return {
         "health": scheduler_health(now), "health_events": [
             {"id": e.event_id, "kind": e.kind, "level": e.level, "started_at": e.started_at, "ended_at": e.ended_at, "detail": e.detail, "alerted": e.alerted_at is not None}
@@ -236,6 +251,36 @@ def item_email_api(request, item_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def item_mails_api(request, item_id):
+    """Every mail one run sends. A run of Drilling Info Status / Not Entered is ONE item on the page but sends one mail per company / per rig. Answers
+    {"sent": [the mails already logged for that day], "preview": [the mails a run would send now, with who each goes to]}; the preview is given only
+    for an item that has not been sent."""
+    if not _may(request, "view"):
+        return _deny()
+    it = SchedItem.objects.filter(pk=item_id).first()
+    job = scheduler.JOBS.get(it.job_key) if it else None
+    if not it or not job:
+        return Response({"detail": "That mail no longer exists."}, status=404)
+    sent = []
+    code = getattr(job, "trigger_code", "")
+    if code:
+        for g in EmailLog.objects.filter(trigger_code=code, sent_dt__date=it.send_date).order_by("sent_dt", "email_log_id")[:200]:
+            sent.append({"id": g.email_log_id, "label": g.trigger, "subject": g.subject, "body": g.body, "recipients": g.recipients, "success": g.success, "error": g.error, "sent_at": g.sent_dt})
+    preview, note = [], ""
+    if it.status != "sent" and hasattr(job, "preview_mails"):
+        try:
+            alert = job.alert()
+            now = datetime.datetime.combine(it.send_date, datetime.datetime.now().time()) if it.send_date >= datetime.date.today() else datetime.datetime.now()
+            if alert:
+                for m in job.preview_mails(alert, now):
+                    preview.append({"subject": m.subject, "body": m.html, "summary": m.summary, "to": m.to, "cc": m.cc, "bcc": m.bcc})
+        except Exception as exc:  # the preview is a help; never fail the page over it
+            note = f"The preview could not be built: {exc}"
+    return Response({"item": it.item_id, "label": it.label, "status": it.status, "sent": sent, "preview": preview, "note": note})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def item_recipients_api(request, item_id):
     """Who one item goes (or went) to: every To, Cc and Bcc recipient with where it comes from, resolved the way sending resolves it, for the day the
     item is for. `snapshot` is what was recorded when it was actually sent. Also the sender and the error-mail address. Needs View on this page."""
@@ -248,16 +293,23 @@ def item_recipients_api(request, item_id):
     return Response(recipients_preview(job, it.send_date, it.recipients))
 
 
-def recipients_preview(job, as_of, snapshot="", setup=None, alert_obj=None):
-    """The preview payload for one job on one day (shared with the Report Mails page). A caller that already has the job's setup (and its alert) passes them in, so
-    they are not read again."""
+def recipients_preview(job, as_of, snapshot="", setup=None, alert_obj=None, base=None):
+    """The preview payload for one job on one day (shared with the Report Mails page). A caller that already has the job's setup (and its alert, and the detailed
+    recipient list) passes them in, so they are not read again."""
     from .notification_triggers import resolve_alert_recipients_detailed
 
     setup = (setup if setup is not None else job.setup(as_of)) or {}
     alert = setup.get("alert")
     # a job that also reads Rig Alert Recipients (one mail per rig or per company) lists those people too, each labelled with where it comes from
     if alert and hasattr(job, "recipients_detailed"):
-        entries = job.recipients_detailed(as_of, alert=alert_obj) if alert_obj is not None else job.recipients_detailed(as_of)
+        kw = {}
+        if alert_obj is not None:
+            kw["alert"] = alert_obj
+        if base is not None:
+            kw["base"] = base
+        entries = job.recipients_detailed(as_of, **kw)
+    elif base is not None:
+        entries = list(base)
     else:
         entries = resolve_alert_recipients_detailed(alert["id"], as_of) if alert else []
     links = dict(setup.get("links", {}))

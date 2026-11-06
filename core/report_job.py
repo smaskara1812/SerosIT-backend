@@ -48,6 +48,9 @@ class ReportMail:
     empty: bool = False  # nothing to report: the mail says so and has no attachment
     summary: str = ""  # one line about what was in it, kept on the Scheduled Mails item
     inline_images: list = field(default_factory=list)  # [(content id, bytes, "png")] pictures shown inside the mail body as src="cid:..."
+    to: list = field(default_factory=list)  # only set on the mails a multi-mail job previews: who this one would go to
+    cc: list = field(default_factory=list)
+    bcc: list = field(default_factory=list)
 
 
 def next_after(base, freq, today, hour):
@@ -82,9 +85,10 @@ class ScheduledReportJob(JobBase):
         sender = _m.sender_info(alert.alert_id, own=own) if alert else None
         return ((sender or {}).get("display_name") or "").strip()  # blank: the From address only, the mail server adds whatever name it uses
 
-    def get_setup(self, today=None, trig=mailer._NOT_GIVEN):
+    def get_setup(self, today=None, trig=mailer._NOT_GIVEN, recipients=mailer._NOT_GIVEN, own=mailer._NOT_GIVEN):
         """How this report is set up, as the pages show it. `trig` is this job's Notification Triggers row (with its alert) when the caller has already read it, or None
-        when there is none; left out, it is looked up here. A page that lists several reports reads all the triggers in one query and passes each in."""
+        when there is none; left out, it is looked up here. A page that lists several reports reads all the triggers, the recipients and the senders in one query each
+        and passes them in (`recipients` is {to, cc, bcc}, `own` is the alert's sender account or None), so this does not ask again."""
         today = today or datetime.date.today()
         from .models import NotificationTrigger
 
@@ -106,8 +110,9 @@ class ScheduledReportJob(JobBase):
         out["subject"] = a.mail_subject or ""
         out["send_hour"] = a.start_time if a.start_time is not None else 7
         out["window"], out["freq"], out["next_mail_dt"] = a.alert_window, a.alert_freq, a.next_mail_dt
-        out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today)
-        own = mailer.alert_sender(a.alert_id)  # the alert's own mail account: read once, used for the three things below
+        out["recipients"] = resolve_alert_recipients(a.alert_id, as_of=today) if recipients is mailer._NOT_GIVEN else recipients
+        if own is mailer._NOT_GIVEN:
+            own = mailer.alert_sender(a.alert_id)  # the alert's own mail account: read once, used for the three things below
         out["smtp"]["sender"] = mailer.sender_info(a.alert_id, own=own)
         out["from_address"] = mailer.sender_identity(a.alert_id, False, own=own)["address"]
         out["links"] = mailer.alert_links(a.alert_id, a.alert_name)
@@ -131,7 +136,10 @@ class ScheduledReportJob(JobBase):
     def setup(self, today=None):
         return self.get_setup(today)
 
-    def recipients_detailed(self, as_of=None, alert=None):
+    def recipients_detailed(self, as_of=None, alert=None, base=None):
+        """Who this report goes to, in detail. `base` is that list already read (the page that shows every report reads them all at once); left out, it is read here."""
+        if base is not None:
+            return list(base)
         a = alert or self.alert()
         return resolve_alert_recipients_detailed(a.alert_id, as_of) if a else []
 
@@ -204,8 +212,9 @@ class ScheduledReportJob(JobBase):
             return f"The alert has no active recipients on {now.date()}."
         return ""
 
-    def send_report(self, alert, setup, now, designated=True):
-        """Builds and sends the report to the alert's recipients. Returns (error, result, mail); error is "" when it went."""
+    def send_report(self, alert, setup, now, designated=True, fresh=False):
+        """Builds and sends the report to the alert's recipients. Returns (error, result, mail); error is "" when it went. `fresh` is True for a resend and a run started by
+        hand: a report that guards against mailing the same person twice in a day (the per-rig and per-company mails) must then send again, because the person asked."""
         error, result, mail = self._blockers(setup, now), None, None
         if not error:
             try:
@@ -239,7 +248,7 @@ class ScheduledReportJob(JobBase):
             SchedItem.objects.filter(pk=item.pk).update(status="cancelled", note="The alert no longer exists.", mod_dt=now)
             return False
         item.attempts += 1
-        error, result, mail = self.send_report(alert, self.get_setup(now.date()), now, designated)
+        error, result, mail = self.send_report(alert, self.get_setup(now.date()), now, designated, fresh=":by hand" in (item.subject_key or ""))
         fields = {"attempts": item.attempts, "last_attempt_at": now, "mod_dt": now}
         if result:
             fields.update(smtp_used=result["smtp_used"], email_log_id=result["email_log_id"], recipients=result["recipients"][:2000])
@@ -250,7 +259,8 @@ class ScheduledReportJob(JobBase):
             return False
         fields.update(status="sent", sent_at=now, last_error="", note=f"{(item.note or '').split(' · ')[0]} · {mail.summary}".strip(" ·")[:300])
         SchedItem.objects.filter(pk=item.pk).update(**fields)
-        log.info("%s sent (item %s, %s account): %s", self.report_name, item.pk, result["smtp_used"], mail.summary)
+        # `result` is None when there was nothing to send (a report that mails only what is found, and found nothing): that is a run that went fine, with no mail
+        log.info("%s sent (item %s, %s account): %s", self.report_name, item.pk, result["smtp_used"] if result else "no", mail.summary)
         if ":by hand" not in (item.subject_key or ""):  # a run by hand moves Next Mail as the person chose (run_now), not by the cycle's rule
             self.advance(alert.alert_id, item.send_date, now)
         return True
@@ -259,7 +269,7 @@ class ScheduledReportJob(JobBase):
         alert = self._alert_of(item)
         if alert is None:
             return False, "The alert no longer exists."
-        error, result, mail = self.send_report(alert, self.get_setup(now.date()), now, True)
+        error, result, mail = self.send_report(alert, self.get_setup(now.date()), now, True, fresh=True)
         fields = {"mod_dt": now}
         if result:
             fields.update(email_log_id=result["email_log_id"], smtp_used=result["smtp_used"], recipients=result["recipients"][:2000])
