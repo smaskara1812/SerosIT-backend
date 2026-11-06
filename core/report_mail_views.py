@@ -96,7 +96,7 @@ def _latest_runs(keys, n=6):
     parts, params = [], []
     if connection.vendor == "microsoft":
         for key in keys:
-            parts.append(f"SELECT {cols} FROM (SELECT TOP %s {cols} FROM sched_item WHERE job_key = %s ORDER BY send_date DESC, item_id DESC) AS runs")
+            parts.append(f"SELECT {cols} FROM (SELECT TOP (%s) {cols} FROM sched_item WHERE job_key = %s ORDER BY send_date DESC, item_id DESC) AS runs")
             params.extend([n, key])
     else:
         for key in keys:
