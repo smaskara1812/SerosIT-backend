@@ -43,7 +43,7 @@ CASES = ("asis", "upper", "title")
 ALIGN_H = ("left", "center", "right")
 ALIGN_V = ("top", "middle", "bottom")
 FOLDER = "birthday_templates"
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_SIDE = 2400  # a larger picture is shrunk to this on upload
 MAIL_WIDTH = 900  # the picture is sent at this width: big enough to look good, small enough for e-mail
 MAX_PIXELS = 40_000_000
@@ -81,7 +81,7 @@ class TemplateError(Exception):
 
 
 def process_template_upload(data, filename=""):
-    """The bytes of a sent file -> (PNG bytes, width, height). JPG, JPEG or PNG, up to 5 MB; its content is checked and it is re-encoded, which
+    """The bytes of a sent file -> (PNG bytes, width, height). JPG, JPEG or PNG, up to 10 MB; its content is checked and it is re-encoded, which
     removes hidden data."""
     from PIL import Image, ImageOps
 

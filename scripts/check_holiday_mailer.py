@@ -241,7 +241,7 @@ try:
            and full.post("/api/admin/holiday-events/", {"file": up(), "name": "A", "send_on": "not a date"}, format="multipart").status_code == 400
            and full.post("/api/admin/holiday-events/", {"file": up(), "name": "A", "send_on": "2030-01-01", "send_days": "99"}, format="multipart").status_code == 400)
         ok("a file that is not a picture is refused", full.post("/api/admin/holiday-events/", {"file": SimpleUploadedFile("x.png", b"not a picture"), "name": "A", "send_on": "2030-01-01"}, format="multipart").status_code == 400)
-        ok("a file over 5 MB is refused", full.post("/api/admin/holiday-events/", {"file": SimpleUploadedFile("big.png", b"0" * (5 * 1048576 + 10)), "name": "A", "send_on": "2030-01-01"}, format="multipart").status_code == 400)
+        ok("a file over 10 MB is refused", full.post("/api/admin/holiday-events/", {"file": SimpleUploadedFile("big.png", b"0" * (10 * 1048576 + 10)), "name": "A", "send_on": "2030-01-01"}, format="multipart").status_code == 400)
         ok("a PDF is refused", full.post("/api/admin/holiday-events/", {"file": SimpleUploadedFile("a.pdf", b"%PDF-1.4"), "name": "A", "send_on": "2030-01-01"}, format="multipart").status_code == 400)
         lst = full.get("/api/admin/holiday-events/").json()
         ok("it shows under Upcoming with its next date", lst["counts"]["upcoming"] == 1 and lst["results"][0]["next_send"] == (today + datetime.timedelta(days=30)).isoformat() and lst["results"][0]["run_to"] == (today + datetime.timedelta(days=31)).isoformat(), str(lst)[:300])
