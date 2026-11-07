@@ -4,7 +4,7 @@ What decides what, so nothing here is hardcoded:
   * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (trigger point "automation",
     action "send_birthday_mail"), pointing at an alert (alert 247, "Happy Birthday !!!"). Switching that row off stops the mail.
   * Who receives it: the alert's active rows in Alert To Users (To, Cc, Bcc), exactly as for every other alert. The celebrant is not a recipient.
-  * When it goes: the alert's start hour (07:00), every day, by the hourly scheduler (core/scheduler.py).
+  * When it goes: the alert's start hour (07:00), every day, by the scheduler (core/scheduler.py).
   * The From name and the subject: the alert's display name and subject. A {name} in the subject becomes the person's name.
   * The sending account: BIRTHDAY_EMAIL_* in the environment, then the default account (core/mailer.py).
 The people and the pictures are kept on the Birthday Mailer page itself: no link to the users table.
@@ -21,7 +21,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
-from . import mailer
+from . import mailer, sched_clock
 from .sched_base import JobBase
 from .models import BirthdayPerson, BirthdayTemplate, MailAlertDtl, NotificationTrigger, SchedItem, SchedJob
 from .notification_triggers import resolve_alert_recipients
@@ -382,7 +382,7 @@ class BirthdayJob(JobBase):
     def schedule_text(self, today, setup=None):
         # the Scheduled Mails page already has the hour from the alert, and passes it so this line does not read the recipients and the sender again
         hour = setup["send_hour"] if setup is not None else get_setup(today)["send_hour"]
-        return f"Daily at {hour:02d}:00 (checked every hour)"
+        return f"Daily at {hour:02d}:00 (checked {sched_clock.interval_text()})"
 
     def setup(self, today=None):
         return get_setup(today)

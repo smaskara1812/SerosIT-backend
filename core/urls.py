@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
-from . import birthday_views, holiday_views, report_mail_views, scheduled_mails_views
+from . import birthday_views, holiday_views, mail_summary_views, report_mail_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
 from . import rig_performance_views, approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
@@ -602,6 +602,8 @@ urlpatterns = [
     path("admin/banner-assets/<int:asset_id>/", asset_detail_api, name="banner_asset_detail"),
     path("banner/assets/<int:asset_id>/file/", asset_file_api, name="banner_asset_file"),
     path("admin/mail-redirect/", views.admin_mail_redirect_api, name="admin_mail_redirect"),
+    path("admin/mail-summary/", mail_summary_views.admin_mail_summary_api, name="admin_mail_summary"),
+    path("admin/mail-summary/test/", mail_summary_views.admin_mail_summary_test_api, name="admin_mail_summary_test"),
     path("admin/email-log/facets/", views.admin_email_log_facets_api, name="admin_email_log_facets"),
     path("admin/email-log/", views.admin_email_log_list_api, name="admin_email_log_list"),
     path("admin/email-log/<int:pk>/body/", views.admin_email_log_body_api, name="admin_email_log_body"),

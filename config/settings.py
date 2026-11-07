@@ -300,9 +300,15 @@ SCHEDULER_OVERDUE_HOURS = int(os.getenv("SCHEDULER_OVERDUE_HOURS", "2") or 2)  #
 SCHEDULER_HEALTH_ALERTS = os.getenv("SCHEDULER_HEALTH_ALERTS", "False") == "True"
 SCHEDULER_HEALTH_REMINDER_HOURS = int(os.getenv("SCHEDULER_HEALTH_REMINDER_HOURS", "0") or 0)  # 0 = one mail per problem, no reminders
 SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # after the first try: at most this many more, one per hourly run
+# How often the scheduler runs: at the top of every hour and then every this many minutes (5, 10, 15, 20, 30 or 60; anything else is read as 30). See core/sched_clock.py.
+SCHEDULER_INTERVAL_MINUTES = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "30") or 30)
 # Who is told when an automatic mail has finally failed (after its retries): comma separated addresses. Empty = nobody is mailed (the failure still shows on
 # Scheduled Mails and in the logs). The error mail goes out through the default account.
 SCHEDULER_ERROR_MAIL_TO = [a.strip() for a in os.getenv("SCHEDULER_ERROR_MAIL_TO", "").split(",") if a.strip()]
+# The Daily Mail Summary (Admin > Mail Summary). These are the backup values, used until someone saves the page; a saved page wins. MAIL_SUMMARY_TIME is HH:MM.
+MAIL_SUMMARY = os.getenv("MAIL_SUMMARY", "False").strip().lower() in ("1", "true", "yes", "on")
+MAIL_SUMMARY_TO = [a.strip() for a in os.getenv("MAIL_SUMMARY_TO", "").split(",") if a.strip()]  # empty = the people in SCHEDULER_ERROR_MAIL_TO
+MAIL_SUMMARY_TIME = os.getenv("MAIL_SUMMARY_TIME", "22:00").strip() or "22:00"
 
 # Mail redirect, for a test, staging or UAT machine: with MAIL_REDIRECT=True EVERY mail the application sends (approvals, automatic mails, reports, error mails, test
 # sends) goes only to the addresses in MAIL_REDIRECT_TO (comma separated), whoever is set as the recipient in the data. The mail says in its body, and in its

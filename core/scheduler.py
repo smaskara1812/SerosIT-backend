@@ -1,7 +1,7 @@
-"""The scheduler: one hourly run that looks after every automatic mail the system has.
+"""The scheduler: one run, every SCHEDULER_INTERVAL_MINUTES (30 by default, at :00 and :30), that looks after every automatic mail the system has.
 
-`tick()` is what runs at the top of each hour (core/management/commands/run_scheduler.py, as a Windows service in production). For each job
-that is switched on it plans the next 7 days, sends what is due, retries what failed (once per hourly run, at most SCHEDULER_MAX_RETRIES more
+`tick()` is what runs at each of those times (core/management/commands/run_scheduler.py, as a Windows service in production). For each job
+that is switched on it plans the next 7 days, sends what is due, retries what failed (at most once an hour, at most SCHEDULER_MAX_RETRIES more
 times), and records the result. A job is any object with `key`, `name`, `plan(now)`, `process(now)`, `attempt(item, now)` and `resend(item, now)`;
 the birthday mailer is the first (core/birthday_mailer.py), the holiday mailer the second (core/holiday_mailer.py). A job that raises is logged and does not stop the others.
 
@@ -16,12 +16,12 @@ import time
 
 from django.db.models import Q
 
-from . import activity_monitor_alert, birthday_mailer, daily_operations_update, drilling_info_not_entered, drilling_info_status, error_mail, rig_performance_month, haz_id_register, holiday_mailer, open_incident_actions, rig_rate_breakup
+from . import activity_monitor_alert, birthday_mailer, daily_operations_update, drilling_info_not_entered, drilling_info_status, error_mail, rig_performance_month, haz_id_register, holiday_mailer, mail_summary, open_incident_actions, rig_rate_breakup
 from .models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 
-JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB, haz_id_register.JOB.key: haz_id_register.JOB, rig_rate_breakup.JOB.key: rig_rate_breakup.JOB, activity_monitor_alert.JOB.key: activity_monitor_alert.JOB, open_incident_actions.JOB.key: open_incident_actions.JOB, daily_operations_update.JOB.key: daily_operations_update.JOB, drilling_info_not_entered.JOB.key: drilling_info_not_entered.JOB, drilling_info_status.JOB.key: drilling_info_status.JOB, rig_performance_month.JOB.key: rig_performance_month.JOB}
+JOBS = {birthday_mailer.JOB.key: birthday_mailer.JOB, holiday_mailer.JOB.key: holiday_mailer.JOB, haz_id_register.JOB.key: haz_id_register.JOB, rig_rate_breakup.JOB.key: rig_rate_breakup.JOB, activity_monitor_alert.JOB.key: activity_monitor_alert.JOB, open_incident_actions.JOB.key: open_incident_actions.JOB, daily_operations_update.JOB.key: daily_operations_update.JOB, drilling_info_not_entered.JOB.key: drilling_info_not_entered.JOB, drilling_info_status.JOB.key: drilling_info_status.JOB, rig_performance_month.JOB.key: rig_performance_month.JOB, mail_summary.JOB.key: mail_summary.JOB}
 LOCK_MINUTES = 50  # a lock older than this is taken as left behind by a copy that died
 
 
@@ -67,13 +67,13 @@ def tick(now=None, owner=None, source="service"):
                 SchedJob.objects.filter(pk=row.pk).update(last_run_at=now, last_run_note=note)
                 log.info("%s: %s", job.name, note)
             except Exception as exc:
-                log.exception("job %s failed during the hourly run", key)
+                log.exception("job %s failed during the scheduler run", key)
                 errors.append(f"{key}: {type(exc).__name__}: {exc}")
                 error_mail.notify_job_failed(key, job.name, f"{type(exc).__name__}: {exc}", now)
                 SchedJob.objects.filter(pk=row.pk).update(last_run_at=now, last_run_note=f"Error: {exc}"[:300])
         msg = ("Errors: " + "; ".join(errors)) if errors else "OK"
         SchedHeartbeat.objects.filter(pk=1).update(last_tick_at=now, last_tick_ok=not errors, last_message=msg[:300], **({"last_manual_tick_at": now} if source == "manual" else {"last_service_tick_at": now, "last_alive_at": now}))
-        log.info("hourly run finished in %.1fs (%s)", time.monotonic() - started, msg)
+        log.info("scheduler run finished in %.1fs (%s)", time.monotonic() - started, msg)
     finally:
         release_lock(owner)
     return {"ran": True, "jobs": summary, "errors": errors}

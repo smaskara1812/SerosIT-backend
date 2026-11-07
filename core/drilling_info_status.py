@@ -11,7 +11,7 @@ date; blank when 0; red when more than 1).
 Who gets a company's mail: the people set for that COMPANY and alert 244 in Masters > Rig Alert Recipients (active: To blank or not yet passed) plus the alert's own
 recipients (Alert To Users), each address once, the strongest type winning (core/drilling_info_not_entered.py). A company with no To address is reported as a failure
 after the other companies' mails have gone. Mails are made in the alert's cycle (core/report_job.py): Next Mail, Start Time and Frequency (1 = every day) are set on the alert;
-a retry does not mail a company twice in a day. Wording: "Seros-IT Auto Alert" where the legacy mail said "S.I.S."; the subject is the alert's Mail Subject."""
+a retry does not mail a company twice in a day. Wording: "Seros-IT Auto Alert" where the legacy mail said "S.I.S."; the subject is the alert's Mail Subject plus " - <company>" (added 7 Nov 2026, as the Drilling Info Not Entered mail does with the rig)."""
 
 import datetime
 import html as _html
@@ -126,7 +126,7 @@ class DrillingInfoStatusJob(ScheduledReportJob):
         for cid, company, rows in by_company(status_rows(now.date())):
             html, text = build_company_mail(company, rows)
             rec = recipients_for_company(alert.alert_id, cid, now.date())
-            out.append(ReportMail(subject, html, text, [], False, f"mail for {company}", to=rec["to"], cc=rec["cc"], bcc=rec["bcc"]))
+            out.append(ReportMail(f"{subject} - {company}", html, text, [], False, f"mail for {company}", to=rec["to"], cc=rec["cc"], bcc=rec["bcc"]))
         return out
 
     def recipients_detailed(self, as_of=None, alert=None, base=None):
@@ -167,7 +167,7 @@ class DrillingInfoStatusJob(ScheduledReportJob):
                 continue
             html, text = build_company_mail(company, rows)
             try:
-                res = mailer.send_scheduled_email(subject, html, text, to=rec["to"], cc=rec["cc"], bcc=rec["bcc"], from_name=setup["from_name"], trigger=label, trigger_code=TRIGGER_CODE, designated=designated, alert_id=alert.alert_id, env_account=False)
+                res = mailer.send_scheduled_email(f"{subject} - {company}", html, text, to=rec["to"], cc=rec["cc"], bcc=rec["bcc"], from_name=setup["from_name"], trigger=label, trigger_code=TRIGGER_CODE, designated=designated, alert_id=alert.alert_id, env_account=False)
             except Exception as exc:
                 problems.append(f"{company}: {type(exc).__name__}: {exc}")
                 continue

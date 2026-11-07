@@ -7,7 +7,7 @@ import datetime
 from django.conf import settings
 from django.db.models import Q
 
-from . import error_mail
+from . import error_mail, sched_clock
 from .models import MailAlertDtl, NotificationTrigger, SchedItem
 
 
@@ -27,7 +27,7 @@ class JobBase:
 
     def schedule_text(self, today, setup=None):
         """One line for the Scheduled Mails page: when this automation goes out. `setup` is the alert's hour and next date when the page already has them."""
-        return "Hourly"
+        return f"Checked {sched_clock.interval_text()}"
 
     def setup(self, today=None):
         """How this automation is set up as the pages show it: {"alert", "from_name", "subject", "recipients", "warnings", ...}; None when a job has none."""

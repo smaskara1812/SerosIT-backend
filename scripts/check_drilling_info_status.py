@@ -112,7 +112,7 @@ try:
         a = MailAlertDtl.objects.get(pk=ALERT)
         sent.clear()
         err, res, mail = run_job(a, JOB.get_setup(TODAY), NOW)
-        ok("one mail per company, every day, whether or not a rig is late", err == "" and len(sent) == 3 and all(m["subject"] == "Drilling Info Status" for m in sent), f"{err} {len(sent)}")
+        ok("one mail per company, every day, whether or not a rig is late, each with its company in the subject", err == "" and len(sent) == 3 and all(m["subject"].startswith("Drilling Info Status - ") for m in sent) and len({m["subject"] for m in sent}) == 3, f"{err} {len(sent)} {[m['subject'] for m in sent]}")
         m = next(x for x in sent if "Axom Rhino" in x["html"])
         ok("the SOSIL mail has only its rig, goes to its recipients through the default account", "SK01" not in m["html"] and m["to"] and m["host"] == "smtp.default.test" and m["from_name"] == "", str(m["to"]))
         ok("the Email Log has one row per mail", EmailLog.objects.filter(trigger_code=ds.TRIGGER_CODE, success=True).count() == 3)

@@ -3,7 +3,7 @@
 What decides what (nothing is written into the code except what the report itself is):
   * Which alert the report belongs to, and whether it is on: ONE row of Notification Triggers (trigger point "automation", an action such as
     "send_haz_id_register_mail"), pointing at an alert in Alert Details. Switching that row off, or unticking Active on the alert, stops it.
-  * WHEN it goes: the alert's Next Mail date and its Start Time (the hour). The hourly scheduler sends the report on the first run at or after that
+  * WHEN it goes: the alert's Next Mail date and its Start Time (the hour). The scheduler sends the report on the first run at or after that
     date and hour. After it goes out, Next Mail moves forward by the alert's Frequency (days): from the date it was due, not from the day it was
     sent, so a late run does not shift the cycle; and if the service was down for more than one cycle, to the next future date of the same cycle,
     so there is one catch-up mail and not several. Frequency must be at least 1.
@@ -11,7 +11,7 @@ What decides what (nothing is written into the code except what the report itsel
   * WHO gets it: the alert's active rows in Alert To Users (To, Cc, Bcc), the same as every other alert (core/notification_triggers.py).
   * The subject: the alert's Mail Subject. The sender: the alert's own account in Alert Senders when it has one, else the default account (never the
     birthday account); the name next to the From address is the alert sender's display name, else none (the mail server adds its own).
-  * A report that fails is retried at the next hourly runs; after its last try the people in SCHEDULER_ERROR_MAIL_TO are told (core/error_mail.py).
+  * A report that fails is retried at the next hour's run (at most once an hour); after its last try the people in SCHEDULER_ERROR_MAIL_TO are told (core/error_mail.py).
 A skipped run moves Next Mail on as well (the cycle is skipped, not repeated the next day). Resend builds a fresh report and does not move the date."""
 
 import datetime
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 
-from . import mailer
+from . import mail_settings, mailer, sched_clock
 from .models import MailAlertDtl, SchedItem
 from .notification_triggers import resolve_alert_recipients, resolve_alert_recipients_detailed
 from .sched_base import JobBase
@@ -98,7 +98,7 @@ class ScheduledReportJob(JobBase):
             "trigger_found": bool(trig), "trigger_active": bool(trig and trig.notification_trigger_active == "Y"), "alert": None, "from_name": "", "from_address": mailer.sender_identity(None, False)["address"], "links": mailer.alert_links(None, ""), "subject": "",
             "send_hour": 7, "window": 0, "freq": 0, "next_mail_dt": None, "recipients": {"to": [], "cc": [], "bcc": []}, "warnings": [],
             "smtp": {"designated": False, "designated_host": "", "default_host": settings.EMAIL_HOST, "sender": None},
-            "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO),
+            "error_mail_to": mail_settings.error_recipients(),
         }
         r_on, r_to, _r_src = mailer.redirect_state()
         if r_on:
@@ -130,8 +130,8 @@ class ScheduledReportJob(JobBase):
             out["warnings"].append("The alert's Frequency must be at least 1 day, or the report is never scheduled.")
         if a.next_mail_dt is None:
             out["warnings"].append("The alert has no Next Mail date, so the report is never scheduled.")
-        if not settings.SCHEDULER_ERROR_MAIL_TO:
-            out["warnings"].append("SCHEDULER_ERROR_MAIL_TO is not set in the server's .env, so nobody is e-mailed when this report fails (it still shows on Scheduled Mails).")
+        if not mail_settings.error_recipients():
+            out["warnings"].append("SCHEDULER_ERROR_MAIL_TO is not set in the server's .env and nobody is chosen on Admin > Mail Controls, so nobody is e-mailed when this report fails (it still shows on Scheduled Mails).")
         return out
 
     def setup(self, today=None):
@@ -149,7 +149,7 @@ class ScheduledReportJob(JobBase):
         if not s["alert"]:
             return "Not connected to an alert yet"
         nxt = f"{s['next_mail_dt']:%d %b %Y} at {s['send_hour']:02d}:00" if s["next_mail_dt"] else "no date set"
-        return f"Every {s['freq']} days; next {nxt} (checked every hour)"
+        return f"Every {s['freq']} days; next {nxt} (checked {sched_clock.interval_text()})"
 
     # ── planning ──
     def plan(self, now, days=7):

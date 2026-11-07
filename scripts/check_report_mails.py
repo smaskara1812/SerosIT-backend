@@ -34,6 +34,7 @@ mailer._deliver = fake_deliver
 settings.EMAIL_HOST = "smtp.default.test"
 settings.BIRTHDAY_EMAIL_HOST = "smtp.env.test"  # the report must NOT use this one
 settings.SCHEDULER_ERROR_MAIL_TO = ["it@example.test"]
+from core import mail_settings; mail_settings._CACHE.update(at=float("inf"), row=None)  # these checks use the .env list set below, not what is saved on Admin > Mail Controls
 settings.SCHEDULER_MAX_RETRIES = 2
 
 
@@ -327,7 +328,7 @@ try:
         ok("Scheduled Mails shows who an item goes to (View)", rr.status_code == 200 and rr.json()["counts"]["to"] >= 1 and rr.json()["recipients"][0]["source"].startswith("Alert To Users"))
         ok("nobody else can", nobody.get(f"/api/admin/scheduled-mails/{it.pk}/recipients/").status_code == 403 and full.get("/api/admin/scheduled-mails/999999/recipients/").status_code == 404)
         sm = full.get("/api/admin/scheduled-mails/").json()
-        ok("Scheduled Mails lists the ten automations, each with its own schedule line", {x["key"] for x in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions", "daily_operations_update", "rig_performance", "drilling_info_not_entered", "drilling_info_status"} and "Every 15 days" in next(x["schedule"] for x in sm["jobs"] if x["key"] == "haz_id_register"))
+        ok("Scheduled Mails lists the eleven automations, each with its own schedule line", {x["key"] for x in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions", "daily_operations_update", "rig_performance", "drilling_info_not_entered", "drilling_info_status", "mail_summary"} and "Every 15 days" in next(x["schedule"] for x in sm["jobs"] if x["key"] == "haz_id_register"))
         print("K. sent by hand, and the schedule changed from the page")
         real = datetime.date.today()
         # the alert's own state, with a trigger row and nothing planned

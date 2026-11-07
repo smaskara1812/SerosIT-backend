@@ -1,7 +1,7 @@
 """Runs the scheduler: every automatic mail the system has (see core/scheduler.py).
 
-    python manage.py run_scheduler            # stays running; a run at the start, then one at the top of every hour (the Windows service does this)
-    python manage.py run_scheduler --once     # one run, then exit (for Windows Task Scheduler every hour, or to try it by hand)
+    python manage.py run_scheduler            # stays running; a run at the start, then one every SCHEDULER_INTERVAL_MINUTES (30 by default: at :00 and :30) (the Windows service does this)
+    python manage.py run_scheduler --once     # one run, then exit (for Windows Task Scheduler at the same interval, or to try it by hand)
     python manage.py run_scheduler --status   # shows when it last ran and what is planned
 
 Stop it with Ctrl+C (or by stopping the service). Everything it does is written to backend/logs/scheduler-<date>.log, and every error also to
@@ -15,21 +15,20 @@ import time
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
-from core import scheduler, scheduler_health
+from core import sched_clock, scheduler, scheduler_health
 from core.models import SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 HEARTBEAT_SECONDS = 60
 
 
-def seconds_to_next_hour(now=None):
-    now = now or datetime.datetime.now()
-    nxt = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
-    return max(1.0, (nxt - now).total_seconds() + 5)  # five seconds past the hour, so a mail due at 07:00 is due when the run starts
+def seconds_to_next_run(now=None):
+    """To five seconds past the next run time (core/sched_clock.py), so a mail due at 07:00 or 07:30 is due when the run starts."""
+    return sched_clock.seconds_to_next_run(now)
 
 
 class Command(BaseCommand):
-    help = "Run the scheduler (hourly) for every automatic mail."
+    help = "Run the scheduler (every SCHEDULER_INTERVAL_MINUTES minutes) for every automatic mail."
 
     def add_arguments(self, parser):
         parser.add_argument("--once", action="store_true", help="run once and exit")
@@ -53,7 +52,7 @@ class Command(BaseCommand):
                 signal.signal(sig, _stop)
             except (ValueError, OSError):
                 pass
-        log.info("scheduler started: one run now, then one at the top of every hour")
+        log.info("scheduler started: one run now, then %s, on the clock", sched_clock.interval_text())
         self._beat(start=True)
         first = True
         while not stop["now"]:
@@ -61,10 +60,10 @@ class Command(BaseCommand):
                 close_old_connections()
                 scheduler.tick()
             except Exception:
-                log.exception("the hourly run crashed; it will try again at the next hour")
+                log.exception("the scheduler run crashed; it will try again at the next run")
             if first:
                 first = False
-            wait = seconds_to_next_hour()
+            wait = seconds_to_next_run()
             log.info("next run in %.0f minutes", wait / 60)
             end = time.monotonic() + wait
             next_beat = time.monotonic() + HEARTBEAT_SECONDS

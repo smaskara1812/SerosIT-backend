@@ -91,6 +91,7 @@ try:
         shape = {"id": "a1", "type": "star", "x": 300, "y": 120, "w": 90, "h": 90, "rot": 15, "fill": "#ffd700", "opacity": 0.9, "n": 5, "p": 0.45}
         ok("a valid shape is accepted", with_design(lambda dd: dd.update({"layers": [shape]})).status_code == 201)
         ok("a gradient and outline are accepted", with_design(lambda dd: dd.update({"layers": [{**shape, "fill2": "#ff0000", "grad": 45, "stroke": "#000000", "sw": 6}]})).status_code == 201)
+        ok("the built-in Janmashtami picture is accepted", with_design(lambda dd: dd.update({"layers": [{**shape, "type": "artjanmashtami", "w": 312, "h": 326}]})).status_code == 201)
         ok("a bad gradient colour refused", with_design(lambda dd: dd.update({"layers": [{**shape, "fill2": "red"}]})).status_code == 400)
         ok("an outline too thick refused", with_design(lambda dd: dd.update({"layers": [{**shape, "stroke": "#000000", "sw": 999}]})).status_code == 400)
         label = {"id": "t1", "type": "text", "x": 300, "y": 100, "w": 200, "h": 60, "text": "26 JAN", "size": 48, "bold": True, "font": "serif", "spacing": 4, "fill": "#ffffff"}

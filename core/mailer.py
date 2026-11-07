@@ -47,7 +47,7 @@ def clear_redirect_cache():
 
 
 def redirect_state():
-    """-> (on, [addresses], source). source is "page" when an App Admin has set it on the Mail Redirect page (that row wins), else "env" (MAIL_REDIRECT / MAIL_REDIRECT_TO)."""
+    """-> (on, [addresses], source). source is "page" when an App Admin has set it on the Mail Controls page (that row wins), else "env" (MAIL_REDIRECT / MAIL_REDIRECT_TO)."""
     import time
 
     from .models import MailRedirectSetting

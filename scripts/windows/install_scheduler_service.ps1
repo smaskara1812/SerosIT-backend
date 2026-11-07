@@ -5,7 +5,7 @@ Run it from an elevated PowerShell (Run as administrator) on the server, once.
     .\install_scheduler_service.ps1
     .\install_scheduler_service.ps1 -NssmPath C:\Tools\nssm.exe -ServiceUser "DOMAIN\svc-seros" -ServicePassword "..."
 
-What the service does: `python manage.py run_scheduler`, which runs once when it starts and then at the top of every hour, and looks after every
+What the service does: `python manage.py run_scheduler`, which runs once when it starts and then every SCHEDULER_INTERVAL_MINUTES minutes (30 by default: at :00 and :30), and looks after every
 automatic mail the system has (the Birthday Mailer today). It reads the same `.env` as the web application (it starts in the backend folder), restarts
 itself a minute after any crash, and writes its own output to backend\logs\service.out.log and service.err.log. The scheduler's own log is
 backend\logs\scheduler-<date>.log, and every error also goes to automation_errors-<date>.log.

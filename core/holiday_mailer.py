@@ -4,7 +4,7 @@ What decides what, so nothing here is hardcoded:
   * Which alert the mail belongs to, and whether it is on: ONE row of the Notification Triggers table, (trigger point "automation", action
     "send_holiday_mail"), pointing at an alert (named "Holiday Events"). Switching that row off stops every holiday mail.
   * Who receives it: the alert's active rows in Alert To Users (To, Cc, Bcc), exactly as for every other alert. One alert for all festivals.
-  * When it goes: the dates set on each event here, at the alert's start hour, by the hourly scheduler (core/scheduler.py).
+  * When it goes: the dates set on each event here, at the alert's start hour, by the scheduler (core/scheduler.py).
   * The From name: the alert's display name. The subject: the event's own subject (the alert's subject only when the event has none).
   * The sending account: BIRTHDAY_EMAIL_* in the environment (the same account as the birthday mail), then the default account (core/mailer.py).
 The picture is finished by the person who uploads it: nothing is drawn on it.
@@ -19,7 +19,7 @@ import os
 from django.conf import settings
 from django.utils import timezone
 
-from . import mailer
+from . import mailer, sched_clock
 from .birthday_mailer import MAIL_WIDTH, TemplateError, make_thumb, process_template_upload
 from .models import HolidayEvent, MailAlertDtl, NotificationTrigger, SchedItem, SchedJob
 from .notification_triggers import resolve_alert_recipients
@@ -205,7 +205,7 @@ class HolidayJob(JobBase):
     def schedule_text(self, today, setup=None):
         # the Scheduled Mails page already has the hour from the alert, and passes it so this line does not read the recipients and the sender again
         hour = setup["send_hour"] if setup is not None else get_setup(today)["send_hour"]
-        return f"On each event's dates, at {hour:02d}:00 (checked every hour)"
+        return f"On each event's dates, at {hour:02d}:00 (checked {sched_clock.interval_text()})"
 
     def setup(self, today=None):
         return get_setup(today)

@@ -1,5 +1,5 @@
-"""The error mail: when an automatic mail has finally failed (all its tries used), or a whole hourly run of a job failed, the people in
-SCHEDULER_ERROR_MAIL_TO (.env) are told, by e-mail through the default account. It is sent once per failed item, and at most once a day per job for
+"""The error mail: when an automatic mail has finally failed (all its tries used), or a whole run of a job failed, the people in
+SCHEDULER_ERROR_MAIL_TO (.env), or the people chosen on Admin > Mail Controls (which wins), are told, by e-mail through the default account. It is sent once per failed item, and at most once a day per job for
 a failed run, so a broken job does not fill a mailbox. Nothing is sent when SCHEDULER_ERROR_MAIL_TO is empty. A failure to send the error mail is
 only logged: it must never stop the scheduler."""
 
@@ -9,7 +9,7 @@ import logging
 
 from django.conf import settings
 
-from . import mailer
+from . import mail_settings, mailer
 from .models import SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
@@ -17,13 +17,14 @@ TRIGGER_CODE = "auto.error"
 
 
 def recipients():
-    return list(settings.SCHEDULER_ERROR_MAIL_TO)
+    """Who is told: the people chosen on Admin > Mail Controls, else SCHEDULER_ERROR_MAIL_TO from the .env (core/mail_settings.py)."""
+    return mail_settings.error_recipients()
 
 
 def _send(subject, rows, note, designated=False):
     to = recipients()
     if not to:
-        log.warning("error mail not sent: SCHEDULER_ERROR_MAIL_TO is empty (%s)", subject)
+        log.warning("error mail not sent: nobody is set to receive error mails (%s)", subject)
         return False
     body = "".join(f"<tr><td style='padding:4px 12px 4px 0;color:#555'><b>{html.escape(k)}</b></td><td style='padding:4px 0'>{html.escape(str(v))}</td></tr>" for k, v in rows)
     page = (
@@ -45,11 +46,11 @@ def _send(subject, rows, note, designated=False):
 
 def notify_item_failed(job_name, item, now):
     """The error mail for an item that has used all its tries. Marks the item once the mail has gone (or when there is nobody to send it to), so it is
-    sent once; if it could not go (the default account is down too), the next hourly run tries again, for a day."""
+    sent once; if it could not go (the default account is down too), the next run tries again, for a day."""
     if item.error_mailed_at:
         return False
     if not recipients():
-        log.warning("error mail for %s (item %s) not sent: SCHEDULER_ERROR_MAIL_TO is empty", job_name, item.pk)
+        log.warning("error mail for %s (item %s) not sent: nobody is set to receive error mails", job_name, item.pk)
         SchedItem.objects.filter(pk=item.pk).update(error_mailed_at=now)
         return False
     sent = _send(
@@ -63,14 +64,14 @@ def notify_item_failed(job_name, item, now):
 
 
 def notify_job_failed(job_key, job_name, error, now):
-    """The error mail for a job whose whole hourly run raised. At most once a day per job."""
+    """The error mail for a job whose whole run raised. At most once a day per job."""
     row = SchedJob.objects.filter(job_key=job_key).first()
     if row and row.last_error_mail_at and now - row.last_error_mail_at < datetime.timedelta(hours=24):
         return False
     sent = _send(
         f"[SerosIT] {job_name} could not run",
         [("Automation", job_name), ("Time", f"{now:%d %b %Y %H:%M}"), ("Reason", error)],
-        "The hourly run of this automation raised an error. Nothing was sent for it in this run. See the scheduler logs (automation_errors) for the details.",
+        "A run of this automation raised an error. Nothing was sent for it in this run. See the scheduler logs (automation_errors) for the details.",
     )
     SchedJob.objects.filter(job_key=job_key).update(last_error_mail_at=now)
     return sent

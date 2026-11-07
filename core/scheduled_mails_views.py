@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import audit as _audit
-from . import birthday_mailer, holiday_mailer, scheduler
+from . import birthday_mailer, holiday_mailer, mail_settings, sched_clock, scheduler
 from . import scheduler_health as scheduler_health_module
 from .birthday_views import scheduler_health
 from .models import BirthdayTemplate, EmailLog, NotificationTrigger, SchedItem, SchedJob
@@ -126,7 +126,7 @@ def _panel_part(now, today):
         )
     }
     trigs = {(t.entity_key, t.action): t for t in NotificationTrigger.objects.filter(entity_key__in={j.trigger_entity for j in scheduler.JOBS.values() if getattr(j, "trigger_entity", None)}).select_related("alert")}
-    next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
+    next_run = sched_clock.next_run_after(now)
     jobs = []
     for key, job in scheduler.JOBS.items():
         row = rows.get(key)
@@ -134,7 +134,7 @@ def _panel_part(now, today):
         trig = trigs.get((getattr(job, "trigger_entity", None), getattr(job, "trigger_action", None))) if getattr(job, "trigger_entity", None) else None
         light = _light_setup(trig.alert if trig is not None else None)
         jobs.append({"key": key, "name": job.name, "enabled": (row.enabled == "Y") if row else True, "last_run_at": row.last_run_at if row else None,
-                     "last_run_note": row.last_run_note if row else "", "next_run": next_hour, "schedule": job.schedule_text(today, light),
+                     "last_run_note": row.last_run_note if row else "", "next_run": next_run, "schedule": job.schedule_text(today, light),
                      "failed": st.get("failed", 0), "sent_today": st.get("sent_today", 0),
                      # for the pause and resume dialogs: what pausing would leave behind
                      "kind": job.schedule_kind, "planned": st.get("planned", 0), "overdue_planned": st.get("overdue", 0),
@@ -143,7 +143,7 @@ def _panel_part(now, today):
         "health": scheduler_health(now), "health_events": [
             {"id": e.event_id, "kind": e.kind, "level": e.level, "started_at": e.started_at, "ended_at": e.ended_at, "detail": e.detail, "alerted": e.alerted_at is not None}
             for e in scheduler_health_module.recent_events(6)
-        ], "jobs": jobs,
+        ], "jobs": jobs, "run_every_minutes": sched_clock.interval_minutes(),
     }
 
 
@@ -225,7 +225,7 @@ def job_switch_api(request, job_key, state):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def run_now_api(request):
-    """Runs the hourly check right now, in this request (plan the next 7 days, send what is due). For when the service is not running yet or someone
+    """Runs the scheduler's check right now, in this request (plan the next 7 days, send what is due). For when the service is not running yet or someone
     wants it done without waiting for the hour."""
     if not _may(request, "edit"):
         return _deny("run the scheduler")
@@ -321,7 +321,7 @@ def recipients_preview(job, as_of, snapshot="", setup=None, alert_obj=None, base
     return {
         "job": job.key, "job_name": job.name, "as_of": as_of, "alert": alert, "from_name": setup.get("from_name", ""), "from_address": setup.get("from_address", ""), "links": links, "subject": setup.get("subject", ""),
         "sender": (setup.get("smtp") or {}).get("sender"), "recipients": entries, "counts": counts, "snapshot": snapshot or "",
-        "error_mail_to": list(settings.SCHEDULER_ERROR_MAIL_TO), "warnings": setup.get("warnings", []),
+        "error_mail_to": mail_settings.error_recipients(), "warnings": setup.get("warnings", []),
     }
 
 

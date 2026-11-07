@@ -25,6 +25,7 @@ mailer._deliver = lambda subject, html, text, to, cc, bcc, from_name, smtp, inli
 settings.MEDIA_ROOT = os.path.join(TMP, "media")
 os.makedirs(os.path.join(settings.MEDIA_ROOT, "birthday_templates")); os.makedirs(os.path.join(settings.MEDIA_ROOT, "holiday_images"))
 settings.SCHEDULER_ERROR_MAIL_TO = []
+from core import mail_settings; mail_settings._CACHE.update(at=float("inf"), row=None)  # these checks use the .env list set below, not what is saved on Admin > Mail Controls
 
 
 class Rollback(Exception):

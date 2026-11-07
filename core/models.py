@@ -5079,7 +5079,7 @@ class RigToEmailMapping(models.Model):
 
 
 class MailRedirectSetting(models.Model):
-    """One row, id 1: the mail redirect as an App Admin set it on the Mail Redirect page. With no row, the .env values (MAIL_REDIRECT, MAIL_REDIRECT_TO) apply."""
+    """One row, id 1: the mail redirect as an App Admin set it on the Mail Controls page. With no row, the .env values (MAIL_REDIRECT, MAIL_REDIRECT_TO) apply."""
 
     mail_redirect_id = models.IntegerField(primary_key=True)
     enabled = models.BooleanField(default=False)
@@ -5089,3 +5089,25 @@ class MailRedirectSetting(models.Model):
 
     class Meta:
         db_table = "mail_redirect_setting"
+
+
+class MailSummarySetting(models.Model):
+    """One row, id 1: the Daily Mail Summary and the error-mail recipients as an App Admin set them on the Mail Controls page.
+    The summary's own settings count only once they have been saved on the page (`summary_saved`); until then the .env values (MAIL_SUMMARY, MAIL_SUMMARY_TO,
+    MAIL_SUMMARY_TIME) apply. `error_to` is the list of people told when an automatic mail has finally failed: NULL = no choice made on the page, so the .env
+    SCHEDULER_ERROR_MAIL_TO applies; an empty text = nobody (a choice made on the page)."""
+
+    mail_summary_id = models.IntegerField(primary_key=True)
+    summary_saved = models.BooleanField(default=False)
+    summary_on = models.BooleanField(default=False)
+    send_time = models.CharField(max_length=5, default="22:00")  # HH:MM, 24-hour
+    summary_to = models.TextField(blank=True, default="")  # comma separated addresses
+    same_as_error = models.BooleanField(default=True)  # send it to the error-mail recipients instead of the list above
+    send_when_quiet = models.BooleanField(default=True)  # send it even when no mail went out
+    grouped = models.BooleanField(default=True)  # one row per mail type (True) or one row per mail (False)
+    error_to = models.TextField(null=True, blank=True)
+    changed_by = models.CharField(max_length=100, blank=True, default="")
+    changed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mail_summary_setting"

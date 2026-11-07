@@ -32,6 +32,7 @@ def fake_deliver(subject, html, text, to, cc, bcc, from_name, smtp, inline_image
 mailer._deliver = fake_deliver
 settings.EMAIL_HOST = "smtp.default.test"
 settings.SCHEDULER_ERROR_MAIL_TO = ["it@example.test"]
+from core import mail_settings; mail_settings._CACHE.update(at=float("inf"), row=None)  # these checks use the .env list set below, not what is saved on Admin > Mail Controls
 
 
 class Rollback(Exception):

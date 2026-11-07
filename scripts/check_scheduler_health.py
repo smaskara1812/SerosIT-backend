@@ -34,6 +34,7 @@ settings.EMAIL_HOST = "smtp.default.test"
 settings.EMAIL_USE_CONSOLE = False
 settings.BIRTHDAY_EMAIL_HOST = ""
 settings.SCHEDULER_ERROR_MAIL_TO = ["it@example.test"]
+from core import mail_settings; mail_settings._CACHE.update(at=float("inf"), row=None)  # these checks use the .env list set below, not what is saved on Admin > Mail Controls
 settings.SCHEDULER_MODE = "service"
 settings.SCHEDULER_STALE_MINUTES = 10
 settings.SCHEDULER_STOPPED_GRACE_MINUTES = 60
@@ -135,10 +136,16 @@ try:
         sh.heartbeat(NOW + M(5), stop=True)
         ok("stopping properly records it", SchedHeartbeat.objects.get(pk=1).stopped_at == NOW + M(5))
         settings.SCHEDULER_MODE = "task"
+        settings.SCHEDULER_INTERVAL_MINUTES = 60
         hb(last_service_tick_at=NOW - M(70))
         ok("task mode (an hourly task): the last run 70 minutes ago is fine", sh.evaluate(NOW)["state"] == "running")
         hb(last_service_tick_at=NOW - M(80))
         ok("and 80 minutes is not", sh.evaluate(NOW)["state"] == "stale")
+        settings.SCHEDULER_INTERVAL_MINUTES = 30
+        hb(last_service_tick_at=NOW - M(40))
+        ok("task mode every 30 minutes: the last run 40 minutes ago is fine", sh.evaluate(NOW)["state"] == "running")
+        hb(last_service_tick_at=NOW - M(50))
+        ok("and 50 minutes is not (the limit is the interval plus 15)", sh.evaluate(NOW)["state"] == "stale")
         settings.SCHEDULER_MODE = "service"
 
         print("B. mail that should have gone")

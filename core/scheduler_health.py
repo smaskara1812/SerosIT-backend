@@ -2,7 +2,7 @@
 
 Three parts that work together:
   * The scheduler SERVICE (manage.py run_scheduler) writes a heartbeat every minute (`heartbeat`): "I am alive", when it started, on which server, and whether
-    it was stopped properly. In SCHEDULER_MODE=task (Windows Task Scheduler runs it once an hour) there is no heartbeat between runs, so the last run is used.
+    it was stopped properly. In SCHEDULER_MODE=task (Windows Task Scheduler runs it once per interval) there is no heartbeat between runs, so the last run is used.
   * `evaluate` reads the heartbeat, the planned mails and the last mail-server check and says: ok, warning or critical, with the problems in words. The
     Scheduled Mails page and the sidebar dot use it. It never sends anything and never connects to the mail server.
   * The WATCHDOG (manage.py check_scheduler_health, a Task Scheduler job every 15 minutes, separate from the service so it can see the service die) checks the
@@ -19,12 +19,12 @@ import socket
 
 from django.conf import settings
 
-from . import error_mail, mailer
+from . import error_mail, mailer, sched_clock
 from .models import SchedHealthEvent, SchedHeartbeat, SchedItem, SchedJob
 
 log = logging.getLogger("seros.scheduler")
 
-TASK_MODE_LIMIT_MINUTES = 75  # in task mode the scheduler runs once an hour: more than this since its last run means it has stopped
+TASK_MODE_GRACE_MINUTES = 15  # in task mode the scheduler runs once per interval (core/sched_clock.py): more than the interval plus this since its last run means it has stopped
 SMTP_FAILS_BEFORE_ALERT = 2  # the mail server must fail this many checks in a row (30 minutes at one check every 15) before it counts
 LEVELS = {"ok": 0, "warning": 1, "critical": 2}
 
@@ -58,7 +58,7 @@ def service_state(hb, now):
     if not last:
         return "never", None
     age = _minutes(now, last)
-    limit = TASK_MODE_LIMIT_MINUTES if task else settings.SCHEDULER_STALE_MINUTES
+    limit = (sched_clock.interval_minutes() + TASK_MODE_GRACE_MINUTES) if task else settings.SCHEDULER_STALE_MINUTES
     if age <= limit:
         return "running", age
     if not task and hb.stopped_at and hb.last_alive_at and hb.stopped_at >= hb.last_alive_at - datetime.timedelta(seconds=5):

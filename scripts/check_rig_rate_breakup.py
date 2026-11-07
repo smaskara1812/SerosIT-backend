@@ -31,6 +31,7 @@ mailer._deliver = fake_deliver
 settings.EMAIL_HOST = "smtp.default.test"
 settings.BIRTHDAY_EMAIL_HOST = "smtp.env.test"
 settings.SCHEDULER_ERROR_MAIL_TO = ["it@example.test"]
+from core import mail_settings; mail_settings._CACHE.update(at=float("inf"), row=None)  # these checks use the .env list set below, not what is saved on Admin > Mail Controls
 
 
 class Rollback(Exception):
@@ -194,7 +195,7 @@ try:
         r = full.post("/api/admin/report-mails/rig_rate_breakup/test-send/", {"email": "me@example.test"}, format="json")
         ok("a test goes to one address, marked [Test], with the Excel, and does not move Next Mail", r.status_code == 200 and len(sent) == 1 and sent[0]["to"] == ["me@example.test"] and sent[0]["subject"].startswith("[Test] ") and sent[0]["attachments"] and MailAlertDtl.objects.get(pk=ALERT).next_mail_dt == DT(2026, 10, 16, 11, 19, 13), str(r.content[:150]))
         sm = full.get("/api/admin/scheduled-mails/").json()
-        ok("Scheduled Mails lists the ten automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions", "daily_operations_update", "rig_performance", "drilling_info_not_entered", "drilling_info_status"})
+        ok("Scheduled Mails lists the eleven automations", {j["key"] for j in sm["jobs"]} == {"birthday", "holiday", "haz_id_register", "rig_rate_breakup", "activity_monitor", "incident_actions", "daily_operations_update", "rig_performance", "drilling_info_not_entered", "drilling_info_status", "mail_summary"})
         raise Rollback()
 except Rollback:
     pass
