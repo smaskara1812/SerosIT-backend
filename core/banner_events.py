@@ -30,12 +30,22 @@ LAYOUTS = ("standard", "mirrored", "centred")
 BACKGROUNDS = ("solid", "gradient")
 PATTERNS = ("none", "dots", "stripes", "waves", "grid", "chevrons", "sunburst", "topo")
 MAX_LAYERS = 120
+MAX_ACTIONS = 3  # buttons on one banner
+ACTION_KINDS = ("effect", "link")  # a button plays a show on the page, or opens one of the app's own pages
+ACTION_STYLES = ("soft", "solid", "outline")  # how the button is filled
+ACTION_SIZES = ("small", "medium", "large")
+ACTION_GLOWS = ("off", "gentle", "lively")  # the ring of light that invites a click
+ACTION_ICONS = ("sparkles", "flame", "rocket", "party", "arrow", "none")
+ACTION_SHAPES = ("pill", "rounded")
+ACTION_EFFECTS = ("fireworks", "holi", "christmas", "newyear", "flag", "navratri", "ganesh", "janmashtami")
+MAX_SHOW_COLORS = {"navratri": 9}  # the nine nights each have a colour; every other show takes up to six  # more shows can be added here and in frontend/src/lib/bannerActions.js
+EFFECT_COLORS = {"fireworks": ["#ffc83d", "#ff6a1a", "#ff2d7a", "#ffffff"], "holi": ["#ff2d95", "#ffd600", "#00b8ff", "#6fd400", "#ff6a00", "#8e44ff"], "christmas": ["#ffffff", "#ffd24a", "#e63946", "#2a9d8f"], "newyear": ["#ffd24a", "#dfe6f2", "#ffffff", "#5aa9ff"], "flag": ["#ff9933", "#ffffff", "#138808", "#000080"], "navratri": ["#f97316", "#f8fafc", "#dc2626", "#2563eb", "#facc15", "#16a34a", "#94a3b8", "#7e22ce", "#0d9488"], "ganesh": ["#f59e0b", "#dc2626", "#fde68a", "#f472b6"], "janmashtami": ["#ffd166", "#fdf6e3", "#38bdf8", "#f472b6"]}  # what a show uses when none are chosen
 EDGE_TYPES = ("garland", "toran", "bunting", "lights", "lanterns", "pearls", "icicles", "zigzag", "scallop", "waves", "stars", "diamonds", "bands")
 MAX_EDGES = 2
 SHAPES = (
     "rect", "circle", "ring", "triangle", "diamond", "star", "sparkle", "heart", "moon", "drop", "leaf", "wave", "line", "rig", "ship",
     "tree", "broadtree", "cloud", "sun", "snowflake", "helicopter", "hardhat", "arthat", "artcone", "artgear", "artclipboard", "artgoggles", "artwoman", "artlotus", "artdraft", "artcircuit", "artearth", "artplant", "artlabour", "artsite", "artskyline", "artcharkha", "artdiwali", "artgulalyellow", "artgulalteal", "artgulalpurple", "artgulalpink", "artgulalgreen", "artgulalred", "shield", "hardhatridge", "hardhatshade", "conebands", "coneshade", "drillbit", "wrench", "gear", "cone", "diya", "kite", "balloon", "flag", "spectacles",
-    "chakra", "indiagate", "redfort", "tajmahal", "qutub", "jet", "swoosh", "book", "mosque", "lantern", "splash", "burst", "temple", "bauble", "holly", "flame", "bananaleaf", "ribbon", "bow", "modak", "flower", "bird", "hand",
+    "chakra", "indiagate", "redfort", "tajmahal", "qutub", "jet", "swoosh", "book", "mosque", "lantern", "splash", "burst", "temple", "bauble", "holly", "flame", "bananaleaf", "ribbon", "bow", "modak", "matka", "feather", "flute", "flower", "bird", "hand",
     "text", "picture",
 )
 TEXT_KEYS = ("text", "size", "bold", "font", "spacing")  # only on a text layer
@@ -57,6 +67,7 @@ DEFAULT_DESIGN = {
     "notice": {"x": None, "y": 0, "look": "auto", "color": None, "strength": 0.85},
     "frame": {"mode": "auto", "color": None},
     "edges": [],
+    "actions": [],
     "layers": [],
 }
 
@@ -197,6 +208,11 @@ def clean_design(raw, strict=True):
         _err("edges", f"must be a list of at most {MAX_EDGES} border strips")
     d["edges"] = [_edge(e, i) for i, e in enumerate(edges)]
 
+    actions = raw.get("actions", [])
+    if not isinstance(actions, list) or len(actions) > MAX_ACTIONS:
+        _err("actions", f"must be a list of at most {MAX_ACTIONS} buttons")
+    d["actions"] = [_action(a, i) for i, a in enumerate(actions)]
+
     show = raw.get("showLastSignIn", True)
     if not isinstance(show, bool):
         _err("showLastSignIn", "must be true or false")
@@ -217,6 +233,43 @@ def _font_key(value, what):
     if value not in FONT_KEYS:
         _err("text", f"{what} must be one of " + ", ".join(FONT_KEYS))
     return value
+
+
+def _action(a, i):
+    """A button on the banner. kind "effect" plays a show (`effect`, with its own `colors` and `bursts`); kind "link" opens one of the app's own
+    pages (`link` is a path inside the app, never an address elsewhere). `color` is the button's own colour, or none to follow the banner."""
+    path = f"button {i + 1}"
+    _only_keys(a, ("id", "label", "kind", "effect", "link", "color", "colors", "bursts", "style", "size", "glow", "icon", "shape"), path)
+    ident = a.get("id", f"a{i}")
+    if not isinstance(ident, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", ident):
+        _err(path, "has an invalid id")
+    label = _text(a.get("label"), f"{path} words", 24)
+    if not label:
+        _err(path, "needs some words")
+    kind = a.get("kind", "effect")
+    if kind not in ACTION_KINDS:
+        _err(path, "must play a show or open a page")
+    out = {"id": ident, "label": label, "kind": kind, "color": _hex(a.get("color"), f"{path} colour", allow_none=True)}
+    for key, allowed, default in (("style", ACTION_STYLES, "soft"), ("size", ACTION_SIZES, "medium"), ("glow", ACTION_GLOWS, "gentle"), ("icon", ACTION_ICONS, "sparkles" if kind == "effect" else "arrow"), ("shape", ACTION_SHAPES, "pill")):
+        if a.get(key, default) not in allowed:
+            _err(path, f"{key} must be one of " + ", ".join(allowed))
+        out[key] = a.get(key, default)
+    if kind == "effect":
+        if a.get("effect", "fireworks") not in ACTION_EFFECTS:
+            _err(path, "show is not one of the built-in shows")
+        colors = a.get("colors", EFFECT_COLORS[a.get("effect", "fireworks")] if a.get("effect", "fireworks") in EFFECT_COLORS else [])
+        most = MAX_SHOW_COLORS.get(a.get("effect", "fireworks"), 6)
+        if not isinstance(colors, list) or not 1 <= len(colors) <= most:
+            _err(path, f"needs one to {most} show colours")
+        out.update(effect=a.get("effect", "fireworks"), colors=[_hex(c, f"{path} show colour") for c in colors], bursts=int(_num(a.get("bursts", 7), f"{path} bursts", 3, 14)))
+        if a.get("link"):
+            _err(path, "has a page but plays a show")
+    else:
+        link = _text(a.get("link"), f"{path} page", 100)
+        if not re.fullmatch(r"/[A-Za-z0-9_\-./?=&%#]*", link) or link.startswith("//") or ".." in link:
+            _err(path, "page must be a path inside the app, like /admin/notice-board")
+        out["link"] = link
+    return out
 
 
 def _edge(e, i):
