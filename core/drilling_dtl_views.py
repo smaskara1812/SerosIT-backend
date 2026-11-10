@@ -116,6 +116,32 @@ def resolve_well_api(request):
     )
 
 
+def user_rig_ids(request):
+    """The rigs whose daily drilling reports this person may see: None = no limit, else a set of rig ids. Visible rigs = rigs the user is directly mapped to (their
+    own reporting scope) UNION rigs they hold any approver-mapping capability on (create/approve/revise): an approver needs to see records for rigs they can act
+    on even if they aren't themselves rig-mapped, e.g. to see rejected records "in their scope" that a counterpart approver rejected. Used by the Drilling Report
+    list and by the command palette's record search, so both always show the same reports."""
+    from .models import UserProfile
+
+    if request.user.is_superuser:
+        return None
+    profile = UserProfile.objects.filter(user_login_id=request.user.username).first()
+    uid = profile.user_id if profile else None
+    if uid is None:
+        return None
+    mapped_rig_ids = set(MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list("rig_id", flat=True))
+    if not mapped_rig_ids:
+        return None  # no mapping rows at all: not restricted
+    approver_rig_ids = set(
+        ApproverMappingDtl.objects.filter(
+            approver_mapping__approval_code__approval_code=APPROVAL_CODE,
+            approver_mapping__approver_user_id=uid,
+            approver_mapping__approver_active="Y",
+        ).values_list("rig_id", flat=True)
+    )
+    return mapped_rig_ids | approver_rig_ids
+
+
 class DrillingDtlViewSet(BaseMasterViewSet):
     """Drilling Report / Daily Report — one row per rig, per day, with a
     nested Ops time-log grid. Rig+Date resolve the well (DrillingHdr)
@@ -135,30 +161,7 @@ class DrillingDtlViewSet(BaseMasterViewSet):
     filterable_fields = ["rig"]
 
     def _user_rig_ids(self, request):
-        """Visible rigs = rigs the user is directly mapped to (their own
-        reporting scope) UNION rigs they hold any approver-mapping
-        capability on (create/approve/revise) — an approver needs to see
-        records for rigs they can act on even if they aren't themselves
-        rig-mapped, e.g. to see rejected records "in their scope" that a
-        counterpart approver rejected."""
-        if request.user.is_superuser:
-            return None
-        uid = self._current_user_id(request)
-        if uid is None:
-            return None
-        mapped_rig_ids = set(
-            MstUserRigMapping.objects.filter(user_id=uid, mapping_to__isnull=True).values_list("rig_id", flat=True)
-        )
-        if not mapped_rig_ids:
-            return None  # no mapping rows at all: not restricted
-        approver_rig_ids = set(
-            ApproverMappingDtl.objects.filter(
-                approver_mapping__approval_code__approval_code=APPROVAL_CODE,
-                approver_mapping__approver_user_id=uid,
-                approver_mapping__approver_active="Y",
-            ).values_list("rig_id", flat=True)
-        )
-        return mapped_rig_ids | approver_rig_ids
+        return user_rig_ids(request)
 
     # Explicit allow-list rather than a raw ?ordering=<column> passthrough —
     # same reasoning as ProjectDrillingRateViewSet's own ILM param: never
