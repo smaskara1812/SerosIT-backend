@@ -18,7 +18,6 @@ from rest_framework.response import Response
 
 from . import audit as _audit
 from . import rig_performance_month as m
-from .daily_operations_update import current_contract
 from .masters_serializers import IlmRateTermSerializer, RigMonthPlanSerializer
 from .models import IlmRateTerm, MstDrillingRate, MstRig, ProjectContract, RigMonthPlan, SysAuditLog, UserProfile
 from .permissions import holds_a_right_on
@@ -150,6 +149,11 @@ def rate_sheet_rigs(first, last, ref):
 
 
 def rate_sheet_payload(first, end):
+    with m.read_cache():  # the same plan, rates and terms are asked for again and again while the rigs are worked out: ask the database once
+        return _rate_sheet_payload(first, end)
+
+
+def _rate_sheet_payload(first, end):
     """The rate sheet behind the projection: per rig the rates per day, the weights, the normal day, the days, the ILM block and the projection. A rig is
     listed when it is on a project in the month (even before its first report) or has reported in it, so the month can be planned from its first day."""
     today = datetime.date.today()
@@ -157,18 +161,21 @@ def rate_sheet_payload(first, end):
         return {"month": f"{first:%Y-%m}", "label": f"{first:%B %Y}", "rigs": [], "message": f"{first:%B %Y} has not started: there is nothing to show yet."}
     last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
     ref = max(first, end)  # the day the project and its rates are looked up for: the last day reported, or the 1st when nothing is reported yet
-    collected = {r["rig"].rig_id: r for r in m.collect(end)["rigs"]} if end >= first else {}
     codes = {r.drilling_rate_id: (r.rate_code or "").strip() for r in MstDrillingRate.objects.all()}
     rigs, reported_ids = rate_sheet_rigs(first, last, ref)
+    m.prefetch_rigs([rid for rid, _n in rigs], first)  # everything per rig below is read for all the rigs together, a few queries in all
+    contracts = {rid: m.current_contract(rid, ref) for rid, _n in rigs}
+    numbers = dict(ProjectContract.objects.filter(pk__in={c for c in contracts.values() if c}).values_list("pk", "prj_contract_no"))
+    plans = {rid: m.plan_for(rid, first) for rid, _n in rigs}
+    histories = _histories([pl for pl in plans.values() if pl is not None])
+    closers = dict(UserProfile.objects.filter(user_id__in={pl.closed_by for pl in plans.values() if pl is not None and pl.closed_on is not None and pl.closed_by}).values_list("user_id", "user_login_id"))
     out = []
     for rig_id, name in rigs:
-        rg = collected.get(rig_id)
-        if rg is not None:
-            plan, pj = rg["plan"], rg["proj"]
-        else:
-            plan = m.plan_for(rig_id, first)
-            pj = m.projection_for(rig_id, current_contract(rig_id, ref), first, last, plan)
-        contract = current_contract(rig_id, ref)
+        # Only the rig's plan and its projection are needed here. They used to be taken from m.collect(), which also works out every day's hours, revenue and diesel for
+        # every rig (the whole Rig Performance report); the projection it holds is the very call made below (same rig, project, month, plan and moves), so the numbers are the same.
+        contract = contracts[rig_id]
+        plan = plans[rig_id]
+        pj = m.projection_for(rig_id, contract, first, last, plan)
         rates = m.contract_rates(rig_id, contract) if contract else {}
         weights = pj["weights"] or (Decimal(85), Decimal(15), Decimal(0))
         weighted = {m.RATE_R1: weights[0], m.RATE_R2: weights[1], m.RATE_R3: weights[2]}
@@ -177,7 +184,7 @@ def rate_sheet_payload(first, end):
             per_day = rates.get(rid, Decimal(0)) * 24
             lines.append({"code": codes.get(rid, str(rid)), "per_day": _f(per_day), "weight": _f(weighted[rid]), "for_revenue": _f(per_day * weighted[rid] / 100)})
         others = [{"code": codes.get(rid, str(rid)), "per_day": _f(rate * 24)} for rid, rate in sorted(rates.items()) if rid not in (m.RATE_R1, m.RATE_R2, m.RATE_R3) and rid not in m.NO_MONEY_RATES and rate]
-        contract_no = ProjectContract.objects.filter(pk=contract).values_list("prj_contract_no", flat=True).first() if contract else None
+        contract_no = numbers.get(contract) if contract else None
         term = rg_term(rig_id, contract)
         reported = rig_id in reported_ids
         out.append({
@@ -195,9 +202,9 @@ def rate_sheet_payload(first, end):
                 for p in pj["planned"]
             ],
             "warnings": pj["warnings"],
-            "closed": _closed_info(plan),
+            "closed": _closed_info(plan, closers),
             "can_close": reported and end >= last and not (plan and plan.closed_on),
-            "history": _history(plan),
+            "history": histories.get(plan.pk, []) if plan is not None else [],
             "plan": {
                 "exists": plan is not None, "moves": [{"rate_id": pm.move_rate_id, "hours": _f(pm.planned_hours), "km": _f(pm.planned_km), "note": pm.note} for pm in m.planned_moves_of(plan)], "non_ilm_days": _f(plan.non_ilm_days) if plan else None,
                 "r1_pct": _f(plan.r1_pct) if plan else None, "r2_pct": _f(plan.r2_pct) if plan else None, "r3_pct": _f(plan.r3_pct) if plan else None,
@@ -214,10 +221,16 @@ def rate_sheet_payload(first, end):
     return {"month": f"{first:%Y-%m}", "label": f"{first:%B %Y}", "rigs": out, "message": "" if out else f"No rig is on a project in {first:%B %Y}, and none has reported."}
 
 
-def _closed_info(plan):
+def _closed_info(plan, users=None):
+    """`users` = {user id: login id} when the people of several plans were looked up together."""
     if plan is None or plan.closed_on is None:
         return None
-    who = UserProfile.objects.filter(user_id=plan.closed_by).values_list("user_login_id", flat=True).first() if plan.closed_by else "the system"
+    if not plan.closed_by:
+        who = "the system"
+    elif users is not None:
+        who = users.get(plan.closed_by)
+    else:
+        who = UserProfile.objects.filter(user_id=plan.closed_by).values_list("user_login_id", flat=True).first()
     return {"on": plan.closed_on.isoformat(), "by": who or "", "note": plan.closed_note}
 
 
@@ -225,7 +238,10 @@ def _history(plan):
     """The recent changes of the plan row (who, when, what), from the audit history."""
     if plan is None:
         return []
-    rows = SysAuditLog.objects.filter(target_table="rig_month_plan", target_pk=str(plan.pk), kind="change").order_by("-ts")[:12]
+    return _history_rows(SysAuditLog.objects.filter(target_table="rig_month_plan", target_pk=str(plan.pk), kind="change").order_by("-ts")[:12])
+
+
+def _history_rows(rows):
     out = []
     for r in rows:
         ch = {k: v for k, v in (r.changes or {}).items() if k in ("planned_moves", "non_ilm_days", "r1_pct", "r2_pct", "r3_pct", "closed_on", "note")}
@@ -233,14 +249,22 @@ def _history(plan):
     return out
 
 
+def _histories(plans):
+    """{plan id: the plan's recent changes} for several plans, read together (the same as _history for each)."""
+    if not plans:
+        return {}
+    by_plan = {}
+    for r in SysAuditLog.objects.filter(target_table="rig_month_plan", target_pk__in=[str(pl.pk) for pl in plans], kind="change").order_by("-ts"):
+        by_plan.setdefault(r.target_pk, []).append(r)
+    return {pl.pk: _history_rows(by_plan.get(str(pl.pk), [])[:12]) for pl in plans}
+
+
 def rg_days(pj):
     return int(pj["days"] - pj["ilm_days"])
 
 
 def rg_term(rig_id, contract):
-    from .models import IlmRateTerm
-
-    t = IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract).first() if contract else None
+    t = m.ilm_term_of(rig_id, contract) if contract else None
     return None if t is None else {"id": t.term_id, "upto_km": _f(t.upto_km), "flat_amount": _f(t.flat_amount), "extra_per_km": _f(t.extra_per_km), "note": t.note}
 
 
@@ -395,10 +419,9 @@ def plan_api(request):
     if error:
         return Response({"detail": error}, status=400)
     if moves:
-        from .daily_operations_update import current_contract
-
+        
         last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
-        contract = current_contract(rig, last)
+        contract = m.current_contract(rig, last)
         on_project = m.project_days(rig, contract, first, last)[2] if contract else 0
         total = sum((h for _r, h, _k, _n in moves), Decimal(0))
         if contract and total > 24 * on_project:

@@ -90,6 +90,31 @@ def picture_path(ev):
     return os.path.join(settings.MEDIA_ROOT, ev.file_path)
 
 
+def picture_present(ev):
+    """True when the picture file is on the server and not empty (a quick look: the file is not opened)."""
+    try:
+        return os.path.isfile(picture_path(ev)) and os.path.getsize(picture_path(ev)) > 0
+    except OSError:
+        return False
+
+
+def picture_status(ev):
+    """('ok' | 'missing' | 'unreadable', a sentence): is the picture really there, and can it be opened as a picture? Used by the page's "Check pictures" button."""
+    path = picture_path(ev)
+    if not os.path.isfile(path):
+        return "missing", "The picture file is not in the media folder on the server."
+    if os.path.getsize(path) == 0:
+        return "unreadable", "The picture file is empty."
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            img.verify()
+    except Exception:  # a damaged or wrong kind of file: whatever the reason, it cannot be sent
+        return "unreadable", "The file is there but cannot be opened as a picture."
+    return "ok", ""
+
+
 def mail_picture(ev):
     """The picture as sent: -> (bytes, 'png' or 'jpeg', width). Shrunk to MAIL_WIDTH; a picture with no see-through parts that is still heavy as a PNG is
     sent as a JPEG instead, so a mail to everyone stays light."""

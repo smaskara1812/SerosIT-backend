@@ -46,7 +46,7 @@ def _row(request, ev, today=None):
     last = first + datetime.timedelta(days=n - 1) if first else None
     return {
         "id": ev.event_id, "name": ev.name, "subject": ev.subject, "send_on": ev.send_on, "send_days": n, "repeat_yearly": ev.repeat_yearly == "Y",
-        "active": ev.is_active == "Y", "note": ev.note, "url": media_url(request, ev.file_path), "thumb": ev.thumb_data, "width": ev.width, "height": ev.height,
+        "active": ev.is_active == "Y", "note": ev.note, "url": media_url(request, ev.file_path), "thumb": ev.thumb_data, "picture_ok": hm.picture_present(ev), "width": ev.width, "height": ev.height,
         "next_send": nxt, "run_from": first, "run_to": last, "over": nxt is None, "posted_by": ev.posted_by_name or "",
     }
 
@@ -204,6 +204,23 @@ def event_detail_api(request, event_id):
         changes["picture"] = {"old": old["url"], "new": "replaced"}
     _audit.record_action(request, "update", MENU_KEY, ev.pk, f"Holiday event: {ev.name}", changes or None)
     return Response(new)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def check_pictures_api(request):
+    """Looks, right now, for the picture file of every holiday event (not only the ones on screen): {"checked", "ok", "problems": [{id, name, status, why, active, over}]}.
+    The small preview on each card is stored in the database, so it shows even when the real file is gone from the server; this is the real check."""
+    if not _may(request, "view"):
+        return _deny()
+    today = datetime.date.today()
+    problems, total = [], 0
+    for ev in HolidayEvent.objects.all().order_by("send_on", "event_id"):
+        total += 1
+        status, why = hm.picture_status(ev)
+        if status != "ok":
+            problems.append({"id": ev.event_id, "name": ev.name, "status": status, "why": why, "active": ev.is_active == "Y", "over": hm.next_send(ev, today) is None})
+    return Response({"checked": total, "ok": total - len(problems), "problems": problems})
 
 
 @api_view(["GET"])

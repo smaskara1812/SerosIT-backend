@@ -574,6 +574,7 @@ urlpatterns = [
     path("admin/birthday-mailer/overview/", birthday_views.overview_api, name="birthday_overview"),
     path("admin/birthday-mailer/test-send/", birthday_views.test_send_api, name="birthday_test_send"),
     path("admin/holiday-events/", holiday_views.events_api, name="holiday_events"),
+    path("admin/holiday-events/check-pictures/", holiday_views.check_pictures_api, name="holiday_check_pictures"),
     path("admin/holiday-events/<int:event_id>/", holiday_views.event_detail_api, name="holiday_event_detail"),
     path("admin/holiday-mailer/overview/", holiday_views.overview_api, name="holiday_overview"),
     path("admin/holiday-mailer/test-send/", holiday_views.test_send_api, name="holiday_test_send"),

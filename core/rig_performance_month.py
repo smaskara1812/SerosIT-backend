@@ -31,7 +31,9 @@ import calendar
 import datetime
 import html
 import io
+import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from decimal import Decimal
 
 from openpyxl import Workbook
@@ -40,7 +42,7 @@ from openpyxl.utils import get_column_letter
 
 from .models import DieselPrice, DrillingDtl, DrillingDtlOps, DrillingHdr, IlmRateTerm, MstRig, ProjectContractDtl, ProjectDrillingRate, RigMonthPlan
 from . import rate_classes
-from .daily_operations_update import current_contract, diesel_stock_by_day, project_start
+from .daily_operations_update import current_contract as _current_contract, diesel_stock_by_day, project_start
 from .report_job import ReportMail, ScheduledReportJob
 
 JOB_KEY = "rig_performance"
@@ -68,13 +70,120 @@ def _d(v):
     return Decimal(str(v)) if v is not None else Decimal(0)
 
 
+# ── a cache that lives for ONE request ───────────────────────────────────────────────────────────
+# A page that works out several rigs asks the same questions again and again (the rig's plan, its project's rates, its ILM terms). Inside `with read_cache():` an
+# answer is kept after the first time it is asked and handed back for the same question, so the database is asked once. Outside it nothing is kept, so the
+# mail job and everything else behave exactly as before. It only ever holds answers about data that does not change while the page is being built.
+_ctx = threading.local()
+
+
+@contextmanager
+def read_cache():
+    outer = getattr(_ctx, "memo", None)
+    _ctx.memo = {} if outer is None else outer
+    try:
+        yield
+    finally:
+        _ctx.memo = outer
+
+
+def memoised(name, key, fn):
+    memo = getattr(_ctx, "memo", None)
+    if memo is None:
+        return fn()
+    k = (name, key)
+    if k not in memo:
+        memo[k] = fn()
+    return memo[k]
+
+
+def _get(name):
+    memo = getattr(_ctx, "memo", None)
+    return None if memo is None else memo.get(("pre", name))
+
+
+def prefetch_rigs(rig_ids, first):
+    """Inside read_cache(): ask the database ONCE, for all the rigs together, for what the per-rig functions of this module would otherwise ask rig by rig (their
+    contract lines and rates, ILM terms, plan of the month and its planned moves, the earlier plan the weights carry over from, the day each rig started on its
+    project, and every rig move). Each answer is stored under the very key the per-rig function looks it up with, so the function returns what its own query
+    would have returned. A question not covered here is simply asked as before."""
+    memo = getattr(_ctx, "memo", None)
+    if memo is None or not rig_ids:
+        return
+    from django.db.models import Min, prefetch_related_objects
+
+    rig_ids = sorted(set(rig_ids))
+    lines = defaultdict(list)
+    for ln in ProjectContractDtl.objects.filter(rig_id__in=rig_ids).select_related("contract"):
+        lines[ln.rig_id].append(ln)
+    for r in rig_ids:
+        lines.setdefault(r, [])
+    memo[("pre", "lines")] = dict(lines)
+    rows_by_pair = defaultdict(list)
+    for pr in ProjectDrillingRate.objects.filter(rig_id__in=rig_ids):
+        rows_by_pair[(pr.rig_id, pr.contract_id)].append(pr)
+    memo[("pre", "ratepairs")] = set(rows_by_pair)
+    pairs = {(r, ln.contract_id) for r, lns in lines.items() for ln in lns}
+    for pair in pairs:
+        memo[("rates", pair)] = {x.drilling_rate_id: _d(x.rate) for x in rows_by_pair.get(pair, []) if x.rate is not None}
+        best = None
+        for ln in lines[pair[0]]:
+            if ln.contract_id == pair[1] and (best is None or ln.rig_active_from > best.rig_active_from):
+                best = ln
+        memo[("line", pair)] = best
+    terms = {}
+    for t in IlmRateTerm.objects.filter(rig_id__in=rig_ids).order_by("term_id"):
+        terms.setdefault((t.rig_id, t.contract_id), t)
+    for pair in pairs:
+        memo[("term", pair)] = terms.get(pair)
+    started = {(x["rig_id"], x["drilling_hdr__contract_id"]): x["d"] for x in DrillingDtl.objects.filter(rig_id__in=rig_ids).values("rig_id", "drilling_hdr__contract_id").annotate(d=Min("drilling_dtl_dt"))}
+    for pair in pairs:
+        memo[("startrep", pair)] = started.get(pair)
+    plans = {}
+    for pl in RigMonthPlan.objects.filter(rig_id__in=rig_ids, month=first).order_by("plan_id"):
+        plans.setdefault(pl.rig_id, pl)
+    prefetch_related_objects(list(plans.values()), "planned_moves")
+    for r in rig_ids:
+        memo[("plan", (r, first))] = plans.get(r)
+    for pl in plans.values():
+        memo[("planned", pl.pk)] = list(pl.planned_moves.all())
+    prev = {}
+    for pl in RigMonthPlan.objects.filter(rig_id__in=rig_ids, month__lt=first, r1_pct__isnull=False).order_by("-month", "plan_id"):
+        prev.setdefault(pl.rig_id, pl)
+    for r in rig_ids:
+        memo[("prevplan", (r, first))] = prev.get(r)
+    for r, mv in actual_moves_many(rig_ids).items():
+        memo[("moves", r)] = mv
+
+
 def month_bounds(end):
     first = end.replace(day=1)
     return first, end.replace(day=calendar.monthrange(end.year, end.month)[1])
 
 
+def current_contract(rig_id, day):
+    def load():
+        lines = _get("lines")
+        if lines is not None and rig_id in lines:  # the rig's contract lines were loaded for all the rigs at once: the same rule as daily_operations_update.current_contract, in memory
+            best = None
+            for ln in lines[rig_id]:
+                if ln.rig_active_from <= day and (best is None or (ln.rig_active_from, ln.pk) > (best.rig_active_from, best.pk)):
+                    best = ln
+            if best is None or (rig_id, best.contract_id) not in _get("ratepairs"):
+                return None
+            return best.contract_id
+        return _current_contract(rig_id, day)
+
+    return memoised("contract", (rig_id, day), load)
+
+
+def ilm_term_of(rig_id, contract_id):
+    """The rig's ILM Rate Terms row on the project (the first one), or None."""
+    return memoised("term", (rig_id, contract_id), lambda: IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first())
+
+
 def plan_for(rig_id, month):
-    return RigMonthPlan.objects.filter(rig_id=rig_id, month=month).first()
+    return memoised("plan", (rig_id, month), lambda: RigMonthPlan.objects.filter(rig_id=rig_id, month=month).first())
 
 
 DEFAULT_WEIGHTS = (Decimal(85), Decimal(15), Decimal(0))
@@ -86,7 +195,7 @@ def weights_for(rig_id, month, contract_id, plan=None):
     plan = plan if plan is not None else plan_for(rig_id, month)
     if plan is not None and plan.r1_pct is not None:
         return (_d(plan.r1_pct), _d(plan.r2_pct), _d(plan.r3_pct)), "set for this month"
-    prev = RigMonthPlan.objects.filter(rig_id=rig_id, month__lt=month, r1_pct__isnull=False).order_by("-month").first()
+    prev = memoised("prevplan", (rig_id, month), lambda: RigMonthPlan.objects.filter(rig_id=rig_id, month__lt=month, r1_pct__isnull=False).order_by("-month").first())
     if prev is not None and contract_id is not None:
         prev_last = prev.month.replace(day=calendar.monthrange(prev.month.year, prev.month.month)[1])
         if current_contract(rig_id, prev_last) == contract_id:
@@ -98,7 +207,7 @@ def project_start_from_reports(rig_id, contract_id):
     """The day the rig STARTED on the project: the date of its first daily drilling report on that project (None when it has not reported on it yet)."""
     from django.db.models import Min
 
-    return DrillingDtl.objects.filter(rig_id=rig_id, drilling_hdr__contract_id=contract_id).aggregate(d=Min("drilling_dtl_dt"))["d"]
+    return memoised("startrep", (rig_id, contract_id), lambda: DrillingDtl.objects.filter(rig_id=rig_id, drilling_hdr__contract_id=contract_id).aggregate(d=Min("drilling_dtl_dt"))["d"])
 
 
 def project_days(rig_id, contract_id, first, last):
@@ -106,7 +215,7 @@ def project_days(rig_id, contract_id, first, last):
     drilling records are where the start is logged); only while it has not reported on the project yet is the start of its project line used (a rig that is about to
     start, so the month can be planned). It ends on the line's end date or the project's end date, else the month's last day. (None, None, 0) when it is not on the
     project at all that month."""
-    line = ProjectContractDtl.objects.filter(rig_id=rig_id, contract_id=contract_id).select_related("contract").order_by("-rig_active_from").first()
+    line = memoised("line", (rig_id, contract_id), lambda: ProjectContractDtl.objects.filter(rig_id=rig_id, contract_id=contract_id).select_related("contract").order_by("-rig_active_from").first())
     if line is None:
         return None, None, 0
     started = project_start_from_reports(rig_id, contract_id) or line.rig_active_from
@@ -134,14 +243,30 @@ def actual_moves(rig_id):
       "amount" (rupees, None when not known), "note", "mis_hour" (rupees an hour = amount / hours logged; None when there is no amount or no hours)}] in date order.
     The amount is the ILM terms over the move's own km (flat up to X km, then a price per km), or the project's IPM rate; it is spread over the hours logged so
     far, so while a move is still running it is all earned over the hours to date, and each new hour lowers the hourly figure (earlier days and months follow)."""
+    return memoised("moves", rig_id, lambda: actual_moves_many([rig_id])[rig_id])
+
+
+def actual_moves_many(rig_ids):
+    """actual_moves for several rigs at once: {rig id: [moves]}. The hour lines, the wells (drilling headers) and the rest are read for all the rigs together
+    (a few queries however many rigs there are), then each rig is worked out exactly as actual_moves describes."""
+    rig_ids = list(dict.fromkeys(rig_ids))
     ids = move_rate_ids()
-    day_hrs = defaultdict(lambda: defaultdict(Decimal))  # day -> hdr id -> hours
-    day_rate = defaultdict(lambda: defaultdict(Decimal))  # day -> rate id -> hours
-    for day, hdr_id, rid, dur in DrillingDtlOps.objects.filter(drilling_dtl__rig_id=rig_id, prj_drilling_rate__drilling_rate_id__in=ids).values_list(
-        "drilling_dtl__drilling_dtl_dt", "drilling_dtl__drilling_hdr_id", "prj_drilling_rate__drilling_rate_id", "duration"
+    all_day_hrs = {r: defaultdict(lambda: defaultdict(Decimal)) for r in rig_ids}  # rig -> day -> hdr id -> hours
+    all_day_rate = {r: defaultdict(lambda: defaultdict(Decimal)) for r in rig_ids}  # rig -> day -> rate id -> hours
+    for rig, day, hdr_id, rid, dur in DrillingDtlOps.objects.filter(drilling_dtl__rig_id__in=rig_ids, prj_drilling_rate__drilling_rate_id__in=ids).values_list(
+        "drilling_dtl__rig_id", "drilling_dtl__drilling_dtl_dt", "drilling_dtl__drilling_hdr_id", "prj_drilling_rate__drilling_rate_id", "duration"
     ):
-        day_hrs[day][hdr_id] += _d(dur)
-        day_rate[day][rid] += _d(dur)
+        all_day_hrs[rig][day][hdr_id] += _d(dur)
+        all_day_rate[rig][day][rid] += _d(dur)
+    hdr_rows = list(DrillingHdr.objects.filter(rig_id__in=rig_ids, drilling_rate_id__in=ids)) if rig_ids else []
+    wanted = sorted({k for r in rig_ids for d in all_day_hrs[r].values() for k in d if k is not None})
+    every = {}
+    for i in range(0, len(wanted), 1000):  # in chunks: SQL Server accepts at most about 2,000 values in one list
+        every.update({h.pk: h for h in DrillingHdr.objects.filter(pk__in=wanted[i : i + 1000])})
+    return {r: _moves_of_rig(r, ids, all_day_hrs[r], all_day_rate[r], {h.pk: h for h in hdr_rows if h.rig_id == r and h.first_anchor_down_dt is not None}, every) for r in rig_ids}
+
+
+def _moves_of_rig(rig_id, ids, day_hrs, day_rate, hdrs, every_hdr):
     if not day_hrs:
         return []
     runs, cur = [], []
@@ -151,8 +276,6 @@ def actual_moves(rig_id):
             cur = []
         cur.append(day)
     runs.append(cur)
-    hdrs = {h.pk: h for h in DrillingHdr.objects.filter(rig_id=rig_id, drilling_rate_id__in=ids) if h.first_anchor_down_dt is not None}
-    every_hdr = {h.pk: h for h in DrillingHdr.objects.filter(pk__in={k for d in day_hrs.values() for k in d if k is not None})}
     cache, out = {}, []
     for run in runs:
         lo, hi = run[0] - datetime.timedelta(days=1), run[-1] + datetime.timedelta(days=1)
@@ -174,7 +297,7 @@ def actual_moves(rig_id):
             "rate_id": rate_id, "contract_id": contract_id, "km": _d(hdr.distance_covered_kms_knots) if hdr is not None else Decimal(0), "hours": sum(by_day.values(), Decimal(0)), "by_day": by_day,
         }
         if contract_id not in cache:
-            cache[contract_id] = (contract_rates(rig_id, contract_id) if contract_id else {}, IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first() if contract_id else None)
+            cache[contract_id] = (contract_rates(rig_id, contract_id) if contract_id else {}, ilm_term_of(rig_id, contract_id) if contract_id else None)
         rates, term = cache[contract_id]
         if mv["type"] == "ILM":
             mv["amount"], mv["note"] = ilm_amount(rig_id, contract_id, mv["km"], rates, term)
@@ -197,7 +320,7 @@ def moves_of_month(moves, first, last):
 
 
 def contract_rates(rig_id, contract_id):
-    return {r.drilling_rate_id: _d(r.rate) for r in ProjectDrillingRate.objects.filter(rig_id=rig_id, contract_id=contract_id) if r.rate is not None}
+    return dict(memoised("rates", (rig_id, contract_id), lambda: {r.drilling_rate_id: _d(r.rate) for r in ProjectDrillingRate.objects.filter(rig_id=rig_id, contract_id=contract_id) if r.rate is not None}))
 
 
 _UNSET = object()
@@ -207,7 +330,7 @@ def ilm_amount(rig_id, contract_id, km, rates, term=_UNSET):
     """(amount in rupees or None, source text): the flat amount + (km - upto km) x the price per km. Without ILM Rate Terms the project's own ILM rate is the
     flat amount and there is no per-km price; with neither, None."""
     if term is _UNSET:
-        term = IlmRateTerm.objects.filter(rig_id=rig_id, contract_id=contract_id).first()
+        term = ilm_term_of(rig_id, contract_id)
     if term is not None:
         flat = _d(term.flat_amount) if term.flat_amount is not None else rates.get(RATE_ILM, Decimal(0))
         if not flat:
@@ -220,7 +343,9 @@ def ilm_amount(rig_id, contract_id, km, rates, term=_UNSET):
 
 
 def planned_moves_of(plan):
-    return list(plan.planned_moves.all()) if plan is not None and plan.pk else []
+    if plan is None or not plan.pk:
+        return []
+    return list(memoised("planned", plan.pk, lambda: list(plan.planned_moves.all())))
 
 
 def projection_for(rig_id, contract_id, first, last, plan, moves=None):
