@@ -63,6 +63,8 @@ DEFAULT_DESIGN = {
     "pattern": {"type": "none", "color": "#ffffff", "opacity": 0.12, "scale": 1.0},
     "contours": {"on": True, "color": "#ffffff", "opacity": 0.13, "density": 2},
     "showLastSignIn": True,
+    "sidebar": False,  # the app's sidebar takes this banner's background colour and pattern (nothing else) while the banner is live
+    "sero": {"show": False, "outfit": None, "x": None, "y": None},  # Sero the mascot stands on this banner (off unless chosen); outfit = an outfit id, or None to wear the day's outfit; x, y (0-100, both or neither) = where he stands (None = his usual corner)
     "search": {"tint": "#ffffff"},
     "notice": {"x": None, "y": 0, "look": "auto", "color": None, "strength": 0.85},
     "frame": {"mode": "auto", "color": None},
@@ -217,6 +219,30 @@ def clean_design(raw, strict=True):
     if not isinstance(show, bool):
         _err("showLastSignIn", "must be true or false")
     d["showLastSignIn"] = show
+
+    sidebar = raw.get("sidebar", False)
+    if not isinstance(sidebar, bool):
+        _err("sidebar", "must be true or false")
+    d["sidebar"] = sidebar
+
+    sr0 = raw.get("sero", DEFAULT_DESIGN["sero"])
+    _only_keys(sr0, ("show", "outfit", "x", "y"), "sero")
+    if not isinstance(sr0.get("show", False), bool):
+        _err("sero", "show must be true or false")
+    wear = sr0.get("outfit")
+    if wear is not None:
+        from .models import SeroOutfit
+
+        if isinstance(wear, bool) or not isinstance(wear, int):
+            _err("sero", "outfit must be an outfit from the Customise Sero page")
+        if not SeroOutfit.objects.filter(pk=wear).exists():
+            if strict:
+                _err("sero", "that outfit no longer exists")
+            wear = None  # a saved banner whose outfit was deleted wears the day's outfit
+    sx, sy = sr0.get("x"), sr0.get("y")
+    if (sx is None) != (sy is None):
+        _err("sero", "x and y go together: give both or neither")
+    d["sero"] = {"show": sr0.get("show", False), "outfit": wear, "x": None if sx is None else _num(sx, "Sero across", 0, 100), "y": None if sy is None else _num(sy, "Sero up and down", 0, 100)}
 
     layers = raw.get("layers", [])
     if not isinstance(layers, list) or len(layers) > MAX_LAYERS:
@@ -488,10 +514,18 @@ def active_banner_api(request):
         if not holds_a_right_on(request, [MENU_KEY], flags=("view",)):
             return Response({"event": None})
         ev = BannerEvent.objects.filter(pk=preview).first()
-        return Response({"event": _shape(ev, preview=True) if ev else None})
+        return Response({"event": _shape(ev, preview=True) if ev else None, "sero": _sero(ev, timezone.now().date())})
     today = timezone.now().date()
     ev = pick_for(today, list(BannerEvent.objects.filter(is_published="Y")))
-    return Response({"event": _shape(ev) if ev else None})
+    return Response({"event": _shape(ev) if ev else None, "sero": _sero(ev, today)})
+
+
+def _sero(ev, today):
+    """What Sero wears today (an outfit, or null for his usual look): the live banner's choice, else the day's outfit. Sent with the banner so the home page and the
+    two error pages need one request for both."""
+    from . import sero_look
+
+    return sero_look.outfit_for(today, ev)
 
 
 def _shape(ev, preview=False):

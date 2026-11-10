@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .notice_board import NoticeViewSet, live_notices_api
 from .banner_assets import asset_detail_api, asset_file_api, assets_api
-from . import birthday_views, holiday_views, mail_summary_views, report_mail_views, scheduled_mails_views
+from . import sero_look, birthday_views, holiday_views, mail_summary_views, report_mail_views, scheduled_mails_views
 from .banner_events import BannerEventViewSet, active_banner_api
 from . import rig_performance_views, approvals_views, drilling_dtl_views, drilling_views, masters_views, reports_views, views
 from .incident_views import (
@@ -565,6 +565,9 @@ urlpatterns = [
     path("admin/audit/<int:entry_id>/revert/", views.admin_audit_revert_api, name="admin_audit_revert"),
     path("notices/live/", live_notices_api, name="notices_live"),
     path("banner/active/", active_banner_api, name="banner_active"),
+    path("sero/outfits/", sero_look.outfits_api, name="sero_outfits"),
+    path("sero/outfits/<int:outfit_id>/", sero_look.outfit_detail_api, name="sero_outfit_detail"),
+    path("sero/settings/", sero_look.settings_api, name="sero_settings"),
     path("admin/birthday-templates/", birthday_views.templates_api, name="birthday_templates"),
     path("admin/birthday-templates/preview/", birthday_views.template_preview_api, name="birthday_template_preview"),
     path("admin/birthday-templates/<int:template_id>/", birthday_views.template_detail_api, name="birthday_template_detail"),

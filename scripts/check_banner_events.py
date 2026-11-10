@@ -139,6 +139,7 @@ try:
         ok("a removed show is refused", with_design(lambda dd: dd.update({"actions": [{**act, "effect": "dussehra"}]})).status_code == 400)
         ok("an unknown show is refused", with_design(lambda dd: dd.update({"actions": [{**act, "effect": "rain"}]})).status_code == 400)
         ok("too many bursts are refused", with_design(lambda dd: dd.update({"actions": [{**act, "bursts": 500}]})).status_code == 400)
+        ok("the sidebar option must be true or false", all(with_design(lambda dd, v=v: dd.update({"sidebar": v})).status_code == 400 for v in ("yes", 1, None, "true")))
         ok("button looks are accepted", with_design(lambda dd: dd.update({"actions": [{**act, "style": "outline", "size": "large", "glow": "off", "icon": "flame", "shape": "rounded"}]})).status_code == 201)
         ok("an unknown button style is refused", with_design(lambda dd: dd.update({"actions": [{**act, "style": "neon"}]})).status_code == 400)
         ok("an unknown button icon is refused", with_design(lambda dd: dd.update({"actions": [{**act, "icon": "skull"}]})).status_code == 400)
@@ -164,6 +165,11 @@ try:
         live = nobody.get("/api/banner/active/").json()["event"]
         ok("anyone signed in gets today's banner", live and live["event_id"] == eid, str(live))
         ok("the reply is only the design", set(live) == {"event_id", "name", "design", "preview"})
+        ok("a design carries the sidebar option, off unless chosen", live["design"].get("sidebar") is False)
+        sb = poster.post("/api/admin/banner-events/", {**body, "name": "Sidebar too", "priority": 9, "design": {**design, "sidebar": True}}, format="json")
+        ok("a banner can include the sidebar", sb.status_code == 201 and sb.json()["design"]["sidebar"] is True, str(sb.content[:200]))
+        ok("and the live banner tells the sidebar so", nobody.get("/api/banner/active/").json()["event"]["design"]["sidebar"] is True)
+        BannerEvent.objects.filter(pk=sb.json()["event_id"]).delete()
         hi = poster.post("/api/admin/banner-events/", {**body, "name": "Higher", "priority": 5}, format="json").json()["event_id"]
         ok("higher priority wins an overlap", nobody.get("/api/banner/active/").json()["event"]["event_id"] == hi)
         ok("the list flags the overlap", "Higher" in str(poster.get(f"/api/admin/banner-events/{eid}/").json().get("overlaps")))

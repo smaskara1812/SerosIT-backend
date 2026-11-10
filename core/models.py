@@ -5111,3 +5111,42 @@ class MailSummarySetting(models.Model):
 
     class Meta:
         db_table = "mail_summary_setting"
+
+
+class SeroOutfit(models.Model):
+    """One look for the Sero mascot (Admin > Home Page > Customise Sero): a name and a `look`, a small JSON document made of the dress-up kit's parts and colours
+    (head, top with a print and trim, neck, face, extra). It is validated by core/sero_look.py and drawn by the frontend; it is never markup. `in_pool` puts the outfit
+    in the single pool the daily pick draws from."""
+
+    outfit_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=60)
+    look = PortableJSONField(default=dict)
+    in_pool = models.BooleanField(default=False)
+    posted_by_name = models.CharField(max_length=60, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "sero_outfit"
+
+    def __str__(self):
+        return self.name
+
+
+class SeroSetting(models.Model):
+    """One row, id 1: what Sero wears on days with no banner that names an outfit. Weekdays and weekends each have a mode: plain (his usual look), fixed (one chosen outfit)
+    or daily (one outfit a day from the pool, the same for everyone). `starters_made` is set once the ready-made outfits have been added, so ones an admin deletes do not come back."""
+
+    sero_setting_id = models.IntegerField(primary_key=True)
+    weekday_mode = models.CharField(max_length=5, default="plain")
+    weekday_outfit = models.IntegerField(null=True, blank=True)
+    weekend_mode = models.CharField(max_length=5, default="plain")
+    weekend_outfit = models.IntegerField(null=True, blank=True)
+    starters_made = models.BooleanField(default=False)
+    changed_by = models.CharField(max_length=100, blank=True, default="")
+    changed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "sero_setting"
