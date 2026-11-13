@@ -203,6 +203,10 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ("rest_framework.filters.SearchFilter",),
 }
 
+# Optional. The web address candidates open their invite link on. Normally leave it empty: the link then uses the address HR is using the system on
+# (see hr/onboarding.py base_url). Set it only when candidates must use a different (public) address than HR does, no trailing slash.
+ONBOARDING_BASE_URL = os.getenv("ONBOARDING_BASE_URL", "")
+
 # Encrypted sign-in (core/login_crypto.py): the RSA key file (created on first use) and whether a plain-text sign-in is still accepted.
 LOGIN_PRIVATE_KEY_FILE = os.getenv("LOGIN_PRIVATE_KEY_FILE", str(BASE_DIR / "login_key.pem"))
 LOGIN_REQUIRE_ENCRYPTED = os.getenv("LOGIN_REQUIRE_ENCRYPTED", "False") == "True"

@@ -28,6 +28,8 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from hr.models import CandidateInterviewHdr
+
 from core.media_uploads import IMAGE_EXTENSIONS, check_existing_file, detect_extension, next_sequence
 from core.models import (
     DocToSignMapping,
@@ -63,6 +65,10 @@ TARGETS = [
     Target("HSE drill photos", "HSE_Drills_Photos", "HSE_Drills_photos", HseDrillRecordPhotoUpload, "drill_rec_photo_upload_path",
            "drill_rec_photo_upload_id", INCIDENT_EXTS),
     Target("FS employee photos", "Fs_Emp_Photos", "fs_emp_photos", MstFsEmployee, "fs_emp_photo_path", "fs_emp_id", IMAGE_EXTS, _fs_name),
+    # Candidate resumes: the legacy rows name two folders (Crew_Interview_Certificates, then Candidate_Interview_Certificates) but only the
+    # second exists in the dump; the file name alone is matched. Most rows point at .zip files that are not in the dump (kept as old text).
+    Target("Candidate resumes", "Candidate_Interview_Certificates", "candidate_resumes", CandidateInterviewHdr, "candidate_cert_path",
+           "candidate_interview_hdr_id", (".pdf", ".doc", ".docx")),
 ]
 
 

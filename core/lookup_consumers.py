@@ -243,6 +243,7 @@ LOOKUP_CONSUMERS = {
         "masters.fs_employees",
     ),
     "masters.ranks": (
+        "hr.candidate_interviews",
         "masters.crew_change_reliever_mapping",
         "masters.crew_schedule_exceptions",
         "masters.fs_catg_to_rank_mapping",
@@ -272,6 +273,7 @@ LOOKUP_CONSUMERS = {
         "drilling.drilling_tripping_analysis",
         "drilling.operations_analytics",
         "drilling.performance_dashboard",
+        "hr.candidate_interviews",
         "masters.cost_centres",
         "masters.fs_emp_cur_status",
         "masters.fs_employees",

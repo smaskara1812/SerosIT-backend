@@ -7,6 +7,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # The HR module has its own routes; they must come before core's "api/" include.
     path("api/hr/", include("hr.urls")),
+    # The public candidate form (no sign-in, own throttles, whitelisted writes): hr/public_views.py.
+    path("api/public/onboarding/", include("hr.public_urls")),
     path("api/", include("core.urls")),
 ]
 
