@@ -71,6 +71,15 @@ def tick(now=None, owner=None, source="service"):
                 errors.append(f"{key}: {type(exc).__name__}: {exc}")
                 error_mail.notify_job_failed(key, job.name, f"{type(exc).__name__}: {exc}", now)
                 SchedJob.objects.filter(pk=row.pk).update(last_run_at=now, last_run_note=f"Error: {exc}"[:300])
+        try:  # housekeeping that is not a mail: approved offer letters nobody answered or touched for 30 days are closed (hr/offer_letter_autoclose.py)
+            from hr import offer_letter_autoclose
+
+            closed = offer_letter_autoclose.run(now)
+            if closed["closed"] or closed["skipped_joined"]:
+                summary["offer_letters_auto_close"] = closed
+        except Exception as exc:
+            log.exception("closing stale offer letters failed")
+            errors.append(f"offer_letters_auto_close: {type(exc).__name__}: {exc}")
         msg = ("Errors: " + "; ".join(errors)) if errors else "OK"
         SchedHeartbeat.objects.filter(pk=1).update(last_tick_at=now, last_tick_ok=not errors, last_message=msg[:300], **({"last_manual_tick_at": now} if source == "manual" else {"last_service_tick_at": now, "last_alive_at": now}))
         log.info("scheduler run finished in %.1fs (%s)", time.monotonic() - started, msg)

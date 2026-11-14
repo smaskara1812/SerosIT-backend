@@ -27,6 +27,7 @@ LOOKUP_CONSUMERS = {
     ),
     "lookup.users": (
         "admin.approver_mapping",
+        "hr.fs_offer_letters",
         "masters.doc_to_sign_mapping",
         "masters.interviewer_mapping",
         "masters.mail_alert_to_users",
@@ -54,6 +55,7 @@ LOOKUP_CONSUMERS = {
         "masters.certs",
     ),
     "masters.companies": (
+        "hr.fs_offer_letters",
         "it_asset.it_asset_holders",
         "it_asset.it_assets",
         "masters.company_to_location_mapping",
@@ -87,6 +89,7 @@ LOOKUP_CONSUMERS = {
         "qhse.mis_hse_return",
     ),
     "masters.countries": (
+        "hr.fs_applicants",
         "masters.companies",
         "masters.company_locations",
         "masters.country_states",
@@ -97,6 +100,7 @@ LOOKUP_CONSUMERS = {
         "qhse.incident_details",
     ),
     "masters.country_states": (
+        "hr.fs_applicants",
         "masters.fs_employees",
         "masters.locations",
     ),
@@ -115,10 +119,14 @@ LOOKUP_CONSUMERS = {
     "masters.drilling_sections": (
         "drilling.drilling_report",
     ),
+    "masters.ed_types": (
+        "masters.eds",
+    ),
     "masters.emp_natures": (
         "masters.emp_types",
     ),
     "masters.emp_types": (
+        "hr.fs_applicants",
         "masters.crew_schedule_exceptions",
         "masters.fs_catg_to_sstype",
         "masters.fs_emp_cur_status",
@@ -199,6 +207,7 @@ LOOKUP_CONSUMERS = {
         "masters.leaving_reason_details",
     ),
     "masters.locations": (
+        "hr.fs_applicants",
         "masters.cert_institutes",
         "masters.company_locations",
         "masters.cost_centres",
@@ -240,11 +249,14 @@ LOOKUP_CONSUMERS = {
         "qhse.corrective_actions",
     ),
     "masters.qualifications": (
+        "hr.fs_applicants",
         "masters.fs_employees",
     ),
     "masters.ranks": (
         "hr.candidate_competencies",
         "hr.candidate_interviews",
+        "hr.fs_applicants",
+        "hr.fs_offer_letters",
         "masters.crew_change_reliever_mapping",
         "masters.crew_schedule_exceptions",
         "masters.fs_catg_to_rank_mapping",
@@ -259,6 +271,9 @@ LOOKUP_CONSUMERS = {
     ),
     "masters.rig_operations": (
         "qhse.incident_details",
+    ),
+    "masters.rig_site_mapping": (
+        "hr.fs_offer_letters",
     ),
     "masters.rig_subtypes": (
         "masters.rigs",
@@ -276,6 +291,8 @@ LOOKUP_CONSUMERS = {
         "drilling.performance_dashboard",
         "hr.candidate_competencies",
         "hr.candidate_interviews",
+        "hr.fs_offer_letter_print",
+        "hr.fs_offer_letters",
         "masters.cost_centres",
         "masters.fs_emp_cur_status",
         "masters.fs_employees",
@@ -310,6 +327,9 @@ LOOKUP_CONSUMERS = {
     ),
     "masters.signable_docs": (
         "masters.doc_to_sign_mapping",
+    ),
+    "masters.travel_eligibility": (
+        "hr.fs_offer_letters",
     ),
     "masters.vendor_types": (
         "masters.vendors",

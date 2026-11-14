@@ -165,3 +165,164 @@ class CandidateInvite(models.Model):
 
     class Meta:
         db_table = "hr_candidate_invite"
+
+
+class FsNewApplDtl(models.Model):
+    """Applicants (legacy eos.Fs_New_Appl_Dtl): one row per person who applied for a field-staff (crew) job. Rig Personnel > New Joinee Workflow > Applicants.
+
+    Differences from legacy: the five CDC columns (number, date, country, place, valid till) are not carried, by decision; `cv_path` is new (legacy kept the CV as
+    Images/Fs_Emp_CV/<id>.zip with no column). Rules (serializer, hr/views/applicants.py): date of birth makes the person at least 15 and is in the past, the
+    application date is not in the future, gender M or F, marital status Unmarried or Married (a marriage date for Married), a user may only work with the FS
+    categories he is mapped to. Status is N (new, the default), C (closed), R (rejected), A (accepted: set when the offer letter is marked Accepted) or J (joined); only the hiring flow moves it. In the legacy copy a new
+    applicant's N was stored blank, so the import turns blank into N (and the two lower-case "c" into C).
+    """
+
+    fs_new_appl_id = models.AutoField(primary_key=True)
+    fs_new_appl_no = models.IntegerField()
+    fs_new_appl_dt = models.DateField()
+    fs_emp_fname = models.CharField(max_length=30, null=True, blank=True)
+    fs_emp_mname = models.CharField(max_length=30, null=True, blank=True)
+    fs_emp_lname = models.CharField(max_length=30)
+    fathers_name = models.CharField(max_length=60, null=True, blank=True)
+    permanent_addr = models.CharField(max_length=125)
+    mailing_addr = models.CharField(max_length=100)
+    emergency_addr = models.CharField(max_length=100, null=True, blank=True)
+    fs_emp_tel_no = models.CharField(max_length=25, null=True, blank=True)
+    fs_emp_mobile_no = models.CharField(max_length=25, null=True, blank=True)
+    fs_emp_email_pers = models.CharField(max_length=40)
+    gender = models.CharField(max_length=1)
+    blood_group = models.CharField(max_length=10, null=True, blank=True)
+    fs_emp_dob = models.DateField()
+    fs_emp_pob = models.CharField(max_length=20, null=True, blank=True)
+    marital_status = models.CharField(max_length=10, null=True, blank=True)
+    marriage_dt = models.DateField(null=True, blank=True)
+    nationality = models.ForeignKey("core.MstCountry", db_column="nationality_id", on_delete=models.PROTECT, related_name="+")
+    home_town = models.ForeignKey("core.MstLocation", db_column="home_town_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    domicile_state = models.ForeignKey("core.MstCountryState", db_column="domicile_state_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    religion = models.CharField(max_length=20, null=True, blank=True)
+    qualification = models.ForeignKey("core.MstQualification", db_column="qualification_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pan_no = models.CharField(max_length=10, null=True, blank=True)
+    aadhaar_no = models.CharField(max_length=20, null=True, blank=True)
+    area_of_interest = models.CharField(max_length=15, null=True, blank=True)
+    fs_emp_photo_path = models.CharField(max_length=100, null=True, blank=True)
+    cv_path = models.CharField(max_length=100, null=True, blank=True)
+    pp_no = models.CharField(max_length=15, null=True, blank=True)
+    pp_dt = models.DateField(null=True, blank=True)
+    pp_country = models.ForeignKey("core.MstCountry", db_column="pp_country_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pin_code = models.CharField(max_length=10, null=True, blank=True)
+    pp_place = models.ForeignKey("core.MstLocation", db_column="pp_place_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    pp_valid_till = models.DateField(null=True, blank=True)
+    pp_ecnr = models.CharField(max_length=1, null=True, blank=True)
+    appl_fs_category = models.ForeignKey("core.MstFsCategory", db_column="appl_fs_category_id", on_delete=models.PROTECT, related_name="+")
+    appl_rank = models.ForeignKey("core.MstRank", db_column="appl_rank_id", on_delete=models.PROTECT, related_name="+")
+    appl_emp_type = models.ForeignKey("core.MstEmpType", db_column="appl_emp_type_id", on_delete=models.PROTECT, related_name="+")
+    appl_temporary = models.CharField(max_length=1, null=True, blank=True)
+    fs_new_appl_status = models.CharField(max_length=1, default="N")
+    fs_emp = models.ForeignKey("core.MstFsEmployee", db_column="fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    prv_fs_emp = models.ForeignKey("core.MstFsEmployee", db_column="prv_fs_emp_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hr_fs_new_appl_dtl"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(fs_new_appl_status__in=["N", "C", "R", "A", "J"]), name="hr_fs_appl_status"),
+            models.CheckConstraint(condition=models.Q(gender__in=["M", "F"]), name="hr_fs_appl_gender"),
+        ]
+
+    def __str__(self):
+        return " ".join(p for p in (self.fs_emp_fname, self.fs_emp_mname, self.fs_emp_lname) if p and p.strip())
+
+
+class FsOfferLetter(models.Model):
+    """The offer letter of an applicant (legacy eos.Fs_Offer_Letter, one row per applicant): the header. The pay is in FsOfferLetterComponent rows (components come from core.MstEd) and
+    salary_amt is the total the components must add up to. Creator and approver steps: cr_status N/F (creator finalised), l1_approval_status N/A/R
+    (level 1 approver). offer_letter_status N new, S sent, C changed, R resent; response_status N, A accepted, D declined, C closed (the response
+    is passed on to the applicant's status). The signer (authority) is a user; legacy kept an employee id."""
+
+    fs_new_appl = models.OneToOneField(FsNewApplDtl, db_column="fs_new_appl_id", primary_key=True, on_delete=models.CASCADE, related_name="offer_letter")
+    fs_offer_letter_dt = models.DateField()
+    rank = models.ForeignKey("core.MstRank", db_column="rank_id", on_delete=models.PROTECT, related_name="+")
+    rank_to_grade_id = models.IntegerField(null=True, blank=True)
+    rig_site_mapping = models.ForeignKey("core.RigSiteMapping", db_column="rig_site_mapping_id", on_delete=models.PROTECT, related_name="+")
+    contact_person = models.CharField(max_length=50, null=True, blank=True)
+    contact_tel_no = models.CharField(max_length=25, null=True, blank=True)
+    fs_offer_letter_doj = models.DateField()
+    contract_end_dt = models.DateField()
+    salary_amt = models.IntegerField()
+    included_pf = models.CharField(max_length=1, null=True, blank=True)
+    on_off_desc = models.CharField(max_length=1000, null=True, blank=True)
+    on_days = models.IntegerField(null=True, blank=True)
+    off_days = models.IntegerField(null=True, blank=True)
+    travel_eligibility = models.ForeignKey("core.TravelEligibility", db_column="travel_eligibility_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    travel_class = models.CharField(max_length=325, null=True, blank=True)
+    authority_user = models.ForeignKey("core.MstUser", db_column="authority_user_id", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    authority_designation = models.CharField(max_length=50, null=True, blank=True)
+    key_personnel = models.CharField(max_length=1, null=True, blank=True)
+    company = models.ForeignKey("core.MstCompany", db_column="company_id", on_delete=models.PROTECT, related_name="+")
+    rig_location = models.CharField(max_length=50, null=True, blank=True)
+    offer_letter_status = models.CharField(max_length=1, blank=True, default="")
+    response_status = models.CharField(max_length=1, blank=True, default="")
+    cr_status = models.CharField(max_length=1, null=True, blank=True)
+    l1_approval_status = models.CharField(max_length=1, null=True, blank=True)
+    l1_approval_dt = models.DateField(null=True, blank=True)
+    l1_user_id = models.IntegerField(null=True, blank=True)
+    opened_for_revision_by = models.IntegerField(null=True, blank=True)
+    opened_for_revision_dt = models.DateField(null=True, blank=True)  # a date, like the other approval pages (core/approvals.py writes dates)
+    revision_note = models.CharField(max_length=500, null=True, blank=True)  # new: why the approver sent the letter back
+    auto_closed_dt = models.DateTimeField(null=True, blank=True)  # new: set when the system closed the letter for inactivity (hr/offer_letter_autoclose.py)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hr_fs_offer_letter"
+
+
+class FsOfferLetterComponent(models.Model):
+    """One pay component of an offer letter: the amount, whether it counts toward the letter's total salary, and whether it is shown in the letter.
+    Replaces the legacy money columns (Basic_Salary, HRA, PF_Emplr, Camp_Allow ...)."""
+
+    id = models.AutoField(primary_key=True)
+    offer_letter = models.ForeignKey(FsOfferLetter, db_column="fs_new_appl_id", on_delete=models.CASCADE, related_name="components")
+    component = models.ForeignKey("core.MstEd", db_column="component_id", on_delete=models.PROTECT, related_name="letter_rows")  # the pay component (Masters > Earnings and Deductions)
+    amount = models.IntegerField(default=0)
+    counts_in_total = models.CharField(max_length=1, default="Y")
+    show_in_letter = models.CharField(max_length=1, default="Y")
+    sort_order = models.SmallIntegerField(default=0)
+
+    class Meta:
+        db_table = "hr_fs_offer_letter_component"
+        constraints = [
+            models.UniqueConstraint(fields=["offer_letter", "component"], name="hr_offer_comp_unique"),
+            models.CheckConstraint(condition=models.Q(counts_in_total__in=["Y", "N"]), name="hr_offer_comp_counts_y_n"),
+            models.CheckConstraint(condition=models.Q(show_in_letter__in=["Y", "N"]), name="hr_offer_comp_show_y_n"),
+        ]
+
+
+class CtrlNtbrFs(models.Model):
+    """The "not to be rehired" register for field staff (legacy dbo.Ctrl_Ntbr_Fs, 101 rows; business system 6 is the oilfield services one). The Applicants page
+    warns when a new applicant matches a person here by date of birth and a name. Read only."""
+
+    ntbr_fs_id = models.AutoField(primary_key=True)
+    fs_emp_id = models.IntegerField()  # most rows belong to the other business system, whose employees are not in this app: no foreign key
+    ntbr_fs_cdc_no = models.CharField(max_length=15)
+    pan = models.CharField(max_length=10, null=True, blank=True)
+    ntbr_fs_dob = models.DateField()
+    ntbr_cnfm_dt = models.DateField()
+    remark = models.CharField(max_length=150)
+    ntbr_approved_by = models.CharField(max_length=150)
+    business_system_id = models.IntegerField()
+    ntbr_scan_path = models.CharField(max_length=65)
+    ntbr_rejoin = models.CharField(max_length=1, blank=True, default="")
+    ntbr_rejoin_remark = models.CharField(max_length=150, null=True, blank=True)
+    cr_user_id = models.IntegerField()
+    cr_dt = models.DateTimeField()
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hr_ctrl_ntbr_fs"

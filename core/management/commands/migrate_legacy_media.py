@@ -28,7 +28,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from hr.models import CandidateInterviewHdr
+from hr.models import CandidateInterviewHdr, FsNewApplDtl
 
 from core.media_uploads import IMAGE_EXTENSIONS, check_existing_file, detect_extension, next_sequence
 from core.models import (
@@ -69,7 +69,13 @@ TARGETS = [
     # second exists in the dump; the file name alone is matched. Most rows point at .zip files that are not in the dump (kept as old text).
     Target("Candidate resumes", "Candidate_Interview_Certificates", "candidate_resumes", CandidateInterviewHdr, "candidate_cert_path",
            "candidate_interview_hdr_id", (".pdf", ".doc", ".docx")),
+    # Applicant photos (Applicants page): the legacy path text names the file; only the uploaded ones (a path without the stray "N/" prefix) have a file.
+    Target("Applicant photos", "Fs_New_Appl_Photos", "fs_applicant_photos", FsNewApplDtl, "fs_emp_photo_path", "fs_new_appl_id", IMAGE_EXTS,
+           lambda row, legacy: f"{row.fs_new_appl_id}{os.path.splitext(legacy)[1].lower()}"),
 ]
+
+# Applicant CVs have no path column in legacy: the file is Images/Fs_Emp_CV/<applicant id>.<ext> (almost always .zip). Found by that name.
+CV_EXTS = (".zip", ".pdf", ".doc", ".docx", ".rtf", ".jpg", ".jpeg", ".png", ".gif")
 
 
 class Command(BaseCommand):
@@ -92,6 +98,7 @@ class Command(BaseCommand):
         lines = []
         for t in TARGETS:
             lines += self._run_target(t, source, apply)
+        lines += self._run_applicant_cvs(source, apply)
         lines += self._run_interviewers(source, apply)
         lines += self._run_signatures(source, apply)
         os.makedirs(os.path.dirname(report), exist_ok=True)
@@ -159,6 +166,34 @@ class Command(BaseCommand):
                 for row, new in updates:
                     t.model.objects.filter(**{t.pk: getattr(row, t.pk)}).update(**{t.field: new})
         self._summary(t.label, counts, len(updates), apply)
+        return out
+
+    def _run_applicant_cvs(self, source, apply):
+        """Fills FsNewApplDtl.cv_path for every applicant that has a CV file in Images/Fs_Emp_CV named by the applicant id (an applicant with no file keeps
+        an empty path: there is nothing to show). Idempotent: a row that already has a path is left alone."""
+        folder = os.path.join(source, "Fs_Emp_CV")
+        index = {}
+        for name in (os.listdir(folder) if os.path.isdir(folder) else []):
+            stem, ext = os.path.splitext(name)
+            if stem.isdigit() and ext.lower() in CV_EXTS:
+                index.setdefault(int(stem), name)
+        out, counts, updates = [], {}, []
+        for row in FsNewApplDtl.objects.filter(cv_path__isnull=True).order_by("fs_new_appl_id"):
+            real = index.get(row.fs_new_appl_id)
+            if not real:
+                continue
+            dest = f"{row.fs_new_appl_id}{os.path.splitext(real)[1].lower()}"
+            ok, why, dest = self._place(os.path.join(folder, real), "fs_applicant_cv", dest, CV_EXTS, apply)
+            new = f"fs_applicant_cv/{dest}" if ok else ""
+            if ok:
+                updates.append((row.fs_new_appl_id, new))
+            counts[why.split(":")[0]] = counts.get(why.split(":")[0], 0) + 1
+            out.append(("Applicant CVs", row.fs_new_appl_id, "", new, why))
+        if apply and updates:
+            with transaction.atomic():
+                for pk, new in updates:
+                    FsNewApplDtl.objects.filter(pk=pk).update(cv_path=new)
+        self._summary("Applicant CVs", counts, len(updates), apply)
         return out
 
     def _run_signatures(self, source, apply):

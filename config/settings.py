@@ -304,6 +304,8 @@ SCHEDULER_OVERDUE_HOURS = int(os.getenv("SCHEDULER_OVERDUE_HOURS", "2") or 2)  #
 SCHEDULER_HEALTH_ALERTS = os.getenv("SCHEDULER_HEALTH_ALERTS", "False") == "True"
 SCHEDULER_HEALTH_REMINDER_HOURS = int(os.getenv("SCHEDULER_HEALTH_REMINDER_HOURS", "0") or 0)  # 0 = one mail per problem, no reminders
 SCHEDULER_MAX_RETRIES = int(os.getenv("SCHEDULER_MAX_RETRIES", "2") or 2)  # after the first try: at most this many more, one per hourly run
+# Approved offer letters nobody answered or changed for this many days are closed by the scheduler (hr/offer_letter_autoclose.py). 0 switches it off.
+OFFER_LETTER_AUTOCLOSE_DAYS = int(os.getenv("OFFER_LETTER_AUTOCLOSE_DAYS", "30") or 0)
 # How often the scheduler runs: at the top of every hour and then every this many minutes (5, 10, 15, 20, 30 or 60; anything else is read as 30). See core/sched_clock.py.
 SCHEDULER_INTERVAL_MINUTES = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "30") or 30)
 # Who is told when an automatic mail has finally failed (after its retries): comma separated addresses. Empty = nobody is mailed (the failure still shows on

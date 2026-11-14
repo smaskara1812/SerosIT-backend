@@ -637,6 +637,54 @@ class MstCompetency(models.Model):
         return self.competency_name
 
 
+class MstEdType(models.Model):
+    """Earning or Deduction (legacy eos.Mst_ED_Type, 2 rows)."""
+
+    ed_type_id = models.AutoField(primary_key=True)
+    ed_type_name = models.CharField(max_length=20)
+    ed_type_abrv = models.CharField(max_length=5, blank=True, default="")
+    cr_user_id = models.IntegerField(null=True, blank=True)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_ed_type"
+
+    def __str__(self):
+        return self.ed_type_name
+
+
+class MstEd(models.Model):
+    """Earnings and Deductions: the pay components (legacy eos.Mst_ED, 35 rows: Basic, HRA, PF, Washing Allowance ...). The Offer Letter keeps one row per
+    component (hr.FsOfferLetterComponent) instead of one column each, so adding a component here needs no table change. The ids are the legacy ED_Id values.
+    Legacy flags carried as they were (blank = no): taxable, perquisite, pattern. Two columns are new: in_offer_letter (the component can be put on an offer
+    letter) and counts_in_total (by default its amount counts toward the letter's total salary). The legacy payroll dependency flags (Serv_Dtl_DpnDt,
+    Artcl_Prd_DpnDt_Old, Ship_DpnDt, Slab_DpnDt, Formula_DpnDt) are not carried: only the payroll engine reads them."""
+
+    ed_id = models.AutoField(primary_key=True)
+    ed_type = models.ForeignKey(MstEdType, db_column="ed_type_id", on_delete=models.PROTECT, related_name="eds")
+    ed_name = models.CharField(max_length=50)
+    ed_abrv = models.CharField(max_length=15, blank=True, default="")
+    pattern = models.CharField(max_length=1, null=True, blank=True)
+    taxable = models.CharField(max_length=1, null=True, blank=True)
+    perquisite = models.CharField(max_length=1, null=True, blank=True)
+    ed_order = models.SmallIntegerField(default=0)
+    ed_active = models.CharField(max_length=1, null=True, blank=True, default="Y")  # a new component starts active; legacy blank = inactive
+    in_offer_letter = models.CharField(max_length=1, null=True, blank=True)
+    counts_in_total = models.CharField(max_length=1, null=True, blank=True)
+    cr_user_id = models.IntegerField(null=True, blank=True)
+    cr_dt = models.DateTimeField(null=True, blank=True)
+    mod_user_id = models.IntegerField(null=True, blank=True)
+    mod_dt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "mst_ed"
+
+    def __str__(self):
+        return self.ed_name
+
+
 class MstFsCategory(models.Model):
     """Employee category (Officer/Petty Officer/Crew/etc). The
     Business_System_Id_* flags are legacy cross-system integration toggles —

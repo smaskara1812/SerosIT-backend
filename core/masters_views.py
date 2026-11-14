@@ -23,6 +23,8 @@ from .models import (
     JobDescriptionHdr,
     MstCertInstitute,
     MstCompetency,
+    MstEd,
+    MstEdType,
     MstContinent,
     MstCountry,
     MstCountryState,
@@ -156,6 +158,8 @@ from .masters_serializers import (
     NotificationTriggerSerializer,
     MstApprovalCodeSerializer,
     MstCompetencySerializer,
+    MstEdSerializer,
+    MstEdTypeSerializer,
     MstContinentSerializer,
     MstCountrySerializer,
     MstCountryStateSerializer,
@@ -1186,6 +1190,30 @@ class MstCompetencyViewSet(BaseMasterViewSet):
     search_fields = ["competency_name"]
 
 
+class MstEdTypeViewSet(BaseMasterViewSet):
+    """Earning / Deduction (legacy Mst_ED_Type, 2 rows)."""
+
+    queryset = MstEdType.objects.all()
+    serializer_class = MstEdTypeSerializer
+    entity_key = "masters.ed_types"
+    name_field = "ed_type_name"
+    search_fields = ["ed_type_name", "ed_type_abrv"]
+    reference_checks = [("eds", "Earnings and Deductions")]
+
+
+class MstEdViewSet(BaseMasterViewSet):
+    """Earnings and Deductions: the pay components (legacy Mst_ED). The Offer Letter page builds a letter from the ones flagged in_offer_letter."""
+
+    queryset = MstEd.objects.select_related("ed_type").all()
+    serializer_class = MstEdSerializer
+    entity_key = "masters.eds"
+    name_field = "ed_name"
+    active_field = "ed_active"
+    search_fields = ["ed_name", "ed_abrv"]
+    filterable_fields = ["ed_type", "in_offer_letter"]
+    reference_checks = [("letter_rows", "Offer letters")]
+
+
 class MstDepartmentViewSet(BaseMasterViewSet):
     """Promoted from a read-only dropdown source to a real delegable master
     (General section) — reads stay open to any authenticated user via
@@ -1340,6 +1368,8 @@ class TravelEligibilityViewSet(BaseMasterViewSet):
     serializer_class = TravelEligibilitySerializer
     entity_key = "masters.travel_eligibility"
     date_active_field = "eligible_to"
+    lookup_force = True  # the Offer Letter page picks one; the label is "Rank — travel mode"
+    lookup_fields = ("display_name",)
     search_fields = ["rank__rank_name", "travel_class"]
 
     def get_queryset(self):
@@ -2083,6 +2113,9 @@ class RigSiteMappingViewSet(BaseMasterViewSet):
     serializer_class = RigSiteMappingSerializer
     entity_key = "masters.rig_site_mapping"
     date_active_field = "site_to"
+    # The Offer Letter page picks a rig (a site mapping row) and takes the company and camp office from it. A mapping has no single name column.
+    lookup_force = True
+    lookup_fields = ("display_name", "camp_office_addr", "contact_tel_no_1")
     search_fields = ["rig__rig_name", "company__company_name", "camp_office_addr"]
 
     def get_queryset(self):

@@ -128,6 +128,8 @@ router.register("masters/rig-subtypes", masters_views.MstRigSubtypeViewSet, base
 router.register("masters/rigs", masters_views.MstRigViewSet, basename="mst-rig")
 router.register("masters/cost-centres", masters_views.MstCostCentreViewSet, basename="mst-cost-centre")
 router.register("masters/competency", masters_views.MstCompetencyViewSet, basename="mst-competency")
+router.register("masters/eds", masters_views.MstEdViewSet, basename="mst-ed")
+router.register("masters/ed-types", masters_views.MstEdTypeViewSet, basename="mst-ed-type")
 router.register("masters/departments", masters_views.MstDepartmentViewSet, basename="mst-department")
 router.register("masters/fs-categories", masters_views.MstFsCategoryViewSet, basename="mst-fs-category")
 router.register("masters/ranks", masters_views.MstRankViewSet, basename="mst-rank")

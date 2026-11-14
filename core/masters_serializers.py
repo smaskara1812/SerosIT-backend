@@ -49,6 +49,8 @@ from .models import (
     NotificationTrigger,
     MstApprovalCode,
     MstCompetency,
+    MstEd,
+    MstEdType,
     MstContactExposureType,
     MstContinent,
     MstCountry,
@@ -361,6 +363,51 @@ class MstCostCentreSerializer(serializers.ModelSerializer):
 
     def get_fs_emp_name(self, obj):
         return str(obj.fs_emp) if obj.fs_emp_id else ""
+
+
+class MstEdTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MstEdType
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "ed_type_name", "There is already a type with this name.")
+        if "ed_type_name" in attrs and not (attrs["ed_type_name"] or "").strip():
+            errors["ed_type_name"] = "Enter the name."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+
+class MstEdSerializer(serializers.ModelSerializer):
+    ed_type_name = serializers.CharField(source="ed_type.ed_type_name", read_only=True, default="")
+
+    class Meta:
+        model = MstEd
+        fields = "__all__"
+        read_only_fields = ["cr_user_id", "cr_dt", "mod_user_id", "mod_dt"]
+
+    def validate(self, attrs):
+        errors = {}
+        _check_unique_value(self, attrs, errors, "ed_name", "There is already a component with this name.")
+        _check_active(self, attrs, errors, "ed_active")
+        if "ed_name" in attrs and not (attrs["ed_name"] or "").strip():
+            errors["ed_name"] = "Enter the name."
+        if "ed_order" in attrs and attrs["ed_order"] is not None and attrs["ed_order"] < 0:
+            errors["ed_order"] = "The order cannot be negative."
+        for name in ("taxable", "perquisite", "in_offer_letter", "counts_in_total"):
+            if attrs.get(name) not in (None, "", "Y"):
+                errors[name] = "Tick or untick the box."
+            elif name in attrs and attrs[name] == "":
+                attrs[name] = None
+        # a component that counts toward the total must be one that can be on a letter
+        if _get(self, attrs, "counts_in_total") == "Y" and _get(self, attrs, "in_offer_letter") != "Y":
+            errors["counts_in_total"] = "Only a component that is offered on an offer letter can count toward its total."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class MstCompetencySerializer(serializers.ModelSerializer):

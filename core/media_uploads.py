@@ -72,6 +72,8 @@ _MAGIC_SIGNATURES = {
     ".pdf": [b"%PDF-"],
     ".doc": [b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"],
     ".docx": [b"PK\x03\x04"],
+    ".zip": [b"PK\x03\x04"],
+    ".rtf": [b"{\\rtf"],
 }
 
 
@@ -189,6 +191,8 @@ FOLDER_PAGES = {
     "birthday_templates": "admin.birthday_mailer",
     "holiday_images": "admin.holiday_mailer",
     "candidate_resumes": "hr.candidate_interviews",
+    "fs_applicant_photos": "hr.fs_applicants",
+    "fs_applicant_cv": "hr.fs_applicants",
 }
 
 
